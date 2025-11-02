@@ -1,5 +1,5 @@
 [project]
-name = "torch_webgpu"
+name = "torch-webgpu"
 version = "0.0.1"
 description = " WebGPU backend for PyTorch"
 readme = "README.md"
@@ -14,11 +14,8 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools", "wheel", "torch"]
 build-backend = "setuptools.build_meta"
-
-[tool.uv.publish]
-name = "torch-webgpu"
 
 [tool.setuptools]
 package-dir = {"" = "python"}

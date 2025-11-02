@@ -1,5 +1,5 @@
 import torch
-
+from . import _C
 
 def dummy():
     print("Dummy")
