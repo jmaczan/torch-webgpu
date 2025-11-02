@@ -20,7 +20,7 @@ struct WebGPUCachingAllocator final : public at::Allocator
     {
         return &WebGPUCachingHostDeleter;
     }
-}
+};
 
 // static WebGPUCachingAllocator webgpu_caching_allocator;
 // at::Allocator *getWebGPUCachingAllocator()

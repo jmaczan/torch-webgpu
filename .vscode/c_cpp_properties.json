@@ -1,0 +1,24 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "Linux-GCC",
+      "compilerPath": "/usr/bin/g++",
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "gcc-x64",
+
+      "includePath": [
+        "${workspaceFolder}/csrc",
+        "${workspaceFolder}/python",
+        "${workspaceFolder}/.venv/lib/python3.12/site-packages/torch/include",
+        "${workspaceFolder}/.venv/lib/python3.12/site-packages/torch/include/torch/csrc/api/include",
+        "/usr/include/python3.12"
+      ],
+      "defines": [
+        "TORCH_API_INCLUDE_EXTENSION_H",
+        "TORCH_EXTENSION_NAME=_C"
+      ]
+    }
+  ]
+}
