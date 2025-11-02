@@ -12,6 +12,7 @@ def main():
     print(dev)
 
     empty = torch.empty((4, 4), device="webgpu")
+    print(empty.device, empty.shape)
     print(empty)
 
 
