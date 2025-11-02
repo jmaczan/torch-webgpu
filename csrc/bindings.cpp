@@ -8,7 +8,7 @@
 
 static void WebGPUCachingHostDeleter(void *ptr);
 
-struct WebGPUCachingAllocator final : public at::Allocator
+struct WebGPUCachingAllocator final : public c10::Allocator
 {
     at::DataPtr allocate(size_t size) override
     {
@@ -19,6 +19,11 @@ struct WebGPUCachingAllocator final : public at::Allocator
     at::DeleterFnPtr raw_deleter() const override
     {
         return &WebGPUCachingHostDeleter;
+    }
+
+    void copy_data(void *dest, const void *src, std::size_t count) const
+    {
+        TORCH_CHECK_NOT_IMPLEMENTED(false, "copy_data not implemented in WebGPUCachingAllocator");
     }
 };
 
@@ -38,7 +43,7 @@ at::Tensor empty_memory_format(
 {
     auto allocator = WebGPUCachingAllocator();
     constexpr c10::DispatchKeySet cpu_ks(c10::DispatchKey::PrivateUse1);
-    return at::detail::empty_generic(size, allocator, cpu_ks, dtype_or_default(dtype_opt), memory_format_opt);
+    return at::detail::empty_generic(size, &allocator, cpu_ks, dtype_or_default(dtype_opt), memory_format_opt);
 }
 
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
