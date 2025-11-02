@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build extension (editable)",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python -m pip install -e . --no-build-isolation",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "options": {
+        "env": {
+          "CC": "gcc",
+          "CXX": "g++"
+        }
+      }
+    }
+  ]
+}
