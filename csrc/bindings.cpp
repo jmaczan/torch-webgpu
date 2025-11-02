@@ -1,5 +1,28 @@
+#include <ATen/ATen.h>
+#include <torch/library.h>
+#include <ATen/EmptyTensor.h>
+#include <ATen/native/TensorFactories.h>
+#include <c10/core/CPUAllocator.h>
 #include <Python.h>
 #include <vector>
+
+at::Tensor empty_memory_format(
+    c10::IntArrayRef size,
+    c10::optional<at::ScalarType> dtype_opt,
+    c10::optional<at::Layout> layout_opt,
+    c10::optional<at::Device> device_opt,
+    c10::optional<bool> pin_memory_opt,
+    c10::optional<c10::MemoryFormat> memory_format_opt)
+{
+    auto allocator = c10::GetCPUAllocator();
+    constexpr c10::DispatchKeySet cpu_ks(c10::DispatchKey::CPU);
+    return at::detail::empty_generic(size, allocator, cpu_ks, dtype_or_default(dtype_opt), memory_format_opt);
+}
+
+TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
+{
+    m.impl("empty.memory_format", TORCH_FN(empty_memory_format));
+}
 
 PyMODINIT_FUNC PyInit__C(void)
 {
