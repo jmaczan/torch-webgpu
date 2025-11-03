@@ -70,9 +70,18 @@ at::Tensor empty_memory_format(
     return at::detail::empty_generic(size, allocator, cpu_ks, dtype_or_default(dtype_opt), memory_format_opt);
 }
 
+at::Tensor &copy_(
+    at::Tensor &self, at::Tensor const &src, bool non_blocking = false)
+{
+    auto size = self.numel() * at::elementSize(self.dtype().toScalarType());
+    std::memcpy(self.data_ptr(), src.data_ptr(), size);
+    return self;
+}
+
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
 {
     m.impl("empty.memory_format", TORCH_FN(empty_memory_format));
+    m.impl("copy_", TORCH_FN(copy_));
 }
 
 // void custom_cpu_fallback(const c10::OperatorHandle &op, torch::jit::Stack *stack)
