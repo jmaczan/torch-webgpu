@@ -13,7 +13,7 @@ def main():
 
     empty = torch.empty((4, 4), device="webgpu")
     print(empty.device, empty.shape)
-    print(empty)
+    # print(empty)
 
 
 if __name__ == "__main__":
