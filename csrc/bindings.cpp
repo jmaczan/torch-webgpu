@@ -30,11 +30,11 @@ struct WebGPUCachingAllocator final : public c10::Allocator
     }
 };
 
-// static WebGPUCachingAllocator webgpu_caching_allocator;
-// at::Allocator *getWebGPUCachingAllocator()
-// {
-//     return &webgpu_caching_allocator;
-// }
+at::Allocator *getWebGPUCachingAllocator()
+{
+    static WebGPUCachingAllocator webgpu_caching_allocator;
+    return &webgpu_caching_allocator;
+}
 
 at::Tensor empty_memory_format(
     c10::IntArrayRef size,
@@ -44,9 +44,9 @@ at::Tensor empty_memory_format(
     c10::optional<bool> pin_memory_opt,
     c10::optional<c10::MemoryFormat> memory_format_opt)
 {
-    auto allocator = WebGPUCachingAllocator();
+    auto allocator = getWebGPUCachingAllocator();
     constexpr c10::DispatchKeySet cpu_ks(c10::DispatchKey::PrivateUse1);
-    return at::detail::empty_generic(size, &allocator, cpu_ks, dtype_or_default(dtype_opt), memory_format_opt);
+    return at::detail::empty_generic(size, allocator, cpu_ks, dtype_or_default(dtype_opt), memory_format_opt);
 }
 
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
