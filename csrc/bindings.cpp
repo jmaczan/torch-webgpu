@@ -6,7 +6,10 @@
 #include <Python.h>
 #include <vector>
 
-static void WebGPUCachingHostDeleter(void *ptr);
+static void WebGPUCachingHostDeleter(void *ptr)
+{
+    free(ptr);
+}
 
 struct WebGPUCachingAllocator final : public c10::Allocator
 {
