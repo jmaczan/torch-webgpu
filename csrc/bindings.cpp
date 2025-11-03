@@ -125,6 +125,19 @@ at::Tensor empty_memory_format(
     return at::detail::empty_generic(size, allocator, cpu_ks, dtype_or_default(dtype_opt), memory_format_opt);
 }
 
+at::Tensor empty_strided(
+    c10::IntArrayRef size,
+    c10::IntArrayRef stride,
+    c10::optional<at::ScalarType> dtype_opt,
+    c10::optional<at::Layout> layout_opt,
+    c10::optional<at::Device> device_opt,
+    c10::optional<bool> pin_memory_opt)
+{
+    auto allocator = getWebGPUCachingAllocator();
+    constexpr c10::DispatchKeySet cpu_ks(c10::DispatchKey::PrivateUse1);
+    return at::detail::empty_strided_generic(size, stride, allocator, cpu_ks, dtype_or_default(dtype_opt));
+}
+
 at::Tensor &copy_(
     at::Tensor &self, at::Tensor const &src, bool non_blocking = false)
 {
@@ -136,22 +149,8 @@ at::Tensor &copy_(
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
 {
     m.impl("empty.memory_format", TORCH_FN(empty_memory_format));
+    m.impl("empty_strided", TORCH_FN(empty_strided));
     m.impl("copy_", TORCH_FN(copy_));
-}
-
-// void custom_cpu_fallback(const c10::OperatorHandle &op, torch::jit::Stack *stack)
-// {
-//     at::native::cpu_fallback(op, stack);
-// }
-
-// TORCH_LIBRARY_IMPL(_, PrivateUse1, m)
-// {
-//     m.fallback(torch::CppFunction::makeFromBoxedFunction<&custom_cpu_fallback>());
-// }
-
-TORCH_LIBRARY_IMPL(_, PrivateUse1, m)
-{
-    m.fallback(torch::CppFunction::makeFallthrough());
 }
 
 PyMODINIT_FUNC PyInit__C(void)
