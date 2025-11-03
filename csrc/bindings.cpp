@@ -5,17 +5,37 @@
 #include <c10/core/CPUAllocator.h>
 #include <Python.h>
 #include <vector>
+#include <cstdlib>
+
+struct WebGPUAllocator
+{
+    void allocate(void **ptr, size_t size)
+    {
+        *ptr = std::malloc(size);
+    }
+};
+
+static WebGPUAllocator &getWebGPUAllocator()
+{
+    static WebGPUAllocator webgpu_allocator;
+    return webgpu_allocator;
+}
 
 static void WebGPUCachingHostDeleter(void *ptr)
 {
     free(ptr);
 }
 
+// not really caching, yet
 struct WebGPUCachingAllocator final : public c10::Allocator
 {
     at::DataPtr allocate(size_t size) override
     {
         void *ptr = nullptr;
+        if (size > 0)
+        {
+            getWebGPUAllocator().allocate(&ptr, size);
+        }
         return {ptr, ptr, &WebGPUCachingHostDeleter, at::DeviceType::PrivateUse1};
     }
 
