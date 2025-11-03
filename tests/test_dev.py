@@ -13,7 +13,9 @@ def main():
 
     empty = torch.empty((4, 4), device="webgpu")
     print(empty.device, empty.shape)
-    # print(empty)
+    print(torch._C._dispatch_dump_table("aten::view"))
+
+    print(empty)
 
 
 if __name__ == "__main__":

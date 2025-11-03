@@ -1,6 +1,7 @@
 #include <ATen/ATen.h>
 #include <torch/library.h>
 #include <ATen/EmptyTensor.h>
+#include <ATen/native/CPUFallback.h>
 #include <ATen/native/TensorFactories.h>
 #include <c10/core/CPUAllocator.h>
 #include <Python.h>
@@ -72,6 +73,21 @@ at::Tensor empty_memory_format(
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
 {
     m.impl("empty.memory_format", TORCH_FN(empty_memory_format));
+}
+
+// void custom_cpu_fallback(const c10::OperatorHandle &op, torch::jit::Stack *stack)
+// {
+//     at::native::cpu_fallback(op, stack);
+// }
+
+// TORCH_LIBRARY_IMPL(_, PrivateUse1, m)
+// {
+//     m.fallback(torch::CppFunction::makeFromBoxedFunction<&custom_cpu_fallback>());
+// }
+
+TORCH_LIBRARY_IMPL(_, PrivateUse1, m)
+{
+    m.fallback(torch::CppFunction::makeFallthrough());
 }
 
 PyMODINIT_FUNC PyInit__C(void)
