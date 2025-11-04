@@ -13,7 +13,9 @@
         "${workspaceFolder}/python",
         "${workspaceFolder}/.venv/lib/python3.12/site-packages/torch/include",
         "${workspaceFolder}/.venv/lib/python3.12/site-packages/torch/include/torch/csrc/api/include",
-        "/usr/include/python3.12"
+        "/usr/include/python3.12",
+        "/home/jedrzej/dev/dawn/include",
+        "/home/jedrzej/dev/dawn/install/Release/include"
       ],
       "defines": [
         "TORCH_API_INCLUDE_EXTENSION_H",

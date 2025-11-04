@@ -7,6 +7,8 @@
 #include <Python.h>
 #include <vector>
 #include <cstdlib>
+#include <webgpu/webgpu.h>
+#include <webgpu/webgpu_cpp.h>
 
 struct WebGPUAllocator
 {
