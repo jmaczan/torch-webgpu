@@ -5,7 +5,7 @@ import torch_webgpu
 def main():
     cpu = torch.empty((4, 4), dtype=torch.float32)
     wgpu = cpu.to("webgpu")
-    back = cpu.to("cpu")
+    back = wgpu.to("cpu")
     print(torch.allclose(cpu, back))
 
 
