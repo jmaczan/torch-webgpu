@@ -1,4 +1,5 @@
 #include <ATen/ATen.h>
+#include <ATen/RedispatchFunctions.h>
 #include <torch/library.h>
 #include <ATen/EmptyTensor.h>
 #include <ATen/native/CPUFallback.h>
@@ -56,6 +57,11 @@ struct WebGPUContext
                 this->queue = device.GetQueue();
             });
         instance.WaitAny(device_future, UINT64_MAX);
+    }
+
+    wgpu::Instance getInstance()
+    {
+        return instance;
     }
 
     wgpu::Device getDevice()
@@ -199,8 +205,8 @@ at::Tensor empty_memory_format(
     c10::optional<c10::MemoryFormat> memory_format_opt)
 {
     auto allocator = getWebGPUCachingAllocator();
-    constexpr c10::DispatchKeySet cpu_ks(c10::DispatchKey::PrivateUse1);
-    return at::detail::empty_generic(size, allocator, cpu_ks, dtype_or_default(dtype_opt), memory_format_opt);
+    constexpr c10::DispatchKeySet privateuse1_ks(c10::DispatchKey::PrivateUse1);
+    return at::detail::empty_generic(size, allocator, privateuse1_ks, dtype_or_default(dtype_opt), memory_format_opt);
 }
 
 at::Tensor empty_strided(
@@ -212,9 +218,15 @@ at::Tensor empty_strided(
     c10::optional<bool> pin_memory_opt)
 {
     auto allocator = getWebGPUCachingAllocator();
-    constexpr c10::DispatchKeySet cpu_ks(c10::DispatchKey::PrivateUse1);
-    return at::detail::empty_strided_generic(size, stride, allocator, cpu_ks, dtype_or_default(dtype_opt));
+    constexpr c10::DispatchKeySet privateuse1_ks(c10::DispatchKey::PrivateUse1);
+    return at::detail::empty_strided_generic(size, stride, allocator, privateuse1_ks, dtype_or_default(dtype_opt));
 }
+
+struct BufferCopyContext
+{
+    bool ready;
+    wgpu::Buffer buffer;
+};
 
 at::Tensor &copy_(
     at::Tensor &self, at::Tensor const &src, bool non_blocking = false)
@@ -256,9 +268,45 @@ at::Tensor &copy_(
 
         getWebGPUContext().getQueue().Submit(1, &command); // TODO: Submit is async, handle it correctly
     }
+    else if (src.device().is_privateuseone() && self.device().is_cpu())
+    {
+        TORCH_CHECK(src.dtype() == self.dtype());
+        TORCH_CHECK(src.numel() == self.numel());
+
+        auto src_data = static_cast<WebGPUAllocation *>(src.data_ptr());
+        auto self_data = self.data_ptr();
+        // src_data->buffer.
+        TORCH_CHECK(src_data->buffer.GetSize() >= src_size);
+
+        wgpu::BufferDescriptor buffer_desc;
+        buffer_desc.label = "WebGPU temp buffer";
+        buffer_desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
+        buffer_desc.size = src_size;
+        buffer_desc.mappedAtCreation = false;
+
+        WebGPUContext &ctx = getWebGPUContext();
+        wgpu::Buffer tmp = ctx.getDevice().CreateBuffer(&buffer_desc);
+
+        wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
+        encoder.CopyBufferToBuffer(src_data->buffer, 0, tmp, 0, src_size);
+        wgpu::CommandBuffer command = encoder.Finish();
+
+        ctx.getQueue().Submit(1, &command);
+
+        auto noop = [](wgpu::MapAsyncStatus, wgpu::StringView) {};
+
+        wgpu::Future map_async_future = tmp.MapAsync(wgpu::MapMode::Read, 0, src_size, wgpu::CallbackMode::WaitAnyOnly, noop);
+
+        ctx.getInstance().WaitAny(map_async_future, UINT64_MAX);
+
+        const void *mapped = tmp.GetConstMappedRange(0, src_size);
+        std::memcpy(self_data, mapped, src_size);
+        tmp.Unmap();
+    }
     else
     {
-        TORCH_CHECK(false, "copy_ to WebGPU is not supported for this source device");
+        constexpr c10::DispatchKeySet cpu_ks(c10::DispatchKey::CPU);
+        at::redispatch::copy_(cpu_ks, self, src, non_blocking);
     }
 
     return self;
@@ -268,6 +316,11 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
 {
     m.impl("empty.memory_format", TORCH_FN(empty_memory_format));
     m.impl("empty_strided", TORCH_FN(empty_strided));
+    m.impl("copy_", TORCH_FN(copy_));
+}
+
+TORCH_LIBRARY_IMPL(aten, CPU, m)
+{
     m.impl("copy_", TORCH_FN(copy_));
 }
 
