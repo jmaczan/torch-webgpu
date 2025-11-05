@@ -11,7 +11,10 @@
       "*.hpp": "cpp",
       "*.cuh": "cpp",
       "*.cu": "cpp",
-      "cstdlib": "cpp"
+      "cstdlib": "cpp",
+      "memory_resource": "cpp",
+      "sstream": "cpp",
+      "new": "cpp"
     },
 
   // Formatter per language

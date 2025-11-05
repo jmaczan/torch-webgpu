@@ -68,11 +68,22 @@ static WebGPUContext &getWebGPUContext()
     return webgpu_context;
 }
 
+struct WebGPUAllocation
+{
+    wgpu::Buffer buffer;
+    explicit WebGPUAllocation(wgpu::Buffer &&b) : buffer(std::move(b)) {}
+};
+
 struct WebGPUAllocator
 {
     void allocate(void **ptr, size_t size)
     {
-        *ptr = std::malloc(size);
+        wgpu::BufferDescriptor buffer_desc;
+        buffer_desc.label = "WebGPU buffer";
+        buffer_desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc;
+        buffer_desc.size = size;
+        buffer_desc.mappedAtCreation = false;
+        *ptr = new WebGPUAllocation(getWebGPUContext().getDevice().CreateBuffer(&buffer_desc));
     }
 };
 
@@ -84,7 +95,7 @@ static WebGPUAllocator &getWebGPUAllocator()
 
 static void WebGPUCachingHostDeleter(void *ptr)
 {
-    free(ptr);
+    delete static_cast<WebGPUAllocation *>(ptr);
 }
 
 static thread_local int current_webgpu_device = 0;
