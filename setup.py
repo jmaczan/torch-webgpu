@@ -24,6 +24,7 @@ setup(
             runtime_library_dirs=[
                 os.path.join(DAWN_PREFIX, "lib"),
             ],
+            extra_compile_args=["-g", "-O0"],
         ),
     ],
     cmdclass={"build_ext": BuildExtension},
