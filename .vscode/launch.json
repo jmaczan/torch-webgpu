@@ -1,0 +1,20 @@
+{
+    "configurations": [
+        {
+            "name": "Debug Python + C++ (torch_webgpu)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "tests/test_dev.py"
+            ],
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "externalConsole": false,
+            "stopAtEntry": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        }
+    ]
+}
