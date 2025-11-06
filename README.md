@@ -1,18 +1,23 @@
 # torch-webgpu
 WebGPU backend for PyTorch
 
-## Install
+A very early stage of development, limited functionality, lots of assumptions about data etc, like float32 only, contiguous data only. You probably don't want to use it yet, other than for playing around
+
+## Installation
 1. Clone this repo
 
 2. Install `google/dawn`
+
 Guide: https://github.com/google/dawn/blob/main/docs/quickstart-cmake.md. Set `DAWN_PREFIX=` to `dawn/install/Release` based on there is your `dawn` repo, like `DAWN_PREFIX=/home/user/dawn/install/Release`
 
 3. In this repo, run `./build.sh`
 
 ## Use
+In Python:
+
 `import torch_webgpu`
 
-And now you can use `device="webgpu"` and `to="webgpu"` to run computation on webpgu in pytorch!
+And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real webgpu!
 
 ## Device / to
 - [x] WebGPU -> WebGPU
