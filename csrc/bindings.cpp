@@ -228,14 +228,59 @@ struct BufferCopyContext
     wgpu::Buffer buffer;
 };
 
+at::Tensor &cpu_copy_with_webgpu(
+    at::Tensor &self, at::Tensor const &src, bool non_blocking = false)
+{
+    // TODO: take non_blocking into consideration
+    if (src.device().is_privateuseone() && self.device().is_cpu())
+    {
+        auto src_size = src.numel() * at::elementSize(src.dtype().toScalarType()); // TODO: probably some size check here?
+        auto self_size = self.numel() * at::elementSize(self.dtype().toScalarType());
+
+        TORCH_CHECK(src.dtype() == self.dtype());
+        TORCH_CHECK(src.numel() == self.numel());
+        TORCH_CHECK(src.is_contiguous());
+        TORCH_CHECK(self.is_contiguous());
+        TORCH_CHECK(self_size == src_size);
+        auto src_data = static_cast<WebGPUAllocation *>(src.data_ptr());
+        auto self_data = self.data_ptr();
+        TORCH_CHECK(src_data->buffer.GetSize() >= src_size);
+
+        wgpu::BufferDescriptor buffer_desc;
+        buffer_desc.label = "WebGPU temp buffer";
+        buffer_desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
+        buffer_desc.size = src_size;
+        buffer_desc.mappedAtCreation = false;
+
+        WebGPUContext &ctx = getWebGPUContext();
+        wgpu::Buffer tmp = ctx.getDevice().CreateBuffer(&buffer_desc);
+
+        wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
+        encoder.CopyBufferToBuffer(src_data->buffer, 0, tmp, 0, src_size);
+        wgpu::CommandBuffer command = encoder.Finish();
+
+        ctx.getQueue().Submit(1, &command);
+
+        auto noop = [](wgpu::MapAsyncStatus, wgpu::StringView) {};
+
+        wgpu::Future map_async_future = tmp.MapAsync(wgpu::MapMode::Read, 0, src_size, wgpu::CallbackMode::WaitAnyOnly, noop);
+
+        ctx.getInstance().WaitAny(map_async_future, UINT64_MAX);
+
+        const void *mapped = tmp.GetConstMappedRange(0, src_size);
+        std::memcpy(self_data, mapped, src_size);
+        tmp.Unmap();
+        return self;
+    }
+    else
+    {
+        return at::native::copy_(self, src, non_blocking);
+    }
+}
+
 at::Tensor &copy_(
     at::Tensor &self, at::Tensor const &src, bool non_blocking = false)
 {
-    if (!self.device().is_privateuseone() && !src.device().is_privateuseone())
-    {
-        constexpr c10::DispatchKeySet cpu_ks(c10::DispatchKey::CPU);
-        return at::redispatch::copy_(cpu_ks, self, src, non_blocking);
-    }
     // TODO: take non_blocking into consideration
 
     auto src_size = src.numel() * at::elementSize(src.dtype().toScalarType()); // TODO: probably some size check here?
@@ -276,49 +321,33 @@ at::Tensor &copy_(
         getWebGPUContext().getQueue().Submit(1, &command); // TODO: Submit is async, handle it correctly
         return self;
     }
-    else if (src.device().is_privateuseone() && self.device().is_cpu())
+    else
     {
-        TORCH_CHECK(src.dtype() == self.dtype());
-        TORCH_CHECK(src.numel() == self.numel());
-        TORCH_CHECK(src.is_contiguous());
-        TORCH_CHECK(self.is_contiguous());
-        TORCH_CHECK(self_size == src_size);
-        auto src_data = static_cast<WebGPUAllocation *>(src.data_ptr());
-        auto self_data = self.data_ptr();
-        // src_data->buffer.
-        TORCH_CHECK(src_data->buffer.GetSize() >= src_size);
+        return at::native::copy_(self, src, non_blocking);
+    }
+}
 
-        wgpu::BufferDescriptor buffer_desc;
-        buffer_desc.label = "WebGPU temp buffer";
-        buffer_desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
-        buffer_desc.size = src_size;
-        buffer_desc.mappedAtCreation = false;
+at::Tensor _copy_from(at::Tensor const &self, at::Tensor const &dst, bool non_blocking = false)
+{
+    auto &dst_non_const = const_cast<at::Tensor &>(dst);
 
-        WebGPUContext &ctx = getWebGPUContext();
-        wgpu::Buffer tmp = ctx.getDevice().CreateBuffer(&buffer_desc);
+    c10::DispatchKeySet ks;
 
-        wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
-        encoder.CopyBufferToBuffer(src_data->buffer, 0, tmp, 0, src_size);
-        wgpu::CommandBuffer command = encoder.Finish();
-
-        ctx.getQueue().Submit(1, &command);
-
-        auto noop = [](wgpu::MapAsyncStatus, wgpu::StringView) {};
-
-        wgpu::Future map_async_future = tmp.MapAsync(wgpu::MapMode::Read, 0, src_size, wgpu::CallbackMode::WaitAnyOnly, noop);
-
-        ctx.getInstance().WaitAny(map_async_future, UINT64_MAX);
-
-        const void *mapped = tmp.GetConstMappedRange(0, src_size);
-        std::memcpy(self_data, mapped, src_size);
-        tmp.Unmap();
-        return self;
+    if (dst.device().is_privateuseone())
+    {
+        ks = c10::DispatchKeySet(c10::DispatchKey::PrivateUse1);
+    }
+    else if (dst.device().is_cpu())
+    {
+        ks = c10::DispatchKeySet(c10::DispatchKey::CPU);
     }
     else
     {
-        constexpr c10::DispatchKeySet cpu_ks(c10::DispatchKey::CPU);
-        return at::redispatch::copy_(cpu_ks, self, src, non_blocking);
+        TORCH_CHECK(false, "Unsupported destination device in _copy_from");
     }
+
+    at::redispatch::copy_(ks, dst_non_const, self, non_blocking);
+    return dst;
 }
 
 at::Tensor add(at::Tensor const self, at::Tensor const other, at::Scalar alpha = 1)
@@ -490,11 +519,12 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     m.impl("empty.memory_format", TORCH_FN(empty_memory_format));
     m.impl("empty_strided", TORCH_FN(empty_strided));
     m.impl("copy_", TORCH_FN(copy_));
+    m.impl("_copy_from", TORCH_FN(_copy_from));
 }
 
 TORCH_LIBRARY_IMPL(aten, CPU, m)
 {
-    m.impl("copy_", TORCH_FN(copy_));
+    m.impl("copy_", TORCH_FN(cpu_copy_with_webgpu));
 }
 
 PyMODINIT_FUNC PyInit__C(void)
