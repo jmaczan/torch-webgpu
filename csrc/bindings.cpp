@@ -11,7 +11,7 @@
 #include <webgpu/webgpu.h>
 #include <webgpu/webgpu_cpp.h>
 #include <iostream>
-
+#include <ATen/native/CPUFallback.h>
 struct WebGPUContext
 {
     wgpu::Instance instance;
@@ -350,7 +350,7 @@ at::Tensor _copy_from(at::Tensor const &self, at::Tensor const &dst, bool non_bl
     return dst;
 }
 
-at::Tensor add(at::Tensor const self, at::Tensor const other, at::Scalar alpha = 1)
+at::Tensor add(at::Tensor const &self, at::Tensor const &other, at::Scalar const &alpha = 1)
 {
     WebGPUContext &ctx = getWebGPUContext();
     constexpr const char *addWGSL = R"wgsl(
@@ -434,7 +434,7 @@ at::Tensor add(at::Tensor const self, at::Tensor const other, at::Scalar alpha =
 
     wgpu::ComputePipeline pipeline = ctx.getDevice().CreateComputePipeline(&pipeline_descriptor);
 
-    // everything above shoudl be cached
+    // everything above should be cached
     TORCH_CHECK(self.dtype() == other.dtype());
     TORCH_CHECK(self.is_contiguous());
     TORCH_CHECK(other.is_contiguous());
@@ -520,6 +520,17 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     m.impl("empty_strided", TORCH_FN(empty_strided));
     m.impl("copy_", TORCH_FN(copy_));
     m.impl("_copy_from", TORCH_FN(_copy_from));
+    m.impl("add.Tensor", TORCH_FN(add));
+}
+
+static void webgpu_cpu_fallback_boxed(const c10::OperatorHandle &op, torch::jit::Stack *stack)
+{
+    at::native::cpu_fallback(op, stack);
+}
+
+TORCH_LIBRARY_IMPL(_, PrivateUse1, m)
+{
+    m.fallback(torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
 }
 
 TORCH_LIBRARY_IMPL(aten, CPU, m)

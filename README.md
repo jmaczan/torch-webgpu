@@ -35,7 +35,7 @@ And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real
 - [x] _copy_from
 - [x] to.device
 - [ ] to.dtype
-- [x] add.Tensor
+- [x] add.Tensor (f32, 1D)
 - [ ] add.Scalar
 - [ ] sub.Tensor
 - [ ] mul.Tensor
