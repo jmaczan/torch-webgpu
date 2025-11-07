@@ -24,7 +24,8 @@
       "span": "cpp",
       "regex": "cpp",
       "valarray": "cpp",
-      "optional": "cpp"
+      "optional": "cpp",
+      "iosfwd": "cpp"
     },
 
   // Formatter per language
