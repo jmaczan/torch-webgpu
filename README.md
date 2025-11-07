@@ -29,63 +29,64 @@ And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real
 - [ ] XLA <-> WebGPU
 
 ## ATen Ops
-- [x] empty.memory_format  
-- [x] empty_strided  
-- [x] copy_  
-- [x] to.device  
-- [ ] to.dtype  
-- [ ] add.Tensor  
-- [ ] add.Scalar  
-- [ ] sub.Tensor  
-- [ ] mul.Tensor  
-- [ ] div.Tensor  
-- [ ] neg  
-- [ ] pow.Tensor_Scalar  
-- [ ] eq.Tensor  
-- [ ] ne.Tensor  
-- [ ] lt.Tensor  
-- [ ] le.Tensor  
-- [ ] gt.Tensor  
-- [ ] ge.Tensor  
-- [ ] relu  
-- [ ] clamp_min  
-- [ ] sigmoid  
-- [ ] tanh  
-- [ ] exp  
-- [ ] log  
-- [ ] sqrt  
-- [ ] rsqrt  
-- [ ] abs  
-- [ ] round  
-- [ ] floor  
-- [ ] ceil  
-- [ ] view  
-- [ ] reshape  
-- [ ] transpose.int  
-- [ ] permute  
-- [ ] squeeze  
-- [ ] unsqueeze  
-- [ ] contiguous  
-- [ ] sum.dim_IntList  
-- [ ] mean.dim  
-- [ ] amax  
-- [ ] amin  
-- [ ] argmax  
-- [ ] argmin  
-- [ ] mm  
-- [ ] bmm  
-- [ ] matmul  
-- [ ] _log_softmax  
-- [ ] softmax.int  
-- [ ] layer_norm  
-- [ ] batch_norm  
-- [ ] conv2d  
-- [ ] conv2d_backward  
-- [ ] cat  
-- [ ] stack  
-- [ ] slice.Tensor  
-- [ ] index_select  
-- [ ] where.self  
+- [x] empty.memory_format
+- [x] empty_strided
+- [x] copy_
+- [x] _copy_from
+- [x] to.device
+- [ ] to.dtype
+- [x] add.Tensor
+- [ ] add.Scalar
+- [ ] sub.Tensor
+- [ ] mul.Tensor
+- [ ] div.Tensor
+- [ ] neg
+- [ ] pow.Tensor_Scalar
+- [ ] eq.Tensor
+- [ ] ne.Tensor
+- [ ] lt.Tensor
+- [ ] le.Tensor
+- [ ] gt.Tensor
+- [ ] ge.Tensor
+- [ ] relu
+- [ ] clamp_min
+- [ ] sigmoid
+- [ ] tanh
+- [ ] exp
+- [ ] log
+- [ ] sqrt
+- [ ] rsqrt
+- [ ] abs
+- [ ] round
+- [ ] floor
+- [ ] ceil
+- [ ] view
+- [ ] reshape
+- [ ] transpose.int
+- [ ] permute
+- [ ] squeeze
+- [ ] unsqueeze
+- [ ] contiguous
+- [ ] sum.dim_IntList
+- [ ] mean.dim
+- [ ] amax
+- [ ] amin
+- [ ] argmax
+- [ ] argmin
+- [ ] mm
+- [ ] bmm
+- [ ] matmul
+- [ ] _log_softmax
+- [ ] softmax.int
+- [ ] layer_norm
+- [ ] batch_norm
+- [ ] conv2d
+- [ ] conv2d_backward
+- [ ] cat
+- [ ] stack
+- [ ] slice.Tensor
+- [ ] index_select
+- [ ] where.self
 - [ ] clamp
 
 
