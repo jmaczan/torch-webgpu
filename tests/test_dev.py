@@ -20,7 +20,7 @@ def main():
     print("allclose:", torch.allclose(cpu, cpu2))
     print("vs original:", torch.allclose(cpu, cpu_src), torch.allclose(cpu2, cpu_src))
     x = wgpu + wgpu
-    print(x)
+    print(x.cpu())
 
 
 if __name__ == "__main__":
