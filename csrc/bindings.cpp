@@ -434,7 +434,7 @@ at::Tensor add(at::Tensor const &self, at::Tensor const &other, at::Scalar const
 
     wgpu::ComputePipeline pipeline = ctx.getDevice().CreateComputePipeline(&pipeline_descriptor);
 
-    // everything above should be cached
+    // everything above should be cached, uniform (params) perhaps too?
     TORCH_CHECK(self.dtype() == other.dtype());
     TORCH_CHECK(self.is_contiguous());
     TORCH_CHECK(other.is_contiguous());
@@ -519,6 +519,20 @@ at::Tensor view(at::Tensor const &self, at::IntArrayRef size)
     return at::native::view(self, size);
 }
 
+const at::Tensor &resize_(at::Tensor const &self, at::IntArrayRef size, c10::optional<c10::MemoryFormat> format)
+{
+    TORCH_CHECK(self.is_contiguous());
+    auto result = at::native::resize_(self, size, format);
+    return result;
+}
+
+at::Tensor _copy_from_and_resize(at::Tensor const &self, at::Tensor const &dst)
+{
+    TORCH_CHECK(self.is_contiguous());
+    dst.resize_(self.sizes());
+    return dst.copy_(self);
+}
+
 static void webgpu_cpu_fallback_boxed(const c10::OperatorHandle &op, torch::jit::Stack *stack)
 {
     at::native::cpu_fallback(op, stack);
@@ -532,9 +546,15 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     m.impl("_copy_from", TORCH_FN(_copy_from));
     m.impl("add.Tensor", TORCH_FN(add));
     m.impl("view", TORCH_FN(view));
+    m.impl("resize_", TORCH_FN(resize_));
+    m.impl("_copy_from_and_resize", TORCH_FN(_copy_from_and_resize));
 
     m.impl("abs", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
     m.impl("ne.Scalar_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+    m.impl("eq.Tensor_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+    m.impl("mul.out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+    m.impl("bitwise_and.Tensor_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+    m.impl("masked_select", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
 }
 
 TORCH_LIBRARY_IMPL(aten, CPU, m)
