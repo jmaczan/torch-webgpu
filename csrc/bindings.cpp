@@ -534,6 +534,7 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     m.impl("view", TORCH_FN(view));
 
     m.impl("abs", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+    m.impl("ne.Scalar_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
 }
 
 TORCH_LIBRARY_IMPL(aten, CPU, m)
