@@ -28,11 +28,14 @@ This list helps me pick up what to work on next, aside of adding new ops
 - contiguous data only
 - (mostly) same dtypes of arguments expected; sporadic dtype conversions on CPU
 - many ops fallback to CPU
-- 1D-only tensor ops
-- zero unit tests
 - shaders not yet cached (see `add.Tensor`)
-- one big beautiful™ `bindings.cpp` file
+- just float32 supported
 - probably at:: and c10:: mixed somewhere when using pytorch imports
+- no broadcasting
+- no storage offset
+- something missing about asynchronous webgpu, don't remember what exactly now
+- zero unit tests
+- one big beautiful™ `bindings.cpp` file
 
 ## Device / to
 - [x] WebGPU -> WebGPU
@@ -49,7 +52,7 @@ This list helps me pick up what to work on next, aside of adding new ops
 - [x] copy_
 - [x] _copy_from
 - [x] to.device
-- [x] add.Tensor (f32, 1D)
+- [x] add.Tensor (f32)
 - [x] ne.Scalar
 - [x] bitwise_and.Tensor
 - [x] eq.Tensor
