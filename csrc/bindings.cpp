@@ -514,6 +514,11 @@ at::Tensor add(at::Tensor const &self, at::Tensor const &other, at::Scalar const
     return out;
 }
 
+static void webgpu_cpu_fallback_boxed(const c10::OperatorHandle &op, torch::jit::Stack *stack)
+{
+    at::native::cpu_fallback(op, stack);
+}
+
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
 {
     m.impl("empty.memory_format", TORCH_FN(empty_memory_format));
@@ -521,16 +526,8 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     m.impl("copy_", TORCH_FN(copy_));
     m.impl("_copy_from", TORCH_FN(_copy_from));
     m.impl("add.Tensor", TORCH_FN(add));
-}
 
-static void webgpu_cpu_fallback_boxed(const c10::OperatorHandle &op, torch::jit::Stack *stack)
-{
-    at::native::cpu_fallback(op, stack);
-}
-
-TORCH_LIBRARY_IMPL(_, PrivateUse1, m)
-{
-    m.fallback(torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+    m.impl("abs", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
 }
 
 TORCH_LIBRARY_IMPL(aten, CPU, m)
