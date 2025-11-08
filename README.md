@@ -1,7 +1,9 @@
 # torch-webgpu
-WebGPU backend for PyTorch
+Experimental WebGPU backend for PyTorch
 
-A very early stage of development, limited functionality, lots of assumptions about data etc, like float32 only, contiguous data only. You probably don't want to use it yet, other than for playing around
+A very early stage of development, with limited functionality, lots of assumptions about data etc, like float32 only, contiguous data only. You probably don't want to use it yet, other than for playing around or contributing
+
+Even though I code it after hours and in addition to contributing to PyTorch compiler, I'm serious about this project. I'd like to upstream the WebGPU backend to the PyTorch once we get good ops coverage, performance and a long tail of small things that have to work (different dtypes, etc). Estimated: late 2026
 
 ## Installation
 1. Clone this repo
@@ -19,6 +21,19 @@ In Python:
 
 And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real webgpu!
 
+## Rough edges
+
+This list helps me pick up what to work on next, aside of adding new ops
+
+- contiguous data only
+- (mostly) same dtypes of arguments expected; sporadic dtype conversions on CPU
+- many ops fallback to CPU
+- 1D-only tensor ops
+- zero unit tests
+- shaders not yet cached (see `add.Tensor`)
+- one big beautiful™ `bindings.cpp` file
+- probably at:: and c10:: mixed somewhere when using pytorch imports
+
 ## Device / to
 - [x] WebGPU -> WebGPU
 - [x] WebGPU -> CPU
@@ -34,15 +49,20 @@ And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real
 - [x] copy_
 - [x] _copy_from
 - [x] to.device
-- [ ] to.dtype
 - [x] add.Tensor (f32, 1D)
+- [x] ne.Scalar
+- [x] bitwise_and.Tensor
+- [x] eq.Tensor
+- [x] abs
+- [x] view
+- [x] masked_select
+- [ ] to.dtype
 - [ ] add.Scalar
 - [ ] sub.Tensor
 - [ ] mul.Tensor
 - [ ] div.Tensor
 - [ ] neg
 - [ ] pow.Tensor_Scalar
-- [ ] eq.Tensor
 - [ ] ne.Tensor
 - [ ] lt.Tensor
 - [ ] le.Tensor
@@ -56,11 +76,9 @@ And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real
 - [ ] log
 - [ ] sqrt
 - [ ] rsqrt
-- [ ] abs
 - [ ] round
 - [ ] floor
 - [ ] ceil
-- [ ] view
 - [ ] reshape
 - [ ] transpose.int
 - [ ] permute

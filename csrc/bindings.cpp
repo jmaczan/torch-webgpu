@@ -12,6 +12,7 @@
 #include <webgpu/webgpu_cpp.h>
 #include <iostream>
 #include <ATen/native/CPUFallback.h>
+
 struct WebGPUContext
 {
     wgpu::Instance instance;
@@ -551,9 +552,12 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
 
     m.impl("abs", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
     m.impl("ne.Scalar_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+    m.impl("ne.Scalar", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
     m.impl("eq.Tensor_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+    m.impl("eq.Tensor", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
     m.impl("mul.out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
     m.impl("bitwise_and.Tensor_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+    m.impl("bitwise_and.Tensor", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
     m.impl("masked_select", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
 }
 

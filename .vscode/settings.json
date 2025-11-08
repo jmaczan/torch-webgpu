@@ -25,7 +25,8 @@
       "regex": "cpp",
       "valarray": "cpp",
       "optional": "cpp",
-      "iosfwd": "cpp"
+      "iosfwd": "cpp",
+      "iostream": "cpp"
     },
 
   // Formatter per language
