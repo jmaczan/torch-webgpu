@@ -357,6 +357,7 @@ at::Tensor add(at::Tensor const &self, at::Tensor const &other, at::Scalar const
     constexpr const char *addWGSL = R"wgsl(
     struct Params {
         length: u32,
+        alpha: f32,
     };
 
     @group(0) @binding(0)
@@ -375,7 +376,7 @@ at::Tensor add(at::Tensor const &self, at::Tensor const &other, at::Scalar const
     fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let i = gid.x;
         if (i >= params.length) { return; }
-        outBuffer[i] = selfBuffer[i] + otherBuffer[i];
+        outBuffer[i] = selfBuffer[i] + params.alpha * otherBuffer[i];
     }
     )wgsl";
 
@@ -457,8 +458,9 @@ at::Tensor add(at::Tensor const &self, at::Tensor const &other, at::Scalar const
     struct Params
     {
         uint32_t length;
+        float alpha;
     };
-    Params params{numel};
+    Params params{numel, alpha.to<float>()};
 
     wgpu::BufferDescriptor uniform_descriptor{};
     uniform_descriptor.label = "Params";
