@@ -401,6 +401,7 @@ struct Params {
     length: u32,
     ndim: u32,
     alpha: f32,
+    _pad: u32,
     out_strides: array<u32, MAX_DIMS>,
     self_strides: array<u32, MAX_DIMS>,
     other_strides: array<u32, MAX_DIMS>,
@@ -574,6 +575,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 uint32_t length;
                 uint32_t ndim;
                 float alpha;
+                uint32_t _pad; // allegedly, it's a padding we need for webgpu
+
                 uint32_t out_strides[MAX_DIMS];
                 uint32_t self_strides[MAX_DIMS];
                 uint32_t other_strides[MAX_DIMS];
@@ -582,8 +585,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
             Params params{};
             params.length = static_cast<uint32_t>(iter.numel());
-            params.alpha = alpha.to<float>();
             params.ndim = static_cast<uint32_t>(ndim);
+            params.alpha = alpha.to<float>();
+            params._pad = 0;
 
             for (uint32_t d = 0; d < MAX_DIMS; ++d)
             {
