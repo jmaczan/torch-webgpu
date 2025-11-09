@@ -434,9 +434,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         remaining = remaining / s;
     }
 
-    var idx_out: u32 = 0;
-    var idx_self: u32 = 0;
-    var idx_other: u32 = 0;
+    var idx_out: u32 = 0u;
+    var idx_self: u32 = 0u;
+    var idx_other: u32 = 0u;
 
     for (var d: u32 = 0u; d < params.ndim; d++) {
         let c = coord[d];
@@ -563,17 +563,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             WebGPUAllocation *other_allocation = static_cast<WebGPUAllocation *>(iter.data_ptr(2));
 
             wgpu::Buffer self_buffer = self_allocation->buffer;
-            self_buffer.GetSize();
             wgpu::Buffer other_buffer = other_allocation->buffer;
             wgpu::Buffer out_buffer = out_allocation->buffer;
 
             constexpr uint32_t MAX_DIMS = 8;
+            TORCH_CHECK(ndim <= MAX_DIMS);
 
             struct Params
             {
                 uint32_t length;
-                float alpha;
                 uint32_t ndim;
+                float alpha;
                 uint32_t out_strides[MAX_DIMS];
                 uint32_t self_strides[MAX_DIMS];
                 uint32_t other_strides[MAX_DIMS];
