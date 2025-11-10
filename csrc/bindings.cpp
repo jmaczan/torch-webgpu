@@ -670,7 +670,30 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         REGISTER_PRIVATEUSE1_DISPATCH(add_stub, &add_kernel_webgpu);
+
     }
+}
+
+at::Tensor &add_out_webgpu(
+    const at::Tensor &self,
+    const at::Tensor &other,
+    const at::Scalar &alpha,
+    at::Tensor &out)
+{
+
+    at::TensorIteratorConfig config;
+    config.set_check_mem_overlap(true);
+    config.add_output(out);
+    config.add_input(self);
+    config.add_input(other);
+    config.promote_inputs_to_common_dtype(true);
+    config.cast_common_dtype_to_outputs(true);
+    config.check_all_same_device(false);
+    auto iter = config.build();
+
+    at::native::add_kernel_webgpu(iter, alpha);
+
+    return out;
 }
 
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -682,6 +705,7 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     m.impl("view", TORCH_FN(view));
     m.impl("resize_", TORCH_FN(resize_));
     m.impl("_copy_from_and_resize", TORCH_FN(_copy_from_and_resize));
+    m.impl("add.out", TORCH_FN(add_out_webgpu));
 
     m.impl("abs", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
     m.impl("ne.Scalar_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
