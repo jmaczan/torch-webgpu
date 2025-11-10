@@ -287,26 +287,29 @@ at::Tensor &copy_(
 {
     // TODO: take non_blocking into consideration
 
-    auto src_size = src.numel() * at::elementSize(src.dtype().toScalarType()); // TODO: probably some size check here?
-    auto self_size = self.numel() * at::elementSize(self.dtype().toScalarType());
-
     if (src.device().is_cpu() && self.device().is_privateuseone())
     {
         TORCH_CHECK(src.dtype() == self.dtype());
         TORCH_CHECK(src.numel() == self.numel());
-        TORCH_CHECK(src.is_contiguous());
-        TORCH_CHECK(self.is_contiguous());
-        TORCH_CHECK(self_size == src_size);
-        auto src_data = src.data_ptr();
-        auto self_data = static_cast<WebGPUAllocation *>(self.data_ptr());
+        TORCH_CHECK(self.is_contiguous(), "WebGPU doesn't support copying from CPU to non-contiguous WebGPU tensor, yet");
 
-        TORCH_CHECK(self_data->buffer.GetSize() >= src_size);
+        at::Tensor src_contiguous = src.is_contiguous() ? src : src.contiguous();
+        uint64_t write_nbytes = static_cast<u_int64_t>(src_contiguous.numel()) * static_cast<uint64_t>(at::elementSize(src_contiguous.scalar_type()));
 
-        getWebGPUContext().getQueue().WriteBuffer(self_data->buffer, 0, src_data, src_size);
+        auto self_data = static_cast<WebGPUAllocation *>(self.storage().data_ptr().get());
+        auto self_storage_offset = self.storage_offset();
+        TORCH_CHECK(self_storage_offset >= 0, "WebGPU doesn't support negative offset yet");
+        uint64_t buffer_offset = static_cast<uint64_t>(self_storage_offset) * static_cast<uint64_t>(at::elementSize(self.scalar_type()));
+
+        TORCH_CHECK(self_data->buffer.GetSize() >= buffer_offset + write_nbytes);
+
+        getWebGPUContext().getQueue().WriteBuffer(self_data->buffer, buffer_offset, src_contiguous.data_ptr(), write_nbytes);
         return self;
     }
     else if (src.device().is_privateuseone() && self.device().is_privateuseone())
     {
+        auto self_size = self.numel() * at::elementSize(self.dtype().toScalarType());
+        auto src_size = src.numel() * at::elementSize(src.dtype().toScalarType());
         TORCH_CHECK(src.dtype() == self.dtype());
         TORCH_CHECK(src.numel() == self.numel());
         TORCH_CHECK(src.is_contiguous());
