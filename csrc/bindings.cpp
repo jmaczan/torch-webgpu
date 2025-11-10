@@ -308,25 +308,39 @@ at::Tensor &copy_(
     }
     else if (src.device().is_privateuseone() && self.device().is_privateuseone())
     {
-        auto self_size = self.numel() * at::elementSize(self.dtype().toScalarType());
-        auto src_size = src.numel() * at::elementSize(src.dtype().toScalarType());
-        TORCH_CHECK(src.dtype() == self.dtype());
-        TORCH_CHECK(src.numel() == self.numel());
-        TORCH_CHECK(src.is_contiguous());
-        TORCH_CHECK(self.is_contiguous());
-        TORCH_CHECK(self_size == src_size);
-        auto src_data = static_cast<WebGPUAllocation *>(src.data_ptr());
-        auto self_data = static_cast<WebGPUAllocation *>(self.data_ptr());
+        if (src.is_contiguous() and self.is_contiguous())
+        {
+            // TODO: handle a scenario when src and self share the storage and their memory ranges overlap
 
-        TORCH_CHECK(src_data->buffer.GetSize() >= src_size);
-        TORCH_CHECK(self_data->buffer.GetSize() >= src_size);
+            TORCH_CHECK(src.dtype() == self.dtype());
+            TORCH_CHECK(src.numel() == self.numel());
 
-        wgpu::CommandEncoder encoder = getWebGPUContext().getDevice().CreateCommandEncoder();
-        encoder.CopyBufferToBuffer(src_data->buffer, 0, self_data->buffer, 0, src_size);
-        wgpu::CommandBuffer command = encoder.Finish();
+            auto src_data = static_cast<WebGPUAllocation *>(src.storage().data_ptr().get());
+            auto src_storage_offset = src.storage_offset();
+            TORCH_CHECK(src_storage_offset >= 0, "WebGPU doesn't support negative offset yet");
+            uint64_t src_buffer_offset = static_cast<uint64_t>(src_storage_offset) * static_cast<uint64_t>(at::elementSize(src.scalar_type()));
 
-        getWebGPUContext().getQueue().Submit(1, &command); // TODO: Submit is async, handle it correctly
-        return self;
+            auto self_data = static_cast<WebGPUAllocation *>(self.storage().data_ptr().get());
+            auto self_storage_offset = self.storage_offset();
+            TORCH_CHECK(self_storage_offset >= 0, "WebGPU doesn't support negative offset yet");
+            uint64_t self_buffer_offset = static_cast<uint64_t>(self_storage_offset) * static_cast<uint64_t>(at::elementSize(self.scalar_type()));
+
+            uint64_t write_nbytes = static_cast<uint64_t>(src.numel()) * at::elementSize(src.dtype().toScalarType());
+            TORCH_CHECK(src_data->buffer.GetSize() >= src_buffer_offset + write_nbytes);
+            TORCH_CHECK(self_data->buffer.GetSize() >= self_buffer_offset + write_nbytes);
+
+            wgpu::CommandEncoder encoder = getWebGPUContext().getDevice().CreateCommandEncoder();
+            encoder.CopyBufferToBuffer(src_data->buffer, src_buffer_offset, self_data->buffer, self_buffer_offset, write_nbytes);
+            wgpu::CommandBuffer command = encoder.Finish();
+
+            getWebGPUContext().getQueue().Submit(1, &command); // TODO: Submit is async, handle it correctly
+            return self;
+        }
+        else
+        {
+            //
+            // TODO
+        }
     }
     else
     {
