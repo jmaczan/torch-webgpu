@@ -242,11 +242,13 @@ at::Tensor &cpu_copy_with_webgpu(
         auto self_size = self.numel() * at::elementSize(self.dtype().toScalarType());
 
         TORCH_CHECK(src.dtype() == self.dtype());
+        TORCH_CHECK(src.dtype() == at::ScalarType::Float);
         TORCH_CHECK(src.numel() == self.numel());
         TORCH_CHECK(src.is_contiguous());
         TORCH_CHECK(self.is_contiguous());
         TORCH_CHECK(self_size == src_size);
-        auto src_data = static_cast<WebGPUAllocation *>(src.data_ptr());
+        auto src_data = static_cast<WebGPUAllocation *>(src.storage().data_ptr().get());
+
         auto self_data = self.data_ptr();
         TORCH_CHECK(src_data->buffer.GetSize() >= src_size);
 
