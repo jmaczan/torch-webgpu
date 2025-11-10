@@ -402,6 +402,12 @@ struct Params {
     ndim: u32,
     alpha: f32,
     _pad: u32,
+
+    out_offset: u32,
+    self_offset: u32,
+    other_offset: u32,
+    _pad2: u32,
+
     out_strides: array<u32, MAX_DIMS>,
     self_strides: array<u32, MAX_DIMS>,
     other_strides: array<u32, MAX_DIMS>,
@@ -445,6 +451,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         idx_self += c * params.self_strides[d];
         idx_other += c * params.other_strides[d];
     }
+
+    idx_out += params.out_offset;
+    idx_self += params.self_offset;
+    idx_other += params.other_offset;
 
     outBuffer[idx_out] = selfBuffer[idx_self] + params.alpha * otherBuffer[idx_other];
 }
@@ -559,13 +569,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
             auto length = iter.numel();
 
-            WebGPUAllocation *out_allocation = static_cast<WebGPUAllocation *>(iter.data_ptr(0));
-            WebGPUAllocation *self_allocation = static_cast<WebGPUAllocation *>(iter.data_ptr(1));
-            WebGPUAllocation *other_allocation = static_cast<WebGPUAllocation *>(iter.data_ptr(2));
+            WebGPUAllocation *out_allocation = static_cast<WebGPUAllocation *>(out.storage().data_ptr().get());
+            WebGPUAllocation *self_allocation = static_cast<WebGPUAllocation *>(self.storage().data_ptr().get());
+            WebGPUAllocation *other_allocation = static_cast<WebGPUAllocation *>(other.storage().data_ptr().get());
 
             wgpu::Buffer self_buffer = self_allocation->buffer;
             wgpu::Buffer other_buffer = other_allocation->buffer;
             wgpu::Buffer out_buffer = out_allocation->buffer;
+
+            auto out_offset = out.storage_offset();
+            auto self_offset = self.storage_offset();
+            auto other_offset = other.storage_offset();
 
             constexpr uint32_t MAX_DIMS = 8;
             TORCH_CHECK(ndim <= MAX_DIMS);
@@ -576,6 +590,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 uint32_t ndim;
                 float alpha;
                 uint32_t _pad; // allegedly, it's a padding we need for webgpu
+
+                uint32_t out_offset;
+                uint32_t self_offset;
+                uint32_t other_offset;
+                uint32_t _pad2;
 
                 uint32_t out_strides[MAX_DIMS];
                 uint32_t self_strides[MAX_DIMS];
@@ -588,6 +607,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             params.ndim = static_cast<uint32_t>(ndim);
             params.alpha = alpha.to<float>();
             params._pad = 0;
+
+            params.out_offset = static_cast<uint32_t>(out_offset);
+            params.self_offset = static_cast<uint32_t>(self_offset);
+            params.other_offset = static_cast<uint32_t>(other_offset);
+            params._pad2 = 0;
 
             for (uint32_t d = 0; d < MAX_DIMS; ++d)
             {
