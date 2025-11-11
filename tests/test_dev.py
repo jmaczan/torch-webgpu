@@ -2,19 +2,16 @@ import torch
 import torch_webgpu
 
 
-def main():
-    cpu = torch.arange(16, dtype=torch.float32).reshape(4, 4)
-
-    wgpu = cpu.to("webgpu")
-
-    print("cpu:\n", cpu)
-    print("adding two tensors on webgpu!")
-    x = wgpu + wgpu
-    print(wgpu.device)
-    print(wgpu.size())
-    print(wgpu.shape)
-    print(x.cpu())
-
-
 if __name__ == "__main__":
-    main()
+    a = torch.tensor(
+        [
+            [-2.3, 5.2, -999],
+            [-5.6, -3333.2, 321.6],
+        ],
+    )
+    print(a)
+    b = a.to("webgpu")
+    print(b.device)
+    b = b.relu()
+    b = b.to("cpu")
+    print(b, b.device)

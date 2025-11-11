@@ -11,8 +11,9 @@ setup(
     ext_modules=[
         CppExtension(
             name="torch_webgpu._C",
-            sources=glob.glob("csrc/*.cpp"),
+            sources=glob.glob("csrc/**/*.cpp", recursive=True),
             include_dirs=[
+                os.path.join("csrc"),
                 os.path.join(DAWN_PREFIX, "include"),
             ],
             library_dirs=[
