@@ -4,16 +4,17 @@ from setuptools import setup
 from torch.utils.cpp_extension import CppExtension, BuildExtension
 
 DAWN_PREFIX = "/home/jedrzej/dev/dawn/install/Release"
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
 setup(
     name="torch-webgpu",
-    description="WebGPU for PyTorch",
+    description="WebGPU backend for PyTorch",
     ext_modules=[
         CppExtension(
             name="torch_webgpu._C",
             sources=glob.glob("csrc/**/*.cpp", recursive=True),
             include_dirs=[
-                os.path.join("csrc"),
+                os.path.join(ROOT, "csrc"),
                 os.path.join(DAWN_PREFIX, "include"),
             ],
             library_dirs=[
