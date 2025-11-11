@@ -16,39 +16,10 @@
 #include <iostream>
 #include <ATen/native/CPUFallback.h>
 #include "webgpu_context.h"
+#include "webgpu_allocator.h"
 
 namespace torch_webgpu
 {
-    struct WebGPUAllocation
-    {
-        wgpu::Buffer buffer;
-        explicit WebGPUAllocation(wgpu::Buffer &&b) : buffer(std::move(b)) {}
-    };
-
-    struct WebGPUAllocator
-    {
-        void allocate(void **ptr, size_t size)
-        {
-            wgpu::BufferDescriptor buffer_desc;
-            buffer_desc.label = "WebGPU buffer";
-            buffer_desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::Storage;
-            buffer_desc.size = size;
-            buffer_desc.mappedAtCreation = false;
-            *ptr = new WebGPUAllocation(getWebGPUContext().getDevice().CreateBuffer(&buffer_desc));
-        }
-    };
-
-    static WebGPUAllocator &getWebGPUAllocator()
-    {
-        static WebGPUAllocator webgpu_allocator;
-        return webgpu_allocator;
-    }
-
-    static void WebGPUCachingHostDeleter(void *ptr)
-    {
-        delete static_cast<WebGPUAllocation *>(ptr);
-    }
-
     static thread_local int current_webgpu_device = 0;
     static int webgpu_device_count = 1;
     static int webgpu_stream_count = 1;
