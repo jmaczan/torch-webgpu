@@ -1,3 +1,4 @@
+#include <torch/library.h>
 #include <webgpu/webgpu_cpp.h>
 #include "webgpu_context.h"
 #include "webgpu_allocator.h"
@@ -25,6 +26,32 @@ namespace torch_webgpu
         void WebGPUCachingHostDeleter(void *ptr)
         {
             delete static_cast<WebGPUAllocation *>(ptr);
+        }
+
+        at::DataPtr WebGPUCachingAllocator::allocate(size_t size)
+        {
+            void *ptr = nullptr;
+            if (size > 0)
+            {
+                core::getWebGPUAllocator().allocate(&ptr, size);
+            }
+            return {ptr, ptr, &core::WebGPUCachingHostDeleter, at::DeviceType::PrivateUse1};
+        }
+
+        at::DeleterFnPtr WebGPUCachingAllocator::raw_deleter() const
+        {
+            return &core::WebGPUCachingHostDeleter;
+        }
+
+        void WebGPUCachingAllocator::copy_data(void *dest, const void *src, std::size_t count) const
+        {
+            TORCH_CHECK_NOT_IMPLEMENTED(false, "copy_data not implemented in WebGPUCachingAllocator");
+        }
+
+        at::Allocator *getWebGPUCachingAllocator()
+        {
+            static WebGPUCachingAllocator webgpu_caching_allocator;
+            return &webgpu_caching_allocator;
         }
     }
 }

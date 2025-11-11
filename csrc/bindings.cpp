@@ -24,36 +24,6 @@ namespace torch_webgpu
 
     C10_REGISTER_GUARD_IMPL(PrivateUse1, core::WebGPUGuardImpl);
 
-    // not really caching, yet
-    struct WebGPUCachingAllocator final : public c10::Allocator
-    {
-        at::DataPtr allocate(size_t size) override
-        {
-            void *ptr = nullptr;
-            if (size > 0)
-            {
-                core::getWebGPUAllocator().allocate(&ptr, size);
-            }
-            return {ptr, ptr, &core::WebGPUCachingHostDeleter, at::DeviceType::PrivateUse1};
-        }
-
-        at::DeleterFnPtr raw_deleter() const override
-        {
-            return &core::WebGPUCachingHostDeleter;
-        }
-
-        void copy_data(void *dest, const void *src, std::size_t count) const
-        {
-            TORCH_CHECK_NOT_IMPLEMENTED(false, "copy_data not implemented in WebGPUCachingAllocator");
-        }
-    };
-
-    at::Allocator *getWebGPUCachingAllocator()
-    {
-        static WebGPUCachingAllocator webgpu_caching_allocator;
-        return &webgpu_caching_allocator;
-    }
-
     at::Tensor empty_memory_format(
         c10::IntArrayRef size,
         c10::optional<at::ScalarType> dtype_opt,
@@ -62,7 +32,7 @@ namespace torch_webgpu
         c10::optional<bool> pin_memory_opt,
         c10::optional<c10::MemoryFormat> memory_format_opt)
     {
-        auto allocator = getWebGPUCachingAllocator();
+        auto allocator = core::getWebGPUCachingAllocator();
         constexpr c10::DispatchKeySet privateuse1_ks(c10::DispatchKey::PrivateUse1);
         return at::detail::empty_generic(size, allocator, privateuse1_ks, dtype_or_default(dtype_opt), memory_format_opt);
     }
@@ -75,7 +45,7 @@ namespace torch_webgpu
         c10::optional<at::Device> device_opt,
         c10::optional<bool> pin_memory_opt)
     {
-        auto allocator = getWebGPUCachingAllocator();
+        auto allocator = core::getWebGPUCachingAllocator();
         constexpr c10::DispatchKeySet privateuse1_ks(c10::DispatchKey::PrivateUse1);
         return at::detail::empty_strided_generic(size, stride, allocator, privateuse1_ks, dtype_or_default(dtype_opt));
     }

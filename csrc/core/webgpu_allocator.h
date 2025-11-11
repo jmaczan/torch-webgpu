@@ -20,5 +20,17 @@ namespace torch_webgpu
         WebGPUAllocator &getWebGPUAllocator();
 
         void WebGPUCachingHostDeleter(void *ptr);
+
+        // not really caching, yet
+        struct WebGPUCachingAllocator final : public c10::Allocator
+        {
+            at::DataPtr allocate(size_t size) override;
+
+            at::DeleterFnPtr raw_deleter() const override;
+
+            void copy_data(void *dest, const void *src, std::size_t count) const;
+        };
+
+        at::Allocator *getWebGPUCachingAllocator();
     }
 }
