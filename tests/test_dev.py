@@ -15,3 +15,8 @@ if __name__ == "__main__":
     b = b.relu()
     b = b.to("cpu")
     print(b, b.device)
+    b = b.to("webgpu")
+    c = b + b
+    print(c.device)
+    c = c.to("cpu")
+    print(c)
