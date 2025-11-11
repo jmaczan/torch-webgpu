@@ -2,18 +2,21 @@
 #include <webgpu/webgpu_cpp.h>
 #include <iostream>
 
-struct WebGPUContext
+namespace torch_webgpu
 {
-    wgpu::Instance instance;
-    wgpu::Adapter adapter;
-    wgpu::Device device;
-    wgpu::Queue queue;
+    struct WebGPUContext
+    {
+        wgpu::Instance instance;
+        wgpu::Adapter adapter;
+        wgpu::Device device;
+        wgpu::Queue queue;
 
-    WebGPUContext();
+        WebGPUContext();
 
-    wgpu::Instance getInstance();
-    wgpu::Device getDevice();
-    wgpu::Queue getQueue();
-};
+        wgpu::Instance getInstance();
+        wgpu::Device getDevice();
+        wgpu::Queue getQueue();
+    };
 
-WebGPUContext &getWebGPUContext();
+    WebGPUContext &getWebGPUContext();
+}
