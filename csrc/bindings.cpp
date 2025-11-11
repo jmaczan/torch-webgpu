@@ -15,8 +15,8 @@
 #include <webgpu/webgpu_cpp.h>
 #include <iostream>
 #include <ATen/native/CPUFallback.h>
-#include "webgpu_context.h"
-#include "webgpu_allocator.h"
+#include "core/webgpu_context.h"
+#include "core/webgpu_allocator.h"
 
 namespace torch_webgpu
 {
@@ -83,14 +83,14 @@ namespace torch_webgpu
             void *ptr = nullptr;
             if (size > 0)
             {
-                getWebGPUAllocator().allocate(&ptr, size);
+                core::getWebGPUAllocator().allocate(&ptr, size);
             }
-            return {ptr, ptr, &WebGPUCachingHostDeleter, at::DeviceType::PrivateUse1};
+            return {ptr, ptr, &core::WebGPUCachingHostDeleter, at::DeviceType::PrivateUse1};
         }
 
         at::DeleterFnPtr raw_deleter() const override
         {
-            return &WebGPUCachingHostDeleter;
+            return &core::WebGPUCachingHostDeleter;
         }
 
         void copy_data(void *dest, const void *src, std::size_t count) const
@@ -152,7 +152,7 @@ namespace torch_webgpu
             TORCH_CHECK(src.is_contiguous());
             TORCH_CHECK(self.is_contiguous());
             TORCH_CHECK(self_size == src_size);
-            auto src_data = static_cast<WebGPUAllocation *>(src.storage().data_ptr().get());
+            auto src_data = static_cast<core::WebGPUAllocation *>(src.storage().data_ptr().get());
 
             auto self_data = self.data_ptr();
             TORCH_CHECK(src_data->buffer.GetSize() >= src_size);
@@ -163,7 +163,7 @@ namespace torch_webgpu
             buffer_desc.size = src_size;
             buffer_desc.mappedAtCreation = false;
 
-            WebGPUContext &ctx = getWebGPUContext();
+            core::WebGPUContext &ctx = core::getWebGPUContext();
             wgpu::Buffer tmp = ctx.getDevice().CreateBuffer(&buffer_desc);
 
             wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
@@ -318,7 +318,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         wgpu::ShaderModuleDescriptor shader_descriptor{};
         shader_descriptor.nextInChain = &shader_source;
         shader_descriptor.label = "Unary kernel";
-        WebGPUContext &ctx = getWebGPUContext();
+        core::WebGPUContext &ctx = core::getWebGPUContext();
         wgpu::ShaderModule shader_module = ctx.getDevice().CreateShaderModule(&shader_descriptor);
 
         wgpu::BindGroupLayoutEntry bindings[3]{};
@@ -410,8 +410,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         auto length = iter.numel();
 
-        WebGPUAllocation *out_allocation = static_cast<WebGPUAllocation *>(out.storage().data_ptr().get());
-        WebGPUAllocation *self_allocation = static_cast<WebGPUAllocation *>(self.storage().data_ptr().get());
+        core::WebGPUAllocation *out_allocation = static_cast<core::WebGPUAllocation *>(out.storage().data_ptr().get());
+        core::WebGPUAllocation *self_allocation = static_cast<core::WebGPUAllocation *>(self.storage().data_ptr().get());
 
         wgpu::Buffer self_buffer = self_allocation->buffer;
         wgpu::Buffer out_buffer = out_allocation->buffer;
@@ -475,7 +475,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         uniform_descriptor.size = sizeof(Params);
         uniform_descriptor.mappedAtCreation = false;
 
-        WebGPUContext &ctx = getWebGPUContext();
+        core::WebGPUContext &ctx = core::getWebGPUContext();
         wgpu::Buffer params_buffer = ctx.getDevice().CreateBuffer(&uniform_descriptor);
         ctx.getQueue().WriteBuffer(params_buffer, 0, &params, sizeof(Params));
 
@@ -532,14 +532,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             at::Tensor src_contiguous = src.is_contiguous() ? src : src.contiguous();
             uint64_t write_nbytes = static_cast<u_int64_t>(src_contiguous.numel()) * static_cast<uint64_t>(at::elementSize(src_contiguous.scalar_type()));
 
-            auto self_data = static_cast<WebGPUAllocation *>(self.storage().data_ptr().get());
+            auto self_data = static_cast<core::WebGPUAllocation *>(self.storage().data_ptr().get());
             auto self_storage_offset = self.storage_offset();
             TORCH_CHECK(self_storage_offset >= 0, "WebGPU doesn't support negative offset yet");
             uint64_t buffer_offset = static_cast<uint64_t>(self_storage_offset) * static_cast<uint64_t>(at::elementSize(self.scalar_type()));
 
             TORCH_CHECK(self_data->buffer.GetSize() >= buffer_offset + write_nbytes);
 
-            getWebGPUContext().getQueue().WriteBuffer(self_data->buffer, buffer_offset, src_contiguous.data_ptr(), write_nbytes);
+            core::getWebGPUContext().getQueue().WriteBuffer(self_data->buffer, buffer_offset, src_contiguous.data_ptr(), write_nbytes);
             return self;
         }
         else if (src.device().is_privateuseone() && self.device().is_privateuseone())
@@ -551,12 +551,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 TORCH_CHECK(src.dtype() == self.dtype());
                 TORCH_CHECK(src.numel() == self.numel());
 
-                auto src_data = static_cast<WebGPUAllocation *>(src.storage().data_ptr().get());
+                auto src_data = static_cast<core::WebGPUAllocation *>(src.storage().data_ptr().get());
                 auto src_storage_offset = src.storage_offset();
                 TORCH_CHECK(src_storage_offset >= 0, "WebGPU doesn't support negative offset yet");
                 uint64_t src_buffer_offset = static_cast<uint64_t>(src_storage_offset) * static_cast<uint64_t>(at::elementSize(src.scalar_type()));
 
-                auto self_data = static_cast<WebGPUAllocation *>(self.storage().data_ptr().get());
+                auto self_data = static_cast<core::WebGPUAllocation *>(self.storage().data_ptr().get());
                 auto self_storage_offset = self.storage_offset();
                 TORCH_CHECK(self_storage_offset >= 0, "WebGPU doesn't support negative offset yet");
                 uint64_t self_buffer_offset = static_cast<uint64_t>(self_storage_offset) * static_cast<uint64_t>(at::elementSize(self.scalar_type()));
@@ -565,11 +565,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 TORCH_CHECK(src_data->buffer.GetSize() >= src_buffer_offset + write_nbytes);
                 TORCH_CHECK(self_data->buffer.GetSize() >= self_buffer_offset + write_nbytes);
 
-                wgpu::CommandEncoder encoder = getWebGPUContext().getDevice().CreateCommandEncoder();
+                wgpu::CommandEncoder encoder = core::getWebGPUContext().getDevice().CreateCommandEncoder();
                 encoder.CopyBufferToBuffer(src_data->buffer, src_buffer_offset, self_data->buffer, self_buffer_offset, write_nbytes);
                 wgpu::CommandBuffer command = encoder.Finish();
 
-                getWebGPUContext().getQueue().Submit(1, &command); // TODO: Submit is async, handle it correctly
+                core::getWebGPUContext().getQueue().Submit(1, &command); // TODO: Submit is async, handle it correctly
                 return self;
             }
             else
@@ -646,7 +646,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         TORCH_CHECK(iter.dtype(0) == iter.dtype(1));
         TORCH_CHECK(iter.dtype(1) == iter.dtype(2));
 
-        WebGPUContext &ctx = getWebGPUContext();
+        core::WebGPUContext &ctx = core::getWebGPUContext();
         constexpr const char *addWGSL = R"wgsl(
 const MAX_DIMS: u32 = 8u;
 
@@ -822,9 +822,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         auto length = iter.numel();
 
-        WebGPUAllocation *out_allocation = static_cast<WebGPUAllocation *>(out.storage().data_ptr().get());
-        WebGPUAllocation *self_allocation = static_cast<WebGPUAllocation *>(self.storage().data_ptr().get());
-        WebGPUAllocation *other_allocation = static_cast<WebGPUAllocation *>(other.storage().data_ptr().get());
+        core::WebGPUAllocation *out_allocation = static_cast<core::WebGPUAllocation *>(out.storage().data_ptr().get());
+        core::WebGPUAllocation *self_allocation = static_cast<core::WebGPUAllocation *>(self.storage().data_ptr().get());
+        core::WebGPUAllocation *other_allocation = static_cast<core::WebGPUAllocation *>(other.storage().data_ptr().get());
 
         wgpu::Buffer self_buffer = self_allocation->buffer;
         wgpu::Buffer other_buffer = other_allocation->buffer;
@@ -1012,8 +1012,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         auto length = static_cast<uint32_t>(iter.numel());
 
-        WebGPUAllocation *out_allocation = static_cast<WebGPUAllocation *>(out.storage().data_ptr().get());
-        WebGPUAllocation *self_allocation = static_cast<WebGPUAllocation *>(self.storage().data_ptr().get());
+        core::WebGPUAllocation *out_allocation = static_cast<core::WebGPUAllocation *>(out.storage().data_ptr().get());
+        core::WebGPUAllocation *self_allocation = static_cast<core::WebGPUAllocation *>(self.storage().data_ptr().get());
 
         wgpu::Buffer self_buffer = self_allocation->buffer;
         wgpu::Buffer out_buffer = out_allocation->buffer;
@@ -1076,7 +1076,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         uniform_descriptor.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
         uniform_descriptor.size = sizeof(Params);
         uniform_descriptor.mappedAtCreation = false;
-        WebGPUContext &ctx = getWebGPUContext();
+        core::WebGPUContext &ctx = core::getWebGPUContext();
         wgpu::Buffer params_buffer = ctx.getDevice().CreateBuffer(&uniform_descriptor);
         ctx.getQueue().WriteBuffer(params_buffer, 0, &params, sizeof(Params));
 
