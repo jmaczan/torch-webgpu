@@ -93,6 +93,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             case UnaryOp::GeLU:
                 op_impl = "0.5*selfBuffer[idx_self]*(1 + tanh(sqrt(2/radians(180)) * (selfBuffer[idx_self] + 0.044715 * pow(selfBuffer[idx_self], 3))))";
                 break;
+            case UnaryOp::SiLU:
+                op_impl = "selfBuffer[idx_self] * ( 1 / (1 + exp(-1 * selfBuffer[idx_self])))";
+                break;
             default:
                 TORCH_CHECK(false, "Unsupported unary op, can't produce a WGSL shader");
             }
