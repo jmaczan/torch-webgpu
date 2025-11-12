@@ -1,6 +1,6 @@
 import pytest
 import torch
-import torch_webgpu
+import torch_webgpu  # noqa: F401
 
 
 def test_mul_happy_path():

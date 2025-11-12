@@ -1,6 +1,5 @@
-import pytest
 import torch
-import torch_webgpu
+import torch_webgpu  # noqa: F401
 
 
 def test_silu_happy_path():
@@ -30,7 +29,12 @@ def test_silu_scalar():
     a = a.to(device="webgpu")
     result = torch.nn.functional.silu(a)
     result = result.to("cpu")
-    expected = torch.nn.functional.silu(torch.tensor([2.0], dtype=torch.float32))
+    expected = torch.nn.functional.silu(
+        torch.tensor(
+            [2.0],
+            dtype=torch.float32,
+        )
+    )
     assert torch.allclose(result, expected, atol=1e-6)
 
 
@@ -39,7 +43,12 @@ def test_silu_zero():
     a = a.to(device="webgpu")
     result = torch.nn.functional.silu(a)
     result = result.to("cpu")
-    expected = torch.nn.functional.silu(torch.tensor([0.0], dtype=torch.float32))
+    expected = torch.nn.functional.silu(
+        torch.tensor(
+            [0.0],
+            dtype=torch.float32,
+        )
+    )
     assert torch.allclose(result, expected, atol=1e-6)
 
 
@@ -49,7 +58,8 @@ def test_silu_zero():
 #     a = a.to(device="webgpu")
 #     result = torch.nn.functional.silu(a)
 #     result = result.to("cpu")
-#     expected = torch.nn.functional.silu(torch.tensor([], dtype=torch.float32))
+#     expected = torch.nn.functional.silu(torch.tensor([],
+# dtype=torch.float32,))
 #     assert result.numel() == 0
 #     assert expected.numel() == 0
 

@@ -1,6 +1,5 @@
-import pytest
 import torch
-import torch_webgpu
+import torch_webgpu  # noqa: F401
 
 
 # TODO: improve Gelu accuracy - atol=1e-3 ok, atol=1e-4 fail
@@ -31,7 +30,12 @@ def test_gelu_scalar():
     a = a.to(device="webgpu")
     result = torch.nn.functional.gelu(a)
     result = result.to("cpu")
-    expected = torch.nn.functional.gelu(torch.tensor([2.0], dtype=torch.float32))
+    expected = torch.nn.functional.gelu(
+        torch.tensor(
+            [2.0],
+            dtype=torch.float32,
+        )
+    )
     assert torch.allclose(result, expected, atol=1e-3)
 
 
@@ -40,7 +44,12 @@ def test_gelu_zero():
     a = a.to(device="webgpu")
     result = torch.nn.functional.gelu(a)
     result = result.to("cpu")
-    expected = torch.nn.functional.gelu(torch.tensor([0.0], dtype=torch.float32))
+    expected = torch.nn.functional.gelu(
+        torch.tensor(
+            [0.0],
+            dtype=torch.float32,
+        )
+    )
     assert torch.allclose(result, expected, atol=1e-3)
 
 
@@ -49,7 +58,8 @@ def test_gelu_zero():
 #     a = a.to(device="webgpu")
 #     result = torch.nn.functional.gelu(a)
 #     result = result.to("cpu")
-#     expected = torch.nn.functional.gelu(torch.tensor([], dtype=torch.float32))
+#     expected = torch.nn.functional.gelu(torch.tensor([],
+# dtype=torch.float32,))
 #     assert result.numel() == 0
 #     assert expected.numel() == 0
 
