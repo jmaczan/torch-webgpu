@@ -19,6 +19,11 @@ namespace torch_webgpu
             unary_kernel<UnaryOp::GeLU>(iter);
         }
 
+        void silu_kernel_webgpu(at::TensorIteratorBase &iter)
+        {
+            unary_kernel<UnaryOp::SiLU>(iter);
+        }
+
         at::Tensor relu(at::Tensor const &self)
         {
             at::Tensor out = at::empty_like(self, self.options().device(at::DeviceType::PrivateUse1));
@@ -78,6 +83,35 @@ namespace torch_webgpu
 
             return out;
         }
+
+        at::Tensor silu(at::Tensor const &self)
+        {
+            at::Tensor out = at::empty_like(self, self.options().device(at::DeviceType::PrivateUse1));
+            at::TensorIteratorConfig config;
+            config.add_output(out);
+            config.add_input(self);
+            config.check_all_same_dtype(true);
+            auto iter = config.build();
+
+            silu_kernel_webgpu(iter);
+
+            return out;
+        }
+
+        at::Tensor &silu_out(
+            at::Tensor const &self,
+            at::Tensor &out)
+        {
+            at::TensorIteratorConfig config;
+            config.add_output(out);
+            config.add_input(self);
+            config.check_all_same_dtype(true);
+            auto iter = config.build();
+
+            silu_kernel_webgpu(iter);
+
+            return out;
+        }
     }
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     {
@@ -86,5 +120,8 @@ namespace torch_webgpu
 
         m.impl("gelu", TORCH_FN(ops::gelu));
         m.impl("gelu.out", TORCH_FN(ops::gelu_out));
+
+        m.impl("silu", TORCH_FN(ops::silu));
+        m.impl("silu.out", TORCH_FN(ops::silu_out));
     }
 }
