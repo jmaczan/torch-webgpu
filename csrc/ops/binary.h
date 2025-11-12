@@ -18,14 +18,15 @@ namespace torch_webgpu
 
         enum class BinaryOp
         {
-            Add
+            Add,
+            Mul
         };
 
         std::string get_binary_shader(BinaryOp binary_op);
         BinaryKernel &get_binary_kernel(BinaryOp binary_op);
 
         template <BinaryOp Op>
-        inline void binary_kernel(at::TensorIteratorBase &iter, const ::at::Scalar &alpha) // TODO: these extra values should be handled differently
+        inline void binary_kernel(at::TensorIteratorBase &iter, const ::at::Scalar &alpha = 1) // TODO: these extra values should be handled differently
         {
             TORCH_CHECK(iter.ntensors() == 3);
             TORCH_CHECK(iter.common_dtype() == at::ScalarType::Float);
