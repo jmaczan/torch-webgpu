@@ -253,3 +253,5 @@ __marimo__/
 
 # debug information files
 *.dwo
+
+temp.txt

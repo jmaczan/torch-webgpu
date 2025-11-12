@@ -37,7 +37,6 @@ namespace torch_webgpu
         m.impl("ne.Scalar", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
         m.impl("eq.Tensor_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
         m.impl("eq.Tensor", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
-        m.impl("mul.out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
         m.impl("bitwise_and.Tensor_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
         m.impl("bitwise_and.Tensor", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
         m.impl("masked_select", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());

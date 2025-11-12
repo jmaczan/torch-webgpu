@@ -78,7 +78,7 @@ This list helps me pick up what to work on next, aside of adding new ops
 - [ ] tanh
 - [ ] sigmoid
 - [x] gelu
-- [ ] silu
+- [x] silu
 - [x] relu
 - [ ] clamp_min
 - [ ] clamp
@@ -119,6 +119,7 @@ This list helps me pick up what to work on next, aside of adding new ops
 ### Tensor shapes, view, etc
 
 - [x] view
+- [x] resize
 - [ ] reshape
 - [ ] flatten
 - [ ] permute
@@ -164,6 +165,6 @@ This list helps me pick up what to work on next, aside of adding new ops
 
 Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/webgpu-torch), which is a neat PyTorch reimplementation in TypeScript targeting WebGPU
 
-I mainly use Ascend's NPU backend for PyTorch https://github.com/ascend/pytorch, Elie's WebGPU guide https://eliemichel.github.io/LearnWebGPU/index.html and PyTorch PrivateUse1 custom backend docs as a reference https://docs.pytorch.org/tutorials/advanced/privateuseone.html https://docs.pytorch.org/tutorials/advanced/extend_dispatcher.html https://docs.pytorch.org/tutorials/advanced/dispatcher
+I mainly use Ascend's NPU backend for PyTorch https://github.com/ascend/pytorch, Elie's WebGPU guide https://eliemichel.github.io/LearnWebGPU/index.html, WGSL spec https://www.w3.org/TR/WGSL/ and PyTorch PrivateUse1 custom backend docs as a reference https://docs.pytorch.org/tutorials/advanced/privateuseone.html https://docs.pytorch.org/tutorials/advanced/extend_dispatcher.html https://docs.pytorch.org/tutorials/advanced/dispatcher
 
 Built by [Jędrzej Maczan, 2025](https://jedrzej.maczan.pl/)
