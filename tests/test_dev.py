@@ -12,11 +12,12 @@ if __name__ == "__main__":
     print(a)
     b = a.to("webgpu")
     print(b.device)
-    b = b.relu()
+    g = torch.nn.GELU()
+    b = g(b)
     b = b.to("cpu")
     print(b, b.device)
-    b = b.to("webgpu")
-    c = b + b
-    print(c.device)
-    c = c.to("cpu")
-    print(c)
+    # b = b.to("webgpu")
+    # c = b + b
+    # print(c.device)
+    # c = c.to("cpu")
+    # print(c)

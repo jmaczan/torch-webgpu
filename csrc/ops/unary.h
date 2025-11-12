@@ -19,7 +19,8 @@ namespace torch_webgpu
         enum class UnaryOp
         {
             Copy,
-            ReLU
+            ReLU,
+            GeLU
         };
 
         std::string get_unary_shader(UnaryOp unary_op);
