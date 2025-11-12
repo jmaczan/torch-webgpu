@@ -63,7 +63,7 @@ This list helps me pick up what to work on next, aside of adding new ops
 - [ ] add
 - [ ] sub.Tensor
 - [ ] sub
-- [ ] mul.Tensor
+- [x] mul.Tensor
 - [ ] mul
 - [ ] div.Tensor
 - [ ] div
@@ -77,7 +77,7 @@ This list helps me pick up what to work on next, aside of adding new ops
 - [ ] log
 - [ ] tanh
 - [ ] sigmoid
-- [ ] gelu
+- [x] gelu
 - [ ] silu
 - [x] relu
 - [ ] clamp_min
