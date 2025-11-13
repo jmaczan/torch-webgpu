@@ -43,13 +43,80 @@ namespace torch_webgpu
             auto result = at::native::resize_(self, size, format);
             return result;
         }
+
+        at::Tensor reshape(const at::Tensor &self, at::IntArrayRef shape)
+        {
+            // return a view without copy if possible
+            at::Tensor out;
+            int minus_one_position = -1;
+            at::IntArrayRef normalized_shape = shape;
+
+            // validate shape against max single -1 and no zeros
+            for (size_t i = 0; i < shape.size(); ++i)
+            {
+                if (i == -1)
+                {
+                    if (minus_one_position != -1)
+                    {
+                        TORCH_CHECK(false, "You can use only a single -1 shape.");
+                        // TODO: it should exit here maybe?
+                        return out;
+                    }
+                    minus_one_position = i;
+                }
+
+                if (i == 0)
+                {
+                    TORCH_CHECK(false, "0-dim shapes not allowed.");
+                    // TODO: it should exit here maybe?
+                    return out;
+                }
+            }
+            if (minus_one_position != -1)
+            {
+                int elems_on_all_pos_except_minus_one = 1;
+                for (size_t i = 0; i < shape.size(); ++i)
+                {
+                    if (i == minus_one_position)
+                    {
+                        continue;
+                    }
+
+                    elems_on_all_pos_except_minus_one *= i;
+                }
+                std::vector<int64_t> vec = shape.vec();
+                vec[minus_one_position] = self.numel() - elems_on_all_pos_except_minus_one;
+                normalized_shape = at::IntArrayRef(shape.vec());
+                TORCH_CHECK(self.numel() - elems_on_all_pos_except_minus_one > 0);
+            }
+
+            if (self.is_contiguous())
+            {
+                //
+            }
+
+            else
+            {
+                out = self.contiguous();
+                //
+            }
+
+            TORCH_CHECK(out.dtype() == self.dtype());
+            TORCH_CHECK(out.numel() == self.numel());
+            TORCH_CHECK(out.device() == self.device());
+            TORCH_CHECK(out.storage_offset() == self.storage_offset());
+
+            return out;
+            // if not, make a copy and return a view on a copy
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     {
         m.impl("view", TORCH_FN(ops::view));
         m.impl("resize_", TORCH_FN(ops::resize_));
-        m.impl("empty.memory_format", TORCH_FN(torch_webgpu::ops::empty_memory_format));
-        m.impl("empty_strided", TORCH_FN(torch_webgpu::ops::empty_strided));
+        m.impl("reshape", ops::reshape);
+        m.impl("empty.memory_format", TORCH_FN(ops::empty_memory_format));
+        m.impl("empty_strided", TORCH_FN(ops::empty_strided));
     }
 }
