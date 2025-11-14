@@ -71,6 +71,7 @@ namespace torch_webgpu
                     return out;
                 }
             }
+
             if (minus_one_position != -1)
             {
                 int elems_on_all_pos_except_minus_one = 1;
@@ -86,8 +87,15 @@ namespace torch_webgpu
                 std::vector<int64_t> vec = shape.vec();
                 vec[minus_one_position] = self.numel() - elems_on_all_pos_except_minus_one;
                 normalized_shape = at::IntArrayRef(shape.vec());
-                TORCH_CHECK(self.numel() - elems_on_all_pos_except_minus_one > 0);
             }
+
+            auto normalized_shape_numel = 1;
+            for (auto i : normalized_shape)
+            {
+                normalized_shape_numel *= i;
+            }
+
+            TORCH_CHECK(self.numel() == normalized_shape_numel);
 
             // return a view without copy if possible
             if (self.sizes().size() == normalized_shape.size())
@@ -107,11 +115,20 @@ namespace torch_webgpu
                 }
             }
 
-            // general viewability - trying to return a view copying a self tensor
+            // fast path - if source tensor is contiguous, I can just compute strides for new shape and return a copy of original tensor with new shape and strides
             if (self.is_contiguous())
             {
+                std::vector<int64_t> new_strides = self.strides().vec();
+                new_strides[self.strides().size() - 1] = 1;
+                for (auto dim = normalized_shape.size() - 2; dim > 0; --dim) // TODO: what if size() == 0?
+                {
+                    new_strides[dim] = normalized_shape[dim + 1] * new_strides[dim + 1];
+                }
+                return at::as_strided(self, normalized_shape, new_strides, self.storage_offset());
                 //
             }
+
+            // general viewability - trying to return a view copying a self tensor - not sure how to code it yet
 
             // fallback to copy, worst case scenario
             else
