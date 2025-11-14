@@ -46,13 +46,12 @@ namespace torch_webgpu
 
         at::Tensor reshape(const at::Tensor &self, at::IntArrayRef shape)
         {
-            // return a view without copy if possible
-            at::Tensor out;
+            at::Tensor out = self;
             int minus_one_position = -1;
             at::IntArrayRef normalized_shape = shape;
 
             // validate shape against max single -1 and no zeros
-            for (size_t i = 0; i < shape.size(); ++i)
+            for (size_t i = 0; i < normalized_shape.size(); ++i)
             {
                 if (i == -1)
                 {
@@ -75,7 +74,7 @@ namespace torch_webgpu
             if (minus_one_position != -1)
             {
                 int elems_on_all_pos_except_minus_one = 1;
-                for (size_t i = 0; i < shape.size(); ++i)
+                for (size_t i = 0; i < normalized_shape.size(); ++i)
                 {
                     if (i == minus_one_position)
                     {
@@ -90,11 +89,31 @@ namespace torch_webgpu
                 TORCH_CHECK(self.numel() - elems_on_all_pos_except_minus_one > 0);
             }
 
+            // return a view without copy if possible
+            if (self.sizes().size() == normalized_shape.size())
+            {
+                bool has_same_size = true;
+                for (size_t i = 0; i < self.sizes().size(); ++i)
+                {
+                    if (self.sizes()[i] != normalized_shape[i])
+                    {
+                        has_same_size = false;
+                        break;
+                    }
+                }
+                if (has_same_size)
+                {
+                    return self;
+                }
+            }
+
+            // general viewability - trying to return a view copying a self tensor
             if (self.is_contiguous())
             {
                 //
             }
 
+            // fallback to copy, worst case scenario
             else
             {
                 out = self.contiguous();
