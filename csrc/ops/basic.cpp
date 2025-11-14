@@ -62,7 +62,7 @@ namespace torch_webgpu
             // validate shape against max single -1 and no zeros
             for (size_t i = 0; i < new_shape.size(); ++i)
             {
-                if (i == -1)
+                if (new_shape[i] == -1)
                 {
                     if (minus_one_position != -1)
                     {
@@ -73,9 +73,9 @@ namespace torch_webgpu
                     minus_one_position = i;
                 }
 
-                if (i == 0)
+                if (new_shape[i] == 0) // TODO - make it work with zeros too once everything else works
                 {
-                    TORCH_CHECK(false, "0-dim shapes not allowed.");
+                    TORCH_CHECK(false, "0-dim shapes not supported, yet.");
                     // TODO: it should exit here maybe?
                     return out;
                 }
@@ -91,14 +91,15 @@ namespace torch_webgpu
                         continue;
                     }
 
-                    elems_on_all_pos_except_minus_one *= i;
+                    elems_on_all_pos_except_minus_one *= new_shape[i];
                 }
                 std::vector<int64_t> vec = shape.vec();
-                vec[minus_one_position] = self.numel() - elems_on_all_pos_except_minus_one;
-                new_shape = at::IntArrayRef(shape.vec());
+                TORCH_CHECK(self.numel() % elems_on_all_pos_except_minus_one == 0);
+                vec[minus_one_position] = self.numel() / elems_on_all_pos_except_minus_one;
+                new_shape = at::IntArrayRef(vec);
             }
 
-            auto normalized_shape_numel = 1;
+            int64_t normalized_shape_numel = 1;
             for (auto i : new_shape)
             {
                 normalized_shape_numel *= i;
@@ -127,14 +128,13 @@ namespace torch_webgpu
             // fast path - if source tensor is contiguous, I can just compute strides for new shape and return a copy of original tensor with new shape and strides
             if (self.is_contiguous())
             {
-                std::vector<int64_t> new_strides = self.strides().vec();
-                new_strides[self.strides().size() - 1] = 1;
-                for (auto dim = new_shape.size() - 2; dim > 0; --dim) // TODO: what if size() == 0?
+                std::vector<int64_t> new_strides(new_shape.size());
+                new_strides[new_shape.size() - 1] = 1;
+                for (int dim = static_cast<int>(new_shape.size()) - 2; dim >= 0; --dim) // TODO: what if size() == 0?
                 {
                     new_strides[dim] = new_shape[dim + 1] * new_strides[dim + 1];
                 }
                 return at::as_strided(self, new_shape, new_strides, self.storage_offset());
-                //
             }
 
             // general path - trying to return a view copying a self tensor
@@ -145,9 +145,9 @@ namespace torch_webgpu
             // split memory to blocks
             std::vector<MemoryBlock> blocks = {};
             blocks.push_back(block);
-            for (auto dim = self.sizes().size() - 2; dim > 0; --dim)
+            for (int dim = static_cast<int>(self.sizes().size()) - 2; dim >= 0; --dim)
             {
-                if (self.sizes()[dim] == block.block_size * block.block_stride)
+                if (self.strides()[dim] == blocks.back().block_size * blocks.back().block_stride)
                 {
                     // can merge
                     blocks.back().block_size *= self.sizes()[dim];
