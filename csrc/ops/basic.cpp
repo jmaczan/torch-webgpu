@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <ATen/ATen.h>
 #include <torch/library.h>
 #include "core/webgpu_allocator.h"
@@ -44,14 +45,22 @@ namespace torch_webgpu
             return result;
         }
 
+        struct MemoryBlock
+        {
+            int block_size;
+            int block_stride;
+            int new_dim_start;
+            int new_dim_end;
+        };
+
         at::Tensor reshape(const at::Tensor &self, at::IntArrayRef shape)
         {
             at::Tensor out = self;
             int minus_one_position = -1;
-            at::IntArrayRef normalized_shape = shape;
+            at::IntArrayRef new_shape = shape;
 
             // validate shape against max single -1 and no zeros
-            for (size_t i = 0; i < normalized_shape.size(); ++i)
+            for (size_t i = 0; i < new_shape.size(); ++i)
             {
                 if (i == -1)
                 {
@@ -75,7 +84,7 @@ namespace torch_webgpu
             if (minus_one_position != -1)
             {
                 int elems_on_all_pos_except_minus_one = 1;
-                for (size_t i = 0; i < normalized_shape.size(); ++i)
+                for (size_t i = 0; i < new_shape.size(); ++i)
                 {
                     if (i == minus_one_position)
                     {
@@ -86,11 +95,11 @@ namespace torch_webgpu
                 }
                 std::vector<int64_t> vec = shape.vec();
                 vec[minus_one_position] = self.numel() - elems_on_all_pos_except_minus_one;
-                normalized_shape = at::IntArrayRef(shape.vec());
+                new_shape = at::IntArrayRef(shape.vec());
             }
 
             auto normalized_shape_numel = 1;
-            for (auto i : normalized_shape)
+            for (auto i : new_shape)
             {
                 normalized_shape_numel *= i;
             }
@@ -98,12 +107,12 @@ namespace torch_webgpu
             TORCH_CHECK(self.numel() == normalized_shape_numel);
 
             // return a view without copy if possible
-            if (self.sizes().size() == normalized_shape.size())
+            if (self.sizes().size() == new_shape.size())
             {
                 bool has_same_size = true;
                 for (size_t i = 0; i < self.sizes().size(); ++i)
                 {
-                    if (self.sizes()[i] != normalized_shape[i])
+                    if (self.sizes()[i] != new_shape[i])
                     {
                         has_same_size = false;
                         break;
@@ -120,22 +129,108 @@ namespace torch_webgpu
             {
                 std::vector<int64_t> new_strides = self.strides().vec();
                 new_strides[self.strides().size() - 1] = 1;
-                for (auto dim = normalized_shape.size() - 2; dim > 0; --dim) // TODO: what if size() == 0?
+                for (auto dim = new_shape.size() - 2; dim > 0; --dim) // TODO: what if size() == 0?
                 {
-                    new_strides[dim] = normalized_shape[dim + 1] * new_strides[dim + 1];
+                    new_strides[dim] = new_shape[dim + 1] * new_strides[dim + 1];
                 }
-                return at::as_strided(self, normalized_shape, new_strides, self.storage_offset());
+                return at::as_strided(self, new_shape, new_strides, self.storage_offset());
                 //
             }
 
-            // general viewability - trying to return a view copying a self tensor - not sure how to code it yet
+            // general path - trying to return a view copying a self tensor
+            MemoryBlock block;
+            block.block_size = self.sizes()[self.sizes().size() - 1];
+            block.block_stride = self.strides()[self.strides().size() - 1];
+
+            // split memory to blocks
+            std::vector<MemoryBlock> blocks = {};
+            blocks.push_back(block);
+            for (auto dim = self.sizes().size() - 2; dim > 0; --dim)
+            {
+                if (self.sizes()[dim] == block.block_size * block.block_stride)
+                {
+                    // can merge
+                    blocks.back().block_size *= self.sizes()[dim];
+                }
+                else
+                {
+                    MemoryBlock new_block;
+                    new_block.block_size = self.sizes()[dim];
+                    new_block.block_stride = self.strides()[dim];
+                    blocks.push_back(new_block);
+                }
+            }
+
+            std::reverse(blocks.begin(), blocks.end());
+
+            // check if new shape can fit these blocks
+            bool do_new_shapes_match_blocks = true;
+            int current_block_index = 0;
+            for (auto i = 0; i < new_shape.size(); ++i)
+            {
+                if (new_shape[i] == blocks[current_block_index].block_size)
+                {
+                    blocks[current_block_index].new_dim_start = i;
+                    blocks[current_block_index].new_dim_end = i;
+
+                    current_block_index += 1;
+                }
+                else
+                {
+                    if (current_block_index < blocks.size() - 2)
+                    {
+                        int multiple_block_size = blocks[current_block_index].block_size;
+                        bool multiplied_block_matches_shape = false;
+                        blocks[current_block_index].new_dim_start = i;
+                        for (auto j = current_block_index + 1; j < blocks.size(); ++j)
+                        {
+                            multiple_block_size *= blocks[j].block_size;
+                            if (new_shape[i] == multiple_block_size)
+                            {
+                                multiplied_block_matches_shape = true;
+                                blocks[current_block_index].new_dim_end = j;
+                                current_block_index = j;
+                                break;
+                            }
+                        }
+
+                        if (multiplied_block_matches_shape)
+                        {
+                            continue;
+                        }
+                        do_new_shapes_match_blocks = false;
+                        break;
+                    }
+
+                    do_new_shapes_match_blocks = false;
+                    break;
+                }
+            }
+
+            if (do_new_shapes_match_blocks)
+            {
+                std::vector<int64_t> new_strides;
+
+                for (auto i = blocks.size() - 1; i > 0; --i)
+                {
+                    for (auto j = blocks[i].new_dim_end; j >= blocks[i].new_dim_start; --j)
+                    {
+                        if (j == blocks.size() - 1)
+                        {
+                            new_strides.push_back(blocks[i].block_stride);
+                        }
+                        else
+                        {
+                            new_strides.push_back(blocks[i].block_stride * blocks[i].block_size);
+                        }
+                    }
+                }
+
+                return at::as_strided(self, new_shape, new_strides, self.storage_offset());
+            }
 
             // fallback to copy, worst case scenario
-            else
-            {
-                out = self.contiguous();
-                //
-            }
+            out = self.contiguous();
 
             TORCH_CHECK(out.dtype() == self.dtype());
             TORCH_CHECK(out.numel() == self.numel());
@@ -143,7 +238,6 @@ namespace torch_webgpu
             TORCH_CHECK(out.storage_offset() == self.storage_offset());
 
             return out;
-            // if not, make a copy and return a view on a copy
         }
     }
 
