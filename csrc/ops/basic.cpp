@@ -53,11 +53,17 @@ namespace torch_webgpu
             int new_dim_end;
         };
 
-        at::Tensor reshape(const at::Tensor &self, at::IntArrayRef shape)
+        at::Tensor reshape(const at::Tensor &self, at::SymIntArrayRef shape)
         {
             at::Tensor out = self;
             int minus_one_position = -1;
-            at::IntArrayRef new_shape = shape;
+            auto new_shape_opt = c10::asIntArrayRefSlowOpt(shape);
+            if (new_shape_opt == std::nullopt)
+            {
+                TORCH_CHECK("Incorrect input shape");
+                return out;
+            }
+            auto new_shape = new_shape_opt.value();
 
             // validate shape against max single -1 and no zeros
             for (size_t i = 0; i < new_shape.size(); ++i)
@@ -93,7 +99,7 @@ namespace torch_webgpu
 
                     elems_on_all_pos_except_minus_one *= new_shape[i];
                 }
-                std::vector<int64_t> vec = shape.vec();
+                std::vector<int64_t> vec = new_shape.vec();
                 TORCH_CHECK(self.numel() % elems_on_all_pos_except_minus_one == 0);
                 vec[minus_one_position] = self.numel() / elems_on_all_pos_except_minus_one;
                 new_shape = at::IntArrayRef(vec);
@@ -245,8 +251,13 @@ namespace torch_webgpu
     {
         m.impl("view", TORCH_FN(ops::view));
         m.impl("resize_", TORCH_FN(ops::resize_));
-        m.impl("reshape", ops::reshape);
+        m.impl("reshape", TORCH_FN(ops::reshape));
         m.impl("empty.memory_format", TORCH_FN(ops::empty_memory_format));
         m.impl("empty_strided", TORCH_FN(ops::empty_strided));
+    }
+
+    TORCH_LIBRARY_IMPL(aten, AutogradPrivateUse1, m)
+    {
+        m.impl("reshape", TORCH_FN(torch_webgpu::ops::reshape));
     }
 }
