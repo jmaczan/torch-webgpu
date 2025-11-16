@@ -245,6 +245,27 @@ namespace torch_webgpu
 
             return out;
         }
+
+        at::Tensor as_strided(
+            const at::Tensor &self,
+            c10::IntArrayRef size,
+            c10::IntArrayRef stride,
+            c10::optional<int64_t> storage_offset_opt)
+        {
+            auto storage_size = self.storage().nbytes() / self.element_size();
+            auto storage_offset = storage_offset_opt.value_or(self.storage_offset());
+            auto min_index = storage_offset;
+            auto max_index = storage_offset;
+            for (auto dim = 0; dim < size.size(); ++dim)
+            {
+                if (stride[d])
+            }
+
+            TORCH_CHECK(min_index >= 0 && max_index < storage_size, "New tensor size needs to fit into the storage.");
+            at::Tensor out;
+            // TODO set attrs
+            return out;
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -254,6 +275,7 @@ namespace torch_webgpu
         m.impl("reshape", TORCH_FN(ops::reshape));
         m.impl("empty.memory_format", TORCH_FN(ops::empty_memory_format));
         m.impl("empty_strided", TORCH_FN(ops::empty_strided));
+        m.impl("as_strided", TORCH_FN(ops::as_strided));
     }
 
     TORCH_LIBRARY_IMPL(aten, AutogradPrivateUse1, m)
