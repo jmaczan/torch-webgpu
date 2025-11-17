@@ -7,4 +7,8 @@ if __name__ == "__main__":
     a = torch.as_strided(storage, size=(2, 3, 4), stride=(20, 6, 1))
     a = a.to("webgpu")
     with torch.no_grad():
-        a.reshape((4, 6))
+        b = a.reshape((4, 6))
+    print(b.shape)
+    print(b.dtype)
+    b = b.to("cpu")
+    print(b)

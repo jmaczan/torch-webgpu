@@ -60,10 +60,11 @@ namespace torch_webgpu
             auto new_shape_opt = c10::asIntArrayRefSlowOpt(shape);
             if (new_shape_opt == std::nullopt)
             {
-                TORCH_CHECK("Incorrect input shape");
+                TORCH_CHECK(false, "Incorrect input shape");
                 return out;
             }
-            auto new_shape = new_shape_opt.value();
+            std::vector<int64_t> new_shape_vec(new_shape_opt->begin(), new_shape_opt->end());
+            at::IntArrayRef new_shape(new_shape_vec);
 
             // validate shape against max single -1 and no zeros
             for (size_t i = 0; i < new_shape.size(); ++i)
@@ -99,10 +100,8 @@ namespace torch_webgpu
 
                     elems_on_all_pos_except_minus_one *= new_shape[i];
                 }
-                std::vector<int64_t> vec = new_shape.vec();
                 TORCH_CHECK(self.numel() % elems_on_all_pos_except_minus_one == 0);
-                vec[minus_one_position] = self.numel() / elems_on_all_pos_except_minus_one;
-                new_shape = at::IntArrayRef(vec);
+                new_shape_vec[minus_one_position] = self.numel() / elems_on_all_pos_except_minus_one;
             }
 
             int64_t normalized_shape_numel = 1;
