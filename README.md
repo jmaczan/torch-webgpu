@@ -40,6 +40,7 @@ This list helps me pick up what to work on next, aside of adding new ops
 
 - [x] empty.memory_format
 - [x] empty_strided
+- [x] as_strided
 - [ ] empty_like
 - [ ] zeros_like
 - [ ] ones_like
@@ -120,7 +121,7 @@ This list helps me pick up what to work on next, aside of adding new ops
 
 - [x] view
 - [x] resize
-- [ ] reshape
+- [x] reshape
 - [ ] flatten
 - [ ] permute
 - [ ] transpose.int
