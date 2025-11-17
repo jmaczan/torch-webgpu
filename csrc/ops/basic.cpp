@@ -252,18 +252,34 @@ namespace torch_webgpu
             c10::IntArrayRef stride,
             c10::optional<int64_t> storage_offset_opt)
         {
-            auto storage_size = self.storage().nbytes() / self.element_size();
             auto storage_offset = storage_offset_opt.value_or(self.storage_offset());
-            auto min_index = storage_offset;
-            auto max_index = storage_offset;
-            for (auto dim = 0; dim < size.size(); ++dim)
+            auto storage_size = self.storage().nbytes() / self.element_size();
+            if (self.numel() == 0)
             {
-                if (stride[d])
+                TORCH_CHECK(storage_offset >= 0 && storage_offset <= storage_size, "Storage offset is negative or bigger than storage size");
             }
+            else
+            {
+                TORCH_CHECK(size.size() == stride.size(), "Shape and size should have the same amount of elements");
+                auto min_index = storage_offset;
+                auto max_index = storage_offset;
+                for (auto dim = 0; dim < size.size(); ++dim)
+                {
+                    if (stride[dim] > 0)
+                    {
+                        max_index += stride[dim] * (size[dim] - 1);
+                    }
+                    else if (stride[dim] < 0)
+                    {
+                        min_index += stride[dim] * (size[dim] - 1);
+                    }
+                }
 
-            TORCH_CHECK(min_index >= 0 && max_index < storage_size, "New tensor size needs to fit into the storage.");
-            at::Tensor out;
-            // TODO set attrs
+                TORCH_CHECK(min_index >= 0 && max_index < storage_size, "New tensor size needs to fit into the storage.");
+            }
+            at::Tensor out = at::detail::make_tensor<at::TensorImpl>(c10::TensorImpl::VIEW, c10::Storage(self.storage()), self.key_set(), self.dtype());
+            out.unsafeGetTensorImpl()->set_storage_offset(storage_offset);
+            out.unsafeGetTensorImpl()->set_sizes_and_strides(size, stride);
             return out;
         }
     }
