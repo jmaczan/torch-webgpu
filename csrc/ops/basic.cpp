@@ -252,17 +252,25 @@ namespace torch_webgpu
             c10::IntArrayRef stride,
             c10::optional<int64_t> storage_offset_opt)
         {
+            TORCH_CHECK(size.size() == stride.size(), "Shape and size should have the same amount of elements");
+
             auto storage_offset = storage_offset_opt.value_or(self.storage_offset());
             auto storage_size = self.storage().nbytes() / self.element_size();
-            if (self.numel() == 0)
+
+            int64_t new_numel = 1;
+            for (auto dim : size)
+            {
+                new_numel *= dim;
+            }
+
+            if (new_numel == 0)
             {
                 TORCH_CHECK(storage_offset >= 0 && storage_offset <= storage_size, "Storage offset is negative or bigger than storage size");
             }
             else
             {
-                TORCH_CHECK(size.size() == stride.size(), "Shape and size should have the same amount of elements");
-                auto min_index = storage_offset;
-                auto max_index = storage_offset;
+                int64_t min_index = storage_offset;
+                int64_t max_index = storage_offset;
                 for (auto dim = 0; dim < size.size(); ++dim)
                 {
                     if (stride[dim] > 0)
