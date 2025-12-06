@@ -2,18 +2,16 @@ from typing import Callable, List
 import torch
 from . import _C
 from torch._dynamo import register_backend
-
-
-def todo():
-    print("TODO")
+from . import webgpu
 
 
 torch.utils.rename_privateuse1_backend("webgpu")
-torch._register_device_module("webgpu", todo)
+torch._register_device_module("webgpu", webgpu)
 torch.utils.generate_methods_for_privateuse1_backend(
     for_tensor=True,
     for_module=True,
     for_storage=True,
+    for_packed_sequence=True,
 )
 
 
@@ -25,7 +23,7 @@ def webgpu_backend(
 
     # compile
     def compiled_fn(x):
-        return 1
+        return x
 
     # TODO: see if it's still relevant
     # https://docs.pytorch.org/docs/stable/generated/torch.jit.optimize_for_inference.html

@@ -1,12 +1,39 @@
 {
     "configurations": [
         {
-            "name": "Debug Python + C++ (torch_webgpu)",
+            "name": "Compile Dev: Debug Python tests/test_compile_dev.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tests/test_compile_dev.py",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "justMyCode": false,
+            "subProcess": true,
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Dev: Debug Python + C++ (torch_webgpu)",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/.venv/bin/python",
             "args": [
                 "tests/test_dev.py"
+            ],
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "externalConsole": false,
+            "stopAtEntry": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Compile Dev: Debug Python + C++ (torch_webgpu)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "tests/test_compile_dev.py"
             ],
             "cwd": "${workspaceFolder}",
             "MIMode": "gdb",

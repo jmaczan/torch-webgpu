@@ -9,7 +9,7 @@ def fn(x):
 
 
 if __name__ == "__main__":
-    a = torch.tensor([2, 3, 4], device="webgpu")
+    a = torch.tensor([2.0, 3.0, 4.0], device="webgpu")
     out = fn(a)
     out = out.to("cpu")
     print(out)
