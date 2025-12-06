@@ -14,7 +14,7 @@ Not even 0.0.1 release yet! I make the repository public, so you give me support
 <span>WebGPU logo by <a href="https://www.w3.org/"><abbr title="World Wide Web Consortium">W3C</abbr></a></span>
 
 ## Coolest thing you can do with torch-webgpu now
-Add tensors on WebGPU and move data between CPU and WebGPU
+**Add tensors on WebGPU and move data between CPU and WebGPU!**
 
 ```py
 a = torch.tensor([-1.5, 2.7, 1.0, 2.0], device="webgpu")
