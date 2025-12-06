@@ -1,6 +1,16 @@
 # torch-webgpu
 Experimental WebGPU backend for PyTorch
 
+Goals:
+1. Run PyTorch on WebGPU `device="webgpu"`
+2. Compile PyTorch code for WebGPU - `@torch.compile`
+3. High performance without platform specific (CUDA, MPS, ROCm) kernels. Four things are enough to get there - Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
+
+<p align="center">
+<img src="webgpu.png" height="400" width="400">
+</p>
+<span>WebGPU logo by <a href="https://www.w3.org/"><abbr title="World Wide Web Consortium">W3C</abbr></a></span>
+
 ## Installation
 1. Clone this repo
 
@@ -22,9 +32,8 @@ And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real
 This list helps me pick up what to work on next, aside of adding new ops
 
 - only float32 supported
-- wgpu::Queue.Submit() handled synchronously
-- many ops fallback to CPU
-- very few unit tests
+- `wgpu::Queue.Submit()` handled synchronously
+- not enough unit tests ([a standarized testing out-of-tree backends is still in progress as of Dec 2025](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270), I hope to [involve torch-webgpu into this effort](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270/6))
 
 ## Device / to
 
@@ -33,6 +42,38 @@ This list helps me pick up what to work on next, aside of adding new ops
 - [ ] MPS <-> WebGPU
 - [ ] Intel Gaudi <-> WebGPU
 - [ ] XLA <-> WebGPU
+
+## FAQ
+
+### How serious are you about this project? Is it a research or PoC in mind or are you going to make it production quality?
+
+Once we hit version 1.0.0, `torch-webgpu` will be a production-ready PyTorch backend. WebGPU is an exciting, emerging technology. As of Nov 2025 [all major browsers support WebGPU](https://web.dev/blog/webgpu-supported-major-browsers). I think that it's highly important to build a bridge between PyTorch and WebGPU.
+
+### Will you upstream WebGPU backend to PyTorch or keep it out-of-tree forever?
+
+We'll see, ideally I'd see it as a part of PyTorch core, but we need to get a very high quality first to allow ourselves to ask PyTorch maintainers about it
+
+### Contributor policy
+
+I have a very little time and need to be picky about contributions, so please make sure you contribute code that is:
+- well thought
+- covered with unit tests
+- you understand everything what you wrote
+- as concise as possible - I can't handle too big PRs, sorry!
+
+Use LLM at your discretion, but provide exhaustive explanation of what you built and why. Write it by yourself to show that you really understand
+
+I can understand if that sounds too picky, but since I build this project after hours, I need to cut any additional noise. Sorry and thanks for understanding!
+
+### I don't like X about this project
+
+That's ok. The main goal here is to build a bridge (for community) and learn ML compilers in depth (for me). The project moves regularly, at its own pace. Things improve, cover more use cases, get more tests, get rethinked and rewrote. A journey, insights and learning over a raw development velocity. That's a tradeoff I choose
+
+### I wish you moved faster
+
+You can fund the project to give me more spare time to work on it. My email: `github@maczan.pl`
+
+### Open an issue if you have more questions. Thanks!
 
 ## ATen Ops
 
@@ -166,6 +207,10 @@ This list helps me pick up what to work on next, aside of adding new ops
 
 Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/webgpu-torch), which is a neat PyTorch reimplementation in TypeScript targeting WebGPU
 
+## Resources
+
 I mainly use Ascend's NPU backend for PyTorch https://github.com/ascend/pytorch, Elie's WebGPU guide https://eliemichel.github.io/LearnWebGPU/index.html, WGSL spec https://www.w3.org/TR/WGSL/ and PyTorch PrivateUse1 custom backend docs as a reference https://docs.pytorch.org/tutorials/advanced/privateuseone.html https://docs.pytorch.org/tutorials/advanced/extend_dispatcher.html https://docs.pytorch.org/tutorials/advanced/dispatcher
 
-Built by [Jędrzej Maczan, 2025](https://jedrzej.maczan.pl/)
+## Credits
+
+[Jędrzej Maczan, 2025 - ∞](https://jedrzej.maczan.pl/)
