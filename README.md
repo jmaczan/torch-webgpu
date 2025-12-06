@@ -5,7 +5,7 @@ Not even 0.0.1 release yet! I make the repository public, so you give me support
 
 **Goals**:
 1. Run PyTorch on WebGPU `device="webgpu"`
-2. Compile PyTorch code for WebGPU - `@torch.compile`
+2. Compile PyTorch code for WebGPU - `@torch.compile(m, backend=webgpu)`
 3. High performance without platform specific (CUDA, MPS, ROCm) kernels. Five ingredients are enough to get there - PyTorch, Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
 
 <p align="center">
@@ -121,7 +121,6 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 f32 only for now!
 
 - [x] add.Tensor
-- [x] mul.Tensor
 - [x] gelu
 - [x] silu
 - [x] relu
@@ -130,6 +129,7 @@ f32 only for now!
 - [ ] add
 - [ ] sub.Tensor
 - [ ] sub
+- [ ] mul.Tensor
 - [ ] mul
 - [ ] div.Tensor
 - [ ] div
