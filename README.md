@@ -9,7 +9,7 @@ Not even 0.0.1 release yet! I make the repository public, so you give me support
 3. High performance without platform specific (CUDA, MPS, ROCm) kernels. Five ingredients are enough to get there - PyTorch, Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
 
 <p align="center">
-<img src="webgpu.png" height="400" width="400">
+<img src="webgpu.png" height="200" width="200">
 </p>
 <span>WebGPU logo by <a href="https://www.w3.org/"><abbr title="World Wide Web Consortium">W3C</abbr></a></span>
 

@@ -1,6 +1,17 @@
 {
     "configurations": [
         {
+            "name": "Dev: Debug Python tests/test_dev.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tests/test_dev.py",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "justMyCode": false,
+            "subProcess": true,
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "Compile Dev: Debug Python tests/test_compile_dev.py",
             "type": "python",
             "request": "launch",

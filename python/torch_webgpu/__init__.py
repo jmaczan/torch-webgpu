@@ -21,10 +21,6 @@ def webgpu_backend(
 ) -> Callable:
     gm.graph.print_tabular()
 
-    # compile
-    def compiled_fn(x):
-        return x
-
     # TODO: see if it's still relevant
     # https://docs.pytorch.org/docs/stable/generated/torch.jit.optimize_for_inference.html
-    return compiled_fn
+    return gm.forward
