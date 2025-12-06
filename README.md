@@ -1,17 +1,34 @@
 # torch-webgpu
 Experimental WebGPU backend for PyTorch
 
-Goals:
+Not even 0.0.1 release yet! I make the repository public, so you give me support and I can get some dopamine out of it (building alone, in private, after day job, without a positive feedback - it is quite difficult, at least to me!)
+
+**Goals**:
 1. Run PyTorch on WebGPU `device="webgpu"`
 2. Compile PyTorch code for WebGPU - `@torch.compile`
-3. High performance without platform specific (CUDA, MPS, ROCm) kernels. Four things are enough to get there - Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
+3. High performance without platform specific (CUDA, MPS, ROCm) kernels. Five ingredients are enough to get there - PyTorch, Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
 
 <p align="center">
 <img src="webgpu.png" height="400" width="400">
 </p>
 <span>WebGPU logo by <a href="https://www.w3.org/"><abbr title="World Wide Web Consortium">W3C</abbr></a></span>
 
+## Coolest thing you can do with torch-webgpu now
+Add tensors on WebGPU and move data between CPU and WebGPU
+
+```py
+a = torch.tensor([-1.5, 2.7, 1.0, 2.0], device="webgpu")
+b = torch.tensor([-1.0, 0.9, 1.1, -2.1], device="webgpu")
+result = a + b
+expected = torch.tensor([-2.5, 3.6, 2.1, -0.1], device="cpu")
+assert torch.allclose(result.to("cpu"), expected)
+```
+
+This is a TL;DR showcase of where we currently are with torch-webgpu. It will get regularly updated when new features land
+
 ## Installation
+Only for developers and curious *very* early adopters
+
 1. Clone this repo
 
 2. Install `google/dawn`
@@ -34,6 +51,7 @@ This list helps me pick up what to work on next, aside of adding new ops
 - only float32 supported
 - `wgpu::Queue.Submit()` handled synchronously
 - not enough unit tests ([a standarized testing out-of-tree backends is still in progress as of Dec 2025](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270), I hope to [involve torch-webgpu into this effort](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270/6))
+- some ops might fallback to CPU
 
 ## Device / to
 
@@ -73,7 +91,7 @@ That's ok. The main goal here is to build a bridge (for community) and learn ML 
 
 You can fund the project to give me more spare time to work on it. My email: `github@maczan.pl`
 
-### Open an issue if you have more questions. Thanks!
+### Open a GitHub issue if you have more questions. Thanks and let's build this bridge!
 
 ## ATen Ops
 
@@ -82,6 +100,9 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 - [x] empty.memory_format
 - [x] empty_strided
 - [x] as_strided
+- [x] copy_
+- [x] _copy_from
+- [x] to.device
 - [ ] empty_like
 - [ ] zeros_like
 - [ ] ones_like
@@ -89,10 +110,7 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 - [ ] full
 - [ ] rand
 - [ ] randn
-- [x] copy_
-- [x] _copy_from
 - [ ] clone
-- [x] to.device
 - [ ] to.dtype
 - [ ] to
 - [ ] quantize_per_tensor
@@ -100,12 +118,18 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 
 ### Arithmetic and activation functions
 
-- [x] add.Tensor (f32)
+f32 only for now!
+
+- [x] add.Tensor
+- [x] mul.Tensor
+- [x] gelu
+- [x] silu
+- [x] relu
+- [x] masked_select
 - [ ] add.Scalar
 - [ ] add
 - [ ] sub.Tensor
 - [ ] sub
-- [x] mul.Tensor
 - [ ] mul
 - [ ] div.Tensor
 - [ ] div
@@ -119,9 +143,6 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 - [ ] log
 - [ ] tanh
 - [ ] sigmoid
-- [x] gelu
-- [x] silu
-- [x] relu
 - [ ] clamp_min
 - [ ] clamp
 - [ ] round
@@ -132,14 +153,13 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 - [ ] where.self
 - [ ] where
 - [ ] masked_fill
-- [x] masked_select
 
 ### Comparisons
 
 - [x] bitwise_and.Tensor
 - [x] eq.Tensor
-- [ ] ne.Tensor
 - [x] ne.Scalar
+- [ ] ne.Tensor
 - [ ] lt.Tensor
 - [ ] le.Tensor
 - [ ] gt.Tensor
@@ -205,11 +225,11 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 - [ ] max_pool2d
 - [ ] interpolate
 
-Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/webgpu-torch), which is a neat PyTorch reimplementation in TypeScript targeting WebGPU
-
 ## Resources
 
 I mainly use Ascend's NPU backend for PyTorch https://github.com/ascend/pytorch, Elie's WebGPU guide https://eliemichel.github.io/LearnWebGPU/index.html, WGSL spec https://www.w3.org/TR/WGSL/ and PyTorch PrivateUse1 custom backend docs as a reference https://docs.pytorch.org/tutorials/advanced/privateuseone.html https://docs.pytorch.org/tutorials/advanced/extend_dispatcher.html https://docs.pytorch.org/tutorials/advanced/dispatcher
+
+Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/webgpu-torch), which is a neat PyTorch reimplementation in TypeScript targeting WebGPU
 
 ## Credits
 
