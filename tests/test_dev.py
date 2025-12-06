@@ -1,14 +1,20 @@
 import torch
 import torch_webgpu
+from torch_webgpu import webgpu_backend
+
+
+@torch.compile(backend=webgpu_backend)
+def fn(x):
+    a = torch.tensor([-1.5, 2.7, 1.0, 2.0], device="webgpu")
+    b = torch.tensor([-1.0, 0.9, 1.1, -2.1], device="webgpu")
+    result = a + b
+    result = torch.relu(result)
+    result = result.to("cpu")
+    return result
 
 
 if __name__ == "__main__":
-    storage = torch.arange(200, device="cpu")
-    a = torch.as_strided(storage, size=(2, 3, 4), stride=(20, 6, 1))
-    a = a.to("webgpu")
-    with torch.no_grad():
-        b = a.reshape((4, 6))
-    print(b.shape)
-    print(b.dtype)
-    b = b.to("cpu")
-    print(b)
+    result = fn(torch.empty(0))
+    expected = torch.tensor([0, 3.6, 2.1, 0], device="cpu")
+    assert torch.allclose(result, expected)
+    print(expected, result, expected.equal(result))
