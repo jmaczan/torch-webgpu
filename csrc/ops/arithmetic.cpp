@@ -143,7 +143,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             TORCH_CHECK(self.ndimension() == 2);
             TORCH_CHECK(self.sizes()[1] == other.sizes()[0]);
 
-            std::string shader = get_binary_shader(binary_op);
+            std::string shader = get_binary_shader(BinaryOp::Mul);
 
             wgpu::ShaderSourceWGSL shader_source{
                 wgpu::ShaderSourceWGSL::Init{
