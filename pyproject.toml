@@ -8,6 +8,7 @@ authors = [
     { name = "Jędrzej Maczan", email = "jedrzejpawel@maczan.pl" },
 ]
 dependencies = [
+    "python-dotenv",
     "torch==2.9.0",
     "torchvision==0.24",
     "numpy"

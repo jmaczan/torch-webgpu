@@ -2,8 +2,11 @@ import glob
 import os
 from setuptools import setup
 from torch.utils.cpp_extension import CppExtension, BuildExtension
+from dotenv import load_dotenv
 
-DAWN_PREFIX = "/home/jedrzej/dev/dawn/install/Release"
+load_dotenv()
+
+DAWN_PREFIX = os.environ.get("DAWN_PREFIX")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 setup(
