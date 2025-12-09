@@ -1,7 +1,5 @@
-from typing import Callable, List
 import torch
 from . import _C
-from torch._dynamo import register_backend
 from . import webgpu
 
 
@@ -14,13 +12,6 @@ torch.utils.generate_methods_for_privateuse1_backend(
     for_packed_sequence=True,
 )
 
+from .compiler.webgpu_compiler import webgpu_backend  # noqa: F401 E402
 
-@register_backend
-def webgpu_backend(
-    gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
-) -> Callable:
-    gm.graph.print_tabular()
-
-    # TODO: see if it's still relevant
-    # https://docs.pytorch.org/docs/stable/generated/torch.jit.optimize_for_inference.html
-    return gm.forward
+__all__ = ["webgpu_backend"]
