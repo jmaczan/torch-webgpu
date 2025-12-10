@@ -23,3 +23,7 @@ package-dir = {"" = "python"}
 
 [tool.setuptools.packages.find]
 where = ["python"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
