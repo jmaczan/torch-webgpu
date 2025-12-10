@@ -37,7 +37,7 @@ def optimize(input_ir_graph):
                         Pattern("operator", IROp.ADD),
                         Pattern("operator", IROp.RELU),
                     ],
-                    output="fused_add_relu",
+                    output=IROp.FUSED_ADD_RELU,
                 )
             ]
         ),
