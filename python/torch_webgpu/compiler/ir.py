@@ -1,11 +1,14 @@
+from typing import Any
 import torch
+from enum import StrEnum, auto
 
 
 class IRNode:
-    def __init__(self, fx_node=None):
+    def __init__(self, operator=None, fx_node=None):
         super().__init__()
+        print(f"IR Node init operator = {operator}")
+        self.operator = operator
         self.fx_node = fx_node
-        self.operator = None
 
     def __call__(self, operator=None, fx_node=None):
         print(f"IR Node call operator = {operator}")
@@ -16,8 +19,8 @@ class IRNode:
 
 
 class IRTensor(IRNode):
-    def __init__(self, name: str = None, *args, **kwargs):
-        self.name = name
+    def __init__(self, operator=None, *args, **kwargs):
+        self.operator = operator
         self.args = args
         self.kwargs = kwargs
 
@@ -43,28 +46,39 @@ class IRReturn(IRNode):
         self.kwargs = kwargs
 
 
-fx_op_to_ir_op = {
-    torch.tensor: "tensor",
-    "add": "add",
-    torch.relu: "relu",
-    "to": "to",
-    "output": "output",
+class IROp(StrEnum):
+    TENSOR = auto()
+    ADD = auto()
+    RELU = auto()
+    TO = auto()
+    OUTPUT = auto()
+
+
+fx_op_to_ir_op: dict[Any, IROp] = {
+    torch.tensor: IROp.TENSOR,
+    "add": IROp.ADD,
+    torch.relu: IROp.RELU,
+    "to": IROp.TO,
+    "output": IROp.OUTPUT,
 }
 
-ir_op_to_ir_node = {
-    "tensor": IRTensor,
-    "add": IRPointwise,
-    "relu": IROperation,
-    "to": IROperation,
-    "output": IRReturn,
+ir_op_to_ir_node: dict[IROp, type[IRNode]] = {
+    IROp.TENSOR: IRTensor,
+    IROp.ADD: IRPointwise,
+    IROp.RELU: IROperation,
+    IROp.TO: IROperation,
+    IROp.OUTPUT: IRReturn,
 }
 
 
 def get_ir(fx_operator):
     ir_op = fx_op_to_ir_op.get(fx_operator)
-    ir_node = ir_op_to_ir_node.get(ir_op)
-    if ir_node:
-        ir_node(operator=ir_op)
+    if not ir_op:
+        return None
+    ir_node_type = ir_op_to_ir_node.get(ir_op)
+    if ir_node_type:
+        ir_node = ir_node_type()
+        ir_node.operator = ir_op
     return ir_node
 
 
@@ -83,7 +97,7 @@ def fx_to_ir(gm):
                     if node_key:
                         ir_node = get_ir(node_key)
         if ir_node:
-            ir_graph.append(ir_node(node.meta))
+            ir_graph.append(ir_node)
         else:
             print(f"Unsupported FX op: {node.target}. ir_graph: {ir_graph}")
             raise Exception(f"Unsupported FX op: {node.target}")

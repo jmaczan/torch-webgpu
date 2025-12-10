@@ -1,7 +1,7 @@
 import torch
 from torch._dynamo import register_backend
 from typing import Callable, List
-from .ir import fx_to_ir
+from .ir import IROp, fx_to_ir
 from .compiler_pass import CompilerPass, Transform, Pattern
 
 
@@ -34,8 +34,8 @@ def optimize(input_ir_graph):
             transforms=[
                 Transform(
                     pattern=[
-                        Pattern("operator", "add"),
-                        Pattern("operator", "relu"),
+                        Pattern("operator", IROp.ADD),
+                        Pattern("operator", IROp.RELU),
                     ],
                     output="fused_add_relu",
                 )
