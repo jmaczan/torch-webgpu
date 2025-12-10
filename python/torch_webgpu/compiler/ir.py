@@ -3,6 +3,15 @@ import torch
 from enum import StrEnum, auto
 
 
+class IROp(StrEnum):
+    CREATE_TENSOR = auto()
+    ADD = auto()
+    RELU = auto()
+    FUSED_ADD_RELU = auto()
+    MOVE_TO = auto()
+    OUTPUT = auto()
+
+
 class IRNode:
     def __init__(self, operator=None, fx_node=None):
         super().__init__()
@@ -18,56 +27,79 @@ class IRNode:
             self.fx_node = fx_node
 
 
-class IRTensor(IRNode):
+class IRCreateTensor(IRNode):
+    ir_op = IROp.CREATE_TENSOR
+
+    def __init__(self, operator=None, *args, **kwargs):
+        self.operator = operator
+        self.args = args
+        self.kwargs = kwargs
+
+    # def __call__(self):
+    #     # torch_webgpu.create_buffer or smth like this
+    #     return None
+
+
+class IRAdd(IRNode):
+    ir_op = IROp.ADD
+
     def __init__(self, operator=None, *args, **kwargs):
         self.operator = operator
         self.args = args
         self.kwargs = kwargs
 
 
-class IRPointwise(IRNode):
+class IRRelu(IRNode):
+    ir_op = IROp.RELU
+
     def __init__(self, operator=None, *args, **kwargs):
         self.operator = operator
         self.args = args
         self.kwargs = kwargs
 
 
-class IROperation(IRNode):
+class IRFusedAddRelu(IRNode):
+    ir_op = IROp.FUSED_ADD_RELU
+
     def __init__(self, operator=None, *args, **kwargs):
         self.operator = operator
         self.args = args
         self.kwargs = kwargs
 
 
-class IRReturn(IRNode):
+class IRMoveTo(IRNode):
+    ir_op = IROp.MOVE_TO
+
     def __init__(self, operator=None, *args, **kwargs):
         self.operator = operator
         self.args = args
         self.kwargs = kwargs
 
 
-class IROp(StrEnum):
-    TENSOR = auto()
-    ADD = auto()
-    RELU = auto()
-    TO = auto()
-    OUTPUT = auto()
+class IROutput(IRNode):
+    ir_op = IROp.OUTPUT
+
+    def __init__(self, operator=None, *args, **kwargs):
+        self.operator = operator
+        self.args = args
+        self.kwargs = kwargs
 
 
 fx_op_to_ir_op: dict[Any, IROp] = {
-    torch.tensor: IROp.TENSOR,
+    torch.tensor: IROp.CREATE_TENSOR,
     "add": IROp.ADD,
     torch.relu: IROp.RELU,
-    "to": IROp.TO,
+    "to": IROp.MOVE_TO,
     "output": IROp.OUTPUT,
 }
 
 ir_op_to_ir_node: dict[IROp, type[IRNode]] = {
-    IROp.TENSOR: IRTensor,
-    IROp.ADD: IRPointwise,
-    IROp.RELU: IROperation,
-    IROp.TO: IROperation,
-    IROp.OUTPUT: IRReturn,
+    IROp.CREATE_TENSOR: IRCreateTensor,
+    IROp.ADD: IRAdd,
+    IROp.RELU: IRRelu,
+    IROp.MOVE_TO: IRMoveTo,
+    IROp.OUTPUT: IROutput,
+    IROp.FUSED_ADD_RELU: IRFusedAddRelu,
 }
 
 

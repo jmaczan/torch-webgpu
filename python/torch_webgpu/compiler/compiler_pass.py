@@ -4,9 +4,11 @@
 
 from typing import Optional
 
+from .ir import IROp, ir_op_to_ir_node
+
 
 class Pattern:
-    def __init__(self, trait, value):
+    def __init__(self, trait: str, value: IROp):
         if not trait or not value:
             raise Exception("Trait and value are required to create a pattern")
 
@@ -16,11 +18,19 @@ class Pattern:
 
 class Transform:
     def __init__(
-        self, pattern: Optional[list[Pattern]] = None, input=None, output=None
+        self,
+        pattern: Optional[list[Pattern]] = None,
+        input=None,
+        output: Optional[IROp] = None,
     ):
         self.input = input
         self.output = output
-        self.pattern = pattern or input
+        if not pattern:
+            raise Exception(
+                "Transformations without a pattern ",
+                "aren't supported yet",
+            )
+        self.pattern = pattern
 
 
 class CompilerPass:
@@ -58,7 +68,11 @@ class CompilerPass:
                             break
 
                     if is_pattern_match:
-                        output_graph.append(transform.output)
+                        if transform.output:
+                            output_node = ir_op_to_ir_node.get(transform.output)  # Noqa E501
+                            if not output_node:
+                                raise Exception("Trying to add empty node")
+                            output_graph.append(output_node())
                         skips_left = len(transform.pattern) - 1
                     else:
                         output_graph.append(input_node)
