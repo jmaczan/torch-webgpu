@@ -1,7 +1,8 @@
 import torch
 from torch._dynamo import register_backend
 from typing import Callable, List
-from .ir import IROp, fx_to_ir
+from .high_ir import HighIRNode, HighIROp, fx_to_high_ir
+from .low_ir import high_ir_to_low_ir
 from .compiler_pass import CompilerPass, Transform, Pattern
 
 
@@ -10,34 +11,27 @@ def webgpu_backend(
     gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
 ) -> Callable:
     gm.graph.print_tabular()
-    print(gm.graph)
 
-    # OPTIMIZATION PASSES
-
-    ir_graph = fx_to_ir(gm)
-    ir_graph = optimize(ir_graph)
-
-    # LOWERING
-
-    # output_ir_graph
+    high_ir = fx_to_high_ir(gm)
+    high_ir = run_compiler_passes(high_ir)
+    low_ir = high_ir_to_low_ir(high_ir)
 
     # BUILD A COMPILED FN (closure? lambda?) AND RETURN
 
-    # TODO: see if it's still relevant
-    # https://docs.pytorch.org/docs/stable/generated/torch.jit.optimize_for_inference.html
+    # Noqa 501 TODO: see if it's still relevant https://docs.pytorch.org/docs/stable/generated/torch.jit.optimize_for_inference.html
     return gm.forward
 
 
-def optimize(input_ir_graph):
+def run_compiler_passes(input_ir_graph: list[HighIRNode]):
     passes = [
         CompilerPass(
             transforms=[
                 Transform(
                     pattern=[
-                        Pattern("operator", IROp.ADD),
-                        Pattern("operator", IROp.RELU),
+                        Pattern("operator", HighIROp.ADD),
+                        Pattern("operator", HighIROp.RELU),
                     ],
-                    output=IROp.FUSED_ADD_RELU,
+                    output=HighIROp.FUSED_ADD_RELU,
                 )
             ]
         ),
