@@ -2,9 +2,9 @@
 # so lot's of assumptions and limitations here
 
 
-from typing import Optional
+from typing import Callable, Optional
 
-from .ir import IROp, ir_op_to_ir_node
+from .ir import IRNode, IROp, ir_op_to_ir_node
 
 
 class Pattern:
@@ -37,7 +37,7 @@ class CompilerPass:
     def __init__(self, transforms: list[Transform] = []):
         self.transforms = transforms
 
-    def run(self, ir_graph=[]):
+    def run(self, ir_graph: list[IRNode] = [], ir_op_to_ir_node: Callable[IROp, type[IRNode]]):
         output_graph = []
         input_graph = ir_graph
         for t, transform in enumerate(self.transforms):
