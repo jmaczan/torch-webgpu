@@ -1,6 +1,8 @@
 from typing import Any, Optional
 import torch
 from enum import StrEnum, auto
+
+from .compiler_pass import CompilerPass, Transform, Pattern
 from .ir import IRNode
 
 
@@ -87,6 +89,20 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[IRNode]] = {
     HighIROp.OUTPUT: HighIROutput,
     HighIROp.FUSED_ADD_RELU: HighIRFusedAddRelu,
 }
+
+high_ir_compiler_passes = [
+    CompilerPass(
+        transforms=[
+            Transform(
+                pattern=[
+                    Pattern("operator", HighIROp.ADD),
+                    Pattern("operator", HighIROp.RELU),
+                ],
+                output=HighIROp.FUSED_ADD_RELU,
+            )
+        ]
+    ),
+]
 
 
 def get_high_ir(fx_operator) -> Optional[IRNode]:
