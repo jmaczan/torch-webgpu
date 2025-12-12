@@ -6,29 +6,12 @@ from .high_ir import HighIROp
 
 
 class LowIROp(StrEnum):
-    CREATE_TENSOR = auto()
-    ADD = auto()
-    RELU = auto()
-    FUSED_ADD_RELU = auto()
-    MOVE_TO = auto()
-    OUTPUT = auto()
+    CREATE_BUFFER = auto()
+    WRITE_BUFFER = auto()
 
 
-class LowIRCreateTensor(IRNode):
-    ir_op = LowIROp.CREATE_TENSOR
-
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
-        self.args = args
-        self.kwargs = kwargs
-
-    # def __call__(self):
-    #     # torch_webgpu.create_buffer or smth like this
-    #     return None
-
-
-class LowIRAdd(IRNode):
-    ir_op = LowIROp.ADD
+class LowIRCreateBuffer(IRNode):
+    ir_op = LowIROp.CREATE_BUFFER
 
     def __init__(self, operator=None, *args, **kwargs):
         self.operator = operator
@@ -36,8 +19,8 @@ class LowIRAdd(IRNode):
         self.kwargs = kwargs
 
 
-class LowIRRelu(IRNode):
-    ir_op = LowIROp.RELU
+class LowIRWriteBuffer(IRNode):
+    ir_op = LowIROp.CREATE_BUFFER
 
     def __init__(self, operator=None, *args, **kwargs):
         self.operator = operator
@@ -45,68 +28,37 @@ class LowIRRelu(IRNode):
         self.kwargs = kwargs
 
 
-class LowIRFusedAddRelu(IRNode):
-    ir_op = LowIROp.FUSED_ADD_RELU
-
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
-        self.args = args
-        self.kwargs = kwargs
-
-
-class LowIRMoveTo(IRNode):
-    ir_op = LowIROp.MOVE_TO
-
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
-        self.args = args
-        self.kwargs = kwargs
-
-
-class LowIROutput(IRNode):
-    ir_op = LowIROp.OUTPUT
-
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
-        self.args = args
-        self.kwargs = kwargs
-
-
-fx_op_to_low_ir_op: dict[Any, LowIROp] = {
-    torch.tensor: LowIROp.CREATE_TENSOR,
-    "add": LowIROp.ADD,
-    torch.relu: LowIROp.RELU,
-    "to": LowIROp.MOVE_TO,
-    "output": LowIROp.OUTPUT,
+high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
+    HighIROp.CREATE_TENSOR: [LowIROp.CREATE_BUFFER, LowIROp.WRITE_BUFFER]
 }
 
 low_ir_op_to_low_ir_node: dict[LowIROp, type[IRNode]] = {
-    LowIROp.CREATE_TENSOR: LowIRCreateTensor,
-    LowIROp.ADD: LowIRAdd,
-    LowIROp.RELU: LowIRRelu,
-    LowIROp.MOVE_TO: LowIRMoveTo,
-    LowIROp.OUTPUT: LowIROutput,
-    LowIROp.FUSED_ADD_RELU: LowIRFusedAddRelu,
+    LowIROp.CREATE_BUFFER: LowIRCreateBuffer,
+    LowIROp.WRITE_BUFFER: LowIRWriteBuffer,
 }
 
 
-def get_low_ir(fx_operator):
-    ir_op = fx_op_to_low_ir_op.get(fx_operator)
-    if not ir_op:
+def get_low_ir(high_ir_op):
+    low_ir_ops = high_ir_op_to_low_ir_op.get(high_ir_op)
+    if not low_ir_ops or len(low_ir_ops) == 0:
         return None
-    ir_node_type = low_ir_op_to_low_ir_node.get(ir_op)
-    if ir_node_type:
-        ir_node = ir_node_type()
-        ir_node.operator = ir_op
-    return ir_node
+    low_ir_nodes = []
+    for op in low_ir_ops:
+        ir_node_type = low_ir_op_to_low_ir_node.get(op)
+        if ir_node_type:
+            ir_node = ir_node_type()
+            ir_node.operator = op
+            low_ir_nodes.append(ir_node)
+    return low_ir_nodes
 
 
 def high_ir_to_low_ir(high_ir_graph):
     ir_graph: list[IRNode] = []
-    for i, node in enumerate(gm.graph.nodes):
-        ir_node = get_low_ir(node.target)
-        if ir_node:
-            ir_node(fx_node=node)
+    for i, node in enumerate(high_ir_graph):
+        ir_nodes = get_low_ir(node.target)
+        if ir_nodes:
+            for node in ir_nodes:
+                node(fx_node=node)
         else:
             source_fn_stack = node.meta.get("source_fn_stack")
             if source_fn_stack and len(source_fn_stack) > 0:
@@ -114,9 +66,10 @@ def high_ir_to_low_ir(high_ir_graph):
                 if source_fn_stack and len(source_fn_stack) > 0:
                     node_key = source_fn_stack[0]
                     if node_key:
-                        ir_node = get_low_ir(node_key)
-        if ir_node:
-            ir_graph.append(ir_node)
+                        ir_nodes = get_low_ir(node_key)
+        if ir_nodes:
+            for node in ir_nodes:
+                ir_graph.append(node)
         else:
             print(f"Unsupported FX op: {node.target}. ir_graph: {ir_graph}")
             raise Exception(f"Unsupported FX op: {node.target}")

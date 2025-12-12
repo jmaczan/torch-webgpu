@@ -16,7 +16,7 @@ def webgpu_backend(
 
     high_ir = fx_to_high_ir(gm)
     high_ir = run_compiler_passes(high_ir)
-    # low_ir = high_ir_to_low_ir(high_ir)
+    low_ir = high_ir_to_low_ir(high_ir)
 
     # BUILD A COMPILED FN (closure? lambda?) AND RETURN
 
