@@ -2,13 +2,14 @@
 # so lot's of assumptions and limitations here
 
 
-from typing import Callable, Optional
+from enum import StrEnum
+from typing import Any, Callable, Optional
 
-from .ir import IRNode, IROp, ir_op_to_ir_node
+from .ir import IRNode
 
 
 class Pattern:
-    def __init__(self, trait: str, value: IROp):
+    def __init__(self, trait: str, value: str):
         if not trait or not value:
             raise Exception("Trait and value are required to create a pattern")
 
@@ -21,7 +22,7 @@ class Transform:
         self,
         pattern: Optional[list[Pattern]] = None,
         input=None,
-        output: Optional[IROp] = None,
+        output: Optional[str] = None,
     ):
         self.input = input
         self.output = output
@@ -37,7 +38,17 @@ class CompilerPass:
     def __init__(self, transforms: list[Transform] = []):
         self.transforms = transforms
 
-    def run(self, ir_graph: list[IRNode] = [], ir_op_to_ir_node: Callable[IROp, type[IRNode]]):
+    def run(
+        self,
+        ir_graph: list[IRNode],
+        ir_op_to_ir_node: dict[Any, type[IRNode]],
+    ):
+        if not ir_graph:
+            raise Exception("Compiler pass needs an IR graph to run")
+        if not ir_op_to_ir_node:
+            raise Exception(
+                "Compiler pass needs a dictionary that maps IR tops to IR nodes"
+            )
         output_graph = []
         input_graph = ir_graph
         for t, transform in enumerate(self.transforms):

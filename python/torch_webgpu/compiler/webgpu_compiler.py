@@ -1,7 +1,9 @@
 import torch
 from torch._dynamo import register_backend
 from typing import Callable, List
-from .high_ir import HighIRNode, HighIROp, fx_to_high_ir
+
+from .ir import IRNode
+from .high_ir import HighIROp, fx_to_high_ir, high_ir_op_to_high_ir_node
 from .low_ir import high_ir_to_low_ir
 from .compiler_pass import CompilerPass, Transform, Pattern
 
@@ -14,7 +16,7 @@ def webgpu_backend(
 
     high_ir = fx_to_high_ir(gm)
     high_ir = run_compiler_passes(high_ir)
-    low_ir = high_ir_to_low_ir(high_ir)
+    # low_ir = high_ir_to_low_ir(high_ir)
 
     # BUILD A COMPILED FN (closure? lambda?) AND RETURN
 
@@ -22,7 +24,7 @@ def webgpu_backend(
     return gm.forward
 
 
-def run_compiler_passes(input_ir_graph: list[HighIRNode]):
+def run_compiler_passes(input_ir_graph: list[IRNode]):
     passes = [
         CompilerPass(
             transforms=[
@@ -38,6 +40,8 @@ def run_compiler_passes(input_ir_graph: list[HighIRNode]):
     ]
     output_ir_graph = []
     for p, compiler_pass in enumerate(passes):
-        output_ir_graph = compiler_pass.run(input_ir_graph)
+        output_ir_graph = compiler_pass.run(
+            ir_graph=input_ir_graph, ir_op_to_ir_node=high_ir_op_to_high_ir_node
+        )
         input_ir_graph = output_ir_graph
     return output_ir_graph

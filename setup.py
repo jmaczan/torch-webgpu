@@ -7,7 +7,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DAWN_PREFIX = os.environ.get("DAWN_PREFIX")
+if not DAWN_PREFIX:
+    raise Exception("Please provide DAWN_PREFIX env var")
 ROOT = os.path.dirname(os.path.abspath(__file__))
+if not ROOT:
+    raise Exception("Please provide ROOT env var")
 
 setup(
     name="torch-webgpu",
