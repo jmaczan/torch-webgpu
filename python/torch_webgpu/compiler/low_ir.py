@@ -37,7 +37,7 @@ low_ir_op_to_low_ir_node: dict[LowIROp, type[IRNode]] = {
     LowIROp.WRITE_BUFFER: LowIRWriteBuffer,
 }
 
-low_ir_compiler_passes = []
+low_ir_compiler_passes = []  # TODO
 
 
 def get_low_ir(high_ir_op):
@@ -57,22 +57,14 @@ def get_low_ir(high_ir_op):
 def high_ir_to_low_ir(high_ir_graph):
     ir_graph: list[IRNode] = []
     for i, node in enumerate(high_ir_graph):
-        ir_nodes = get_low_ir(node.target)
+        ir_nodes = get_low_ir(node.ir_op)
         if ir_nodes:
             for node in ir_nodes:
                 node(fx_node=node)
-        else:
-            source_fn_stack = node.meta.get("source_fn_stack")
-            if source_fn_stack and len(source_fn_stack) > 0:
-                source_fn_stack = source_fn_stack[0]
-                if source_fn_stack and len(source_fn_stack) > 0:
-                    node_key = source_fn_stack[0]
-                    if node_key:
-                        ir_nodes = get_low_ir(node_key)
-        if ir_nodes:
-            for node in ir_nodes:
                 ir_graph.append(node)
         else:
-            print(f"Unsupported FX op: {node.target}. ir_graph: {ir_graph}")
-            raise Exception(f"Unsupported FX op: {node.target}")
+            print(
+                f"Unsupported FX op: {node.ir_op} (node: {node}). ir_graph: {ir_graph}"
+            )
+            raise Exception(f"Unsupported FX op: {node.ir_op} for node: {node}")
     return ir_graph
