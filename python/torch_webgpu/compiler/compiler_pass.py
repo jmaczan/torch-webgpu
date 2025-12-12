@@ -92,3 +92,20 @@ class CompilerPass:
             input_graph = output_graph
 
         return output_graph
+
+
+def run_compiler_passes(
+    input_ir_graph: list[IRNode],
+    ir_op_to_ir_node: dict[Any, type[IRNode]],
+    passes: list[CompilerPass],
+):
+    if not passes:
+        print("Provide compiler passes to actually run the compiler")
+        return input_ir_graph
+    output_ir_graph = []
+    for p, compiler_pass in enumerate(passes):
+        output_ir_graph = compiler_pass.run(
+            ir_graph=input_ir_graph, ir_op_to_ir_node=ir_op_to_ir_node
+        )
+        input_ir_graph = output_ir_graph
+    return output_ir_graph

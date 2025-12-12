@@ -37,6 +37,8 @@ low_ir_op_to_low_ir_node: dict[LowIROp, type[IRNode]] = {
     LowIROp.WRITE_BUFFER: LowIRWriteBuffer,
 }
 
+low_ir_compiler_passes = []
+
 
 def get_low_ir(high_ir_op):
     low_ir_ops = high_ir_op_to_low_ir_op.get(high_ir_op)
