@@ -27,3 +27,6 @@ where = ["python"]
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
+
+[tool.ruff]
+line-length = 88

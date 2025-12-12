@@ -1,3 +1,11 @@
+from abc import ABC
+
+
+class IROp(ABC):
+    def __init__(self):
+        super().__init__()
+
+
 class IRNode:
     def __init__(self, operator=None, fx_node=None):
         super().__init__()
