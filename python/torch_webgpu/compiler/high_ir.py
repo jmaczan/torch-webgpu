@@ -18,8 +18,7 @@ class HighIROp(StrEnum):
 class HighIRCreateTensor(IRNode):
     ir_op = HighIROp.CREATE_TENSOR
 
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
+    def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
@@ -31,8 +30,7 @@ class HighIRCreateTensor(IRNode):
 class HighIRAdd(IRNode):
     ir_op = HighIROp.ADD
 
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
+    def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
@@ -40,8 +38,7 @@ class HighIRAdd(IRNode):
 class HighIRRelu(IRNode):
     ir_op = HighIROp.RELU
 
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
+    def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
@@ -49,8 +46,7 @@ class HighIRRelu(IRNode):
 class HighIRFusedAddRelu(IRNode):
     ir_op = HighIROp.FUSED_ADD_RELU
 
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
+    def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
@@ -58,8 +54,7 @@ class HighIRFusedAddRelu(IRNode):
 class HighIRMoveTo(IRNode):
     ir_op = HighIROp.MOVE_TO
 
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
+    def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
@@ -67,8 +62,7 @@ class HighIRMoveTo(IRNode):
 class HighIROutput(IRNode):
     ir_op = HighIROp.OUTPUT
 
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
+    def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
@@ -95,8 +89,8 @@ high_ir_compiler_passes = [
         transforms=[
             Transform(
                 pattern=[
-                    Pattern("operator", HighIROp.ADD),
-                    Pattern("operator", HighIROp.RELU),
+                    Pattern("ir_op", HighIROp.ADD),
+                    Pattern("ir_op", HighIROp.RELU),
                 ],
                 output=HighIROp.FUSED_ADD_RELU,
             )
@@ -112,7 +106,6 @@ def get_high_ir(fx_operator) -> Optional[IRNode]:
     ir_node_type = high_ir_op_to_high_ir_node.get(ir_op)
     if ir_node_type:
         ir_node = ir_node_type()
-        ir_node.operator = ir_op
     return ir_node
 
 
