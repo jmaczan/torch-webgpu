@@ -2,10 +2,11 @@
 # so lot's of assumptions and limitations here
 
 
-from enum import StrEnum
-from typing import Any, Callable, Optional
+from typing import Any, Generic, Mapping, TypeVar, Type, Optional
 
 from .ir import IRNode
+
+T_IRNode = TypeVar("T_IRNode", bound="IRNode")
 
 
 class Pattern:
@@ -34,15 +35,18 @@ class Transform:
         self.pattern = pattern
 
 
-class CompilerPass:
+class CompilerPass(Generic[T_IRNode]):
     def __init__(self, transforms: list[Transform] = []):
         self.transforms = transforms
 
     def run(
         self,
-        ir_graph: list[IRNode],
-        ir_op_to_ir_node: dict[Any, type[IRNode]],
+        ir_graph: list[T_IRNode],
+        ir_op_to_ir_node: Mapping[Any, Type[T_IRNode]],
     ):
+        from .high_ir import HighIRNode
+        from .low_ir import LowIRNode
+
         if not ir_graph:
             raise Exception("Compiler pass needs an IR graph to run")
         if not ir_op_to_ir_node:
@@ -83,7 +87,15 @@ class CompilerPass:
                             output_node = ir_op_to_ir_node.get(transform.output)  # Noqa E501
                             if not output_node:
                                 raise Exception("Trying to add empty node")
-                            output_graph.append(output_node())
+                            # the dirty part, to be refactored in the near never
+                            if isinstance(input_node, HighIRNode):
+                                output_graph.append(output_node(input_node.fx_node))  # pyright: ignore[reportCallIssue]
+                            elif isinstance(input_node, LowIRNode):
+                                output_graph.append(
+                                    output_node(input_node.high_ir_node)  # pyright: ignore[reportCallIssue]
+                                )
+                            else:
+                                raise Exception(f"Unrecognized IR: {input_node}")
                         skips_left = len(transform.pattern) - 1
                     else:
                         output_graph.append(input_node)
@@ -95,8 +107,8 @@ class CompilerPass:
 
 
 def run_compiler_passes(
-    input_ir_graph: list[IRNode],
-    ir_op_to_ir_node: dict[Any, type[IRNode]],
+    input_ir_graph: list[T_IRNode],
+    ir_op_to_ir_node: Mapping[Any, Type[T_IRNode]],
     passes: list[CompilerPass],
 ):
     if not passes:

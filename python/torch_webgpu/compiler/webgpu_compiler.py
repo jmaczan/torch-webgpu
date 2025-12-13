@@ -13,7 +13,8 @@ from .compiler_pass import run_compiler_passes
 
 @register_backend
 def webgpu_backend(
-    gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
+    gm: torch.fx.GraphModule,
+    example_inputs: List[torch.Tensor],  # TODO: don't ignore example_inputs
 ) -> Callable:
     gm.graph.print_tabular()
 

@@ -15,56 +15,33 @@ class HighIROp(StrEnum):
     OUTPUT = auto()
 
 
-class HighIRCreateTensor(IRNode):
+class HighIRNode(IRNode):
+    def __init__(self, fx_node: torch.fx.Node):
+        self.fx_node = fx_node
+
+
+class HighIRCreateTensor(HighIRNode):
     ir_op = HighIROp.CREATE_TENSOR
 
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
 
-    # def __call__(self):
-    #     # torch_webgpu.create_buffer or smth like this
-    #     return None
-
-
-class HighIRAdd(IRNode):
+class HighIRAdd(HighIRNode):
     ir_op = HighIROp.ADD
 
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
 
-
-class HighIRRelu(IRNode):
+class HighIRRelu(HighIRNode):
     ir_op = HighIROp.RELU
 
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
 
-
-class HighIRFusedAddRelu(IRNode):
+class HighIRFusedAddRelu(HighIRNode):
     ir_op = HighIROp.FUSED_ADD_RELU
 
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
 
-
-class HighIRMoveTo(IRNode):
+class HighIRMoveTo(HighIRNode):
     ir_op = HighIROp.MOVE_TO
 
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
 
-
-class HighIROutput(IRNode):
+class HighIROutput(HighIRNode):
     ir_op = HighIROp.OUTPUT
-
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
 
 
 fx_op_to_high_ir_op: dict[Any, HighIROp] = {
@@ -75,7 +52,7 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     "output": HighIROp.OUTPUT,
 }
 
-high_ir_op_to_high_ir_node: dict[HighIROp, type[IRNode]] = {
+high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.CREATE_TENSOR: HighIRCreateTensor,
     HighIROp.ADD: HighIRAdd,
     HighIROp.RELU: HighIRRelu,
@@ -84,7 +61,7 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[IRNode]] = {
     HighIROp.FUSED_ADD_RELU: HighIRFusedAddRelu,
 }
 
-high_ir_compiler_passes = [
+high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = [
     CompilerPass(
         transforms=[
             Transform(
@@ -99,30 +76,28 @@ high_ir_compiler_passes = [
 ]
 
 
-def get_high_ir(fx_operator) -> Optional[IRNode]:
-    ir_op = fx_op_to_high_ir_op.get(fx_operator)
+def get_high_ir(fx_op, fx_node: torch.fx.Node) -> Optional[HighIRNode]:
+    ir_op = fx_op_to_high_ir_op.get(fx_op)
     if not ir_op:
         return None
     ir_node_type = high_ir_op_to_high_ir_node.get(ir_op)
     if ir_node_type:
-        ir_node = ir_node_type()
+        ir_node = ir_node_type(fx_node)
     return ir_node
 
 
-def fx_to_high_ir(gm: torch.fx.GraphModule) -> list[IRNode]:
-    ir_graph: list[IRNode] = []
+def fx_to_high_ir(gm: torch.fx.GraphModule) -> list[HighIRNode]:
+    ir_graph: list[HighIRNode] = []
     for i, node in enumerate(gm.graph.nodes):
-        ir_node = get_high_ir(node.target)
-        if ir_node:
-            ir_node(fx_node=node)
-        else:
+        ir_node = get_high_ir(fx_op=node.target, fx_node=node)
+        if not ir_node:
             source_fn_stack = node.meta.get("source_fn_stack")
             if source_fn_stack and len(source_fn_stack) > 0:
                 source_fn_stack = source_fn_stack[0]
                 if source_fn_stack and len(source_fn_stack) > 0:
                     node_key = source_fn_stack[0]
                     if node_key:
-                        ir_node = get_high_ir(node_key)
+                        ir_node = get_high_ir(fx_op=node_key, fx_node=node)
         if ir_node:
             ir_graph.append(ir_node)
         else:
