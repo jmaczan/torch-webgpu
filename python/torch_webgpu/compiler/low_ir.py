@@ -13,6 +13,8 @@ class LowIROp(StrEnum):
 
 
 class LowIRNode(IRNode):
+    ir_op: LowIROp
+
     def __init__(self, high_ir_node: HighIRNode):
         super().__init__()
         self.high_ir_node = high_ir_node
