@@ -16,7 +16,7 @@ class HighIROp(StrEnum):
 
 
 class HighIRNode(IRNode):
-    ir_op = None
+    ir_op: HighIROp
 
     def __init__(self, fx_node: torch.fx.Node):
         self.fx_node = fx_node
