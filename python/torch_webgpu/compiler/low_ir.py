@@ -28,7 +28,10 @@ class LowIRWriteBuffer(LowIRNode):
 
 class LowIRRunShader(LowIRNode):
     ir_op = LowIROp.RUN_SHADER
-    # TODO: somehow store which shader it should run
+
+    def __init__(self, high_ir_node: HighIRNode):
+        super().__init__(high_ir_node)
+        self.shader_name = high_ir_node.ir_op
 
 
 high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
@@ -41,6 +44,7 @@ low_ir_op_to_low_ir_node: dict[LowIROp, type[LowIRNode]] = {
     LowIROp.WRITE_BUFFER: LowIRWriteBuffer,
     LowIROp.RUN_SHADER: LowIRRunShader,
 }
+
 low_ir_compiler_passes: list[CompilerPass[LowIRNode]] = []  # TODO
 
 
