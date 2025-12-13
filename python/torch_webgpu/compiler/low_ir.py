@@ -14,26 +14,23 @@ class LowIROp(StrEnum):
 class LowIRCreateBuffer(IRNode):
     ir_op = LowIROp.CREATE_BUFFER
 
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
+    def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
 
 class LowIRWriteBuffer(IRNode):
-    ir_op = LowIROp.CREATE_BUFFER
+    ir_op = LowIROp.WRITE_BUFFER
 
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
+    def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
 
 class LowIRRunShader(IRNode):
-    ir_op = LowIROp.CREATE_BUFFER
+    ir_op = LowIROp.RUN_SHADER
 
-    def __init__(self, operator=None, *args, **kwargs):
-        self.operator = operator
+    def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
 
@@ -63,7 +60,6 @@ def get_low_ir(high_ir_op):
         ir_node_type = low_ir_op_to_low_ir_node.get(op)
         if ir_node_type:
             ir_node = ir_node_type()
-            ir_node.operator = op
             low_ir_nodes.append(ir_node)
     return low_ir_nodes
 
