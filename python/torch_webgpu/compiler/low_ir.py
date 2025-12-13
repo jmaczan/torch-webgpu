@@ -8,6 +8,7 @@ from .high_ir import HighIROp
 class LowIROp(StrEnum):
     CREATE_BUFFER = auto()
     WRITE_BUFFER = auto()
+    RUN_SHADER = auto()
 
 
 class LowIRCreateBuffer(IRNode):
@@ -28,13 +29,26 @@ class LowIRWriteBuffer(IRNode):
         self.kwargs = kwargs
 
 
+class LowIRRunShader(IRNode):
+    ir_op = LowIROp.CREATE_BUFFER
+
+    def __init__(self, operator=None, *args, **kwargs):
+        self.operator = operator
+        self.args = args
+        self.kwargs = kwargs
+
+        # TODO: somehow store which shader it should run
+
+
 high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
-    HighIROp.CREATE_TENSOR: [LowIROp.CREATE_BUFFER, LowIROp.WRITE_BUFFER]
+    HighIROp.CREATE_TENSOR: [LowIROp.CREATE_BUFFER, LowIROp.WRITE_BUFFER],
+    HighIROp.FUSED_ADD_RELU: [LowIROp.RUN_SHADER],
 }
 
 low_ir_op_to_low_ir_node: dict[LowIROp, type[IRNode]] = {
     LowIROp.CREATE_BUFFER: LowIRCreateBuffer,
     LowIROp.WRITE_BUFFER: LowIRWriteBuffer,
+    LowIROp.RUN_SHADER: LowIRRunShader,
 }
 
 low_ir_compiler_passes = []  # TODO
