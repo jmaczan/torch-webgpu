@@ -2,7 +2,7 @@
 # so lot's of assumptions and limitations here
 
 
-from typing import Any, Generic, Mapping, TypeVar, Type, Optional
+from typing import Any, Generic, List, Mapping, TypeVar, Type, Optional
 
 from .ir import IRNode
 
@@ -110,9 +110,11 @@ def run_compiler_passes(
     input_ir_graph: list[T_IRNode],
     ir_op_to_ir_node: Mapping[Any, Type[T_IRNode]],
     passes: list[CompilerPass],
-):
+) -> List[T_IRNode]:
     if not passes:
-        print("Provide compiler passes to actually run the compiler")
+        print(
+            "No compiler passes provided to run_compiler_passes. Skipping this optimization step"
+        )
         return input_ir_graph
     output_ir_graph = []
     for p, compiler_pass in enumerate(passes):

@@ -1,7 +1,4 @@
-__all__ = [
-    "is_initialized",
-    "current_device",
-]
+__all__ = ["is_initialized", "current_device"]
 
 
 def is_initialized():
