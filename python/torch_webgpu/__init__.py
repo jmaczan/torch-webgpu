@@ -14,4 +14,4 @@ torch.utils.generate_methods_for_privateuse1_backend(
 
 from .compiler.webgpu_compiler import webgpu_backend  # noqa: F401 E402
 
-__all__ = ["webgpu_backend"]
+__all__ = ["webgpu_backend", "webgpu_ops"]

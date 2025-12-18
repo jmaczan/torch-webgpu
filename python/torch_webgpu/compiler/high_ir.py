@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, List, Optional
 import torch
 from enum import StrEnum, auto
 
@@ -20,6 +20,9 @@ class HighIRNode(IRNode):
 
     def __init__(self, fx_node: torch.fx.Node):
         self.fx_node = fx_node
+
+    def __str__(self):
+        return self.ir_op
 
 
 class HighIRCreateTensor(HighIRNode):
@@ -106,3 +109,37 @@ def fx_to_high_ir(gm: torch.fx.GraphModule) -> list[HighIRNode]:
             print(f"Unsupported FX op: {node.target}. ir_graph: {ir_graph}")
             raise Exception(f"Unsupported FX op: {node.target}")
     return ir_graph
+
+
+def high_ir_print_tabular(nodes: List[HighIRNode]) -> None:
+    if nodes is None or len(nodes) == 0:
+        print("IR Nodes list is empty")
+        return None
+
+    # took most of the code from PyTorch torch/fx/graph.py
+    try:
+        from tabulate import tabulate
+    except ImportError:
+        print(
+            "`print_tabular` relies on the library `tabulate`, "
+            "which could not be found on this machine. Run `pip "
+            "install tabulate` to install the library."
+        )
+        raise
+
+    node_specs = [
+        [
+            n.ir_op,
+            n.fx_node,
+            n.fx_node.target,
+            n.fx_node.args,
+            n.fx_node.kwargs,
+        ]
+        for n in nodes
+    ]
+    print(
+        tabulate(
+            node_specs,
+            headers=["opcode", "fx node", "target", "args", "kwargs"],
+        )
+    )
