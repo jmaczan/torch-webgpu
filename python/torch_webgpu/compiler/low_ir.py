@@ -68,7 +68,7 @@ low_ir_op_to_low_ir_node: dict[LowIROp, type[LowIRNode]] = {
 low_ir_compiler_passes: list[CompilerPass[LowIRNode]] = []  # TODO
 
 
-def get_low_ir(high_ir_op, high_ir_node):
+def get_low_ir_node(high_ir_op, high_ir_node):
     low_ir_ops = high_ir_op_to_low_ir_op.get(high_ir_op)
     if not low_ir_ops or len(low_ir_ops) == 0:
         print(f"Didn't find a Low IR Op for High IR Op: {high_ir_op}")
@@ -87,7 +87,7 @@ def get_low_ir(high_ir_op, high_ir_node):
 def high_ir_to_low_ir(high_ir_graph) -> List[LowIRNode]:
     ir_graph: list[LowIRNode] = []
     for i, node in enumerate(high_ir_graph):
-        ir_nodes = get_low_ir(high_ir_op=node.ir_op, high_ir_node=node)
+        ir_nodes = get_low_ir_node(high_ir_op=node.ir_op, high_ir_node=node)
         if ir_nodes:
             for node in ir_nodes:
                 ir_graph.append(node)
