@@ -81,7 +81,7 @@ high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = [
 ]
 
 
-def get_high_ir(fx_op, fx_node: torch.fx.Node) -> Optional[HighIRNode]:
+def get_high_ir_node(fx_op, fx_node: torch.fx.Node) -> Optional[HighIRNode]:
     ir_op = fx_op_to_high_ir_op.get(fx_op)
     if not ir_op:
         return None
@@ -94,7 +94,7 @@ def get_high_ir(fx_op, fx_node: torch.fx.Node) -> Optional[HighIRNode]:
 def fx_to_high_ir(gm: torch.fx.GraphModule) -> list[HighIRNode]:
     ir_graph: list[HighIRNode] = []
     for i, node in enumerate(gm.graph.nodes):
-        ir_node = get_high_ir(fx_op=node.target, fx_node=node)
+        ir_node = get_high_ir_node(fx_op=node.target, fx_node=node)
         if not ir_node:
             source_fn_stack = node.meta.get("source_fn_stack")
             if source_fn_stack and len(source_fn_stack) > 0:
@@ -102,7 +102,7 @@ def fx_to_high_ir(gm: torch.fx.GraphModule) -> list[HighIRNode]:
                 if source_fn_stack and len(source_fn_stack) > 0:
                     node_key = source_fn_stack[0]
                     if node_key:
-                        ir_node = get_high_ir(fx_op=node_key, fx_node=node)
+                        ir_node = get_high_ir_node(fx_op=node_key, fx_node=node)
         if ir_node:
             ir_graph.append(ir_node)
         else:
