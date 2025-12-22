@@ -17,9 +17,17 @@ class HighIROp(StrEnum):
 
 class HighIRNode(IRNode):
     ir_op: HighIROp
+    value_id: Any = None
+    inputs: List[Any] = []
 
-    def __init__(self, fx_node: torch.fx.Node):
+    def __init__(
+        self, fx_node: torch.fx.Node, value_id: Any = None, inputs: List[Any] = []
+    ):
         self.fx_node = fx_node
+        if value_id:
+            self.value_id = value_id
+        if inputs:
+            self.inputs = inputs
 
     def __str__(self):
         return self.ir_op
@@ -87,7 +95,9 @@ def get_high_ir_node(fx_op, fx_node: torch.fx.Node) -> Optional[HighIRNode]:
         return None
     ir_node_type = high_ir_op_to_high_ir_node.get(ir_op)
     if ir_node_type:
-        ir_node = ir_node_type(fx_node)
+        ir_node = ir_node_type(
+            fx_node=fx_node, value_id=fx_node.name, inputs=fx_node.all_input_nodes
+        )
     return ir_node
 
 
@@ -130,8 +140,8 @@ def high_ir_print_tabular(nodes: List[HighIRNode]) -> None:
     node_specs = [
         [
             n.ir_op,
-            n.fx_node,
-            n.fx_node.target,
+            n.value_id,
+            n.inputs,
             n.fx_node.args,
             n.fx_node.kwargs,
         ]
@@ -140,6 +150,12 @@ def high_ir_print_tabular(nodes: List[HighIRNode]) -> None:
     print(
         tabulate(
             node_specs,
-            headers=["opcode", "fx node", "target", "args", "kwargs"],
+            headers=[
+                "opcode",
+                "value_id",
+                "inputs",
+                "args",
+                "kwargs",
+            ],
         )
     )
