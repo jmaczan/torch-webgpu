@@ -4,7 +4,7 @@ from enum import StrEnum, auto
 
 from .compiler_pass import CompilerPass
 from .ir import IRNode
-from .high_ir import HighIRNode, HighIROp
+from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp
 
 
 class LowIROp(StrEnum):
@@ -28,6 +28,23 @@ class LowIRNode(IRNode):
 
 class LowIRCreateBuffer(LowIRNode):
     ir_op = LowIROp.CREATE_BUFFER
+    shape = None
+    stride = None
+    dtype = None
+    device = None
+    numel = None
+    size = None
+    # TODO adjust the list, for now I copied it from High IR
+
+    def __init__(self, high_ir_node: HighIRCreateTensor):
+        super().__init__(high_ir_node)
+        self.shape = high_ir_node.shape
+        self.dtype = high_ir_node.dtype
+        self.device = high_ir_node.device
+        self.numel = high_ir_node.numel
+        self.stride = high_ir_node.stride
+        self.size = high_ir_node.size
+        # I don't put data here, because it should go to LowIRWriteBuffer
 
 
 class LowIRWriteBuffer(LowIRNode):

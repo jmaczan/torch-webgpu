@@ -80,6 +80,8 @@ class CompilerPass(Generic[T_IRNode]):
                     reuse_value_id_from_this_node: Optional[T_IRNode] = None
                     inputs = []
                     stale_value_ids = []
+                    # TODO: I remove value_ids naively, but it's possible that some of value_ids used in fusion are used later in code.
+                    # I should perform a real analysis before removing a value_id and before removing a node from graph
                     num_patterns = len(transform.pattern)
                     for p, pattern in enumerate(transform.pattern):
                         if p == 0:

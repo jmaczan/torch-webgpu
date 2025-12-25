@@ -35,6 +35,28 @@ class HighIRNode(IRNode):
 
 class HighIRCreateTensor(HighIRNode):
     ir_op = HighIROp.CREATE_TENSOR
+    shape = None
+    stride = None
+    data = None
+    dtype = None
+    device = None
+    numel = None
+    size = None
+
+    def __init__(
+        self, fx_node: torch.fx.Node, value_id: Any = None, inputs: List[Any] = []
+    ):
+        super().__init__(fx_node=fx_node, value_id=value_id, inputs=inputs)
+
+        self.shape = fx_node.meta["example_value"].shape
+        self.dtype = fx_node.meta["example_value"].dtype
+        self.device = fx_node.meta["example_value"].device
+        self.numel = fx_node.meta["example_value"].itemsize
+        self.stride = fx_node.meta["example_value"].stride()
+        self.data = fx_node.meta[
+            "example_value"
+        ].data  # TODO: not sure about this one yet
+        self.size = fx_node.meta["example_value"].size()
 
 
 class HighIRAdd(HighIRNode):
