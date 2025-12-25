@@ -1,12 +1,21 @@
 from typing import Any, Callable, List
-
-from .low_ir import LowIRNode, LowIROp
+from functools import partial
+from .low_ir import LowIRCreateBuffer, LowIRNode, LowIROp, LowIRWriteBuffer
 import torch_webgpu
 import torch
 
+
+def create_buffer(node: LowIRCreateBuffer):
+    return lambda: torch.ops.webgpu.create_buffer(node.size, node.stride, node.dtype)
+
+
+def write_buffer(node: LowIRWriteBuffer):
+    return lambda: torch.ops.webgpu.write_buffer()
+
+
 low_ir_to_webgpu_ops: dict[LowIROp, Callable] = {
-    LowIROp.CREATE_BUFFER: torch.ops.webgpu.create_buffer,
-    LowIROp.WRITE_BUFFER: torch.ops.webgpu.write_buffer,
+    LowIROp.CREATE_BUFFER: create_buffer,
+    LowIROp.WRITE_BUFFER: write_buffer,
 }
 
 
@@ -17,11 +26,12 @@ def lowering(nodes: List[LowIRNode]) -> Callable:
     for node in nodes:
         webgpu_op = low_ir_to_webgpu_ops.get(node.ir_op)
         if webgpu_op is not None:
-            calls.append(webgpu_op)
+            calls.append(partial(webgpu_op, node))
         else:
             print(f"WebGPU op is none for LowIROp: {node.ir_op}")
 
     def program():
+        # ultra naive and non-flexible, just to start with something
         output = None
         for call in calls:
             output = call(output)
