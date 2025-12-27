@@ -1,6 +1,12 @@
 from typing import Any, Callable, List
 from functools import partial
-from .low_ir import LowIRCreateBuffer, LowIRNode, LowIROp, LowIRWriteBuffer
+from .low_ir import (
+    LowIRCreateBuffer,
+    LowIRNode,
+    LowIROp,
+    LowIRRunShader,
+    LowIRWriteBuffer,
+)
 import torch_webgpu
 import torch
 
@@ -10,27 +16,21 @@ Runtime = dict
 def create_buffer(
     node: LowIRCreateBuffer, runtime: Runtime
 ) -> Callable[[], torch.Tensor]:
-    def _call():
-        buf = torch.ops.webgpu.create_buffer(
-            node.size,
-            node.stride,
-            node.dtype,
-        )
-        runtime[node.value_id] = buf
-        return buf
-
-    return _call
+    buf = torch.ops.webgpu.create_buffer(
+        node.size,
+        node.stride,
+        node.dtype,
+    )
+    runtime[node.value_id] = buf
+    return buf
 
 
 def write_buffer(
     node: LowIRWriteBuffer, runtime: Runtime
 ) -> Callable[[], torch.Tensor]:
-    def _call():
-        dst = runtime[node.value_id]
-        src = torch.tensor(node.constant_data)  # TODO: handle also other kinds of data
-        return torch.ops.webgpu.write_buffer(dst, src)
-
-    return _call
+    dst = runtime[node.value_id]
+    src = torch.tensor(node.constant_data)  # TODO: handle also other kinds of data
+    return torch.ops.webgpu.write_buffer(dst, src)
 
 
 low_ir_to_webgpu_ops: dict[LowIROp, Callable] = {
@@ -55,7 +55,7 @@ def lowering(nodes: List[LowIRNode]) -> Callable:
         # ultra naive and non-flexible, just to start with something
         output = None
         for call in calls:
-            output = call(runtime)()
+            output = call(runtime)
         return output
 
     return program
