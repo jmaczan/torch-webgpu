@@ -6,11 +6,15 @@ import torch
 
 
 def create_buffer(node: LowIRCreateBuffer):
-    return lambda: torch.ops.webgpu.create_buffer(node.size, node.stride, node.dtype)
+    return lambda: torch.ops.webgpu.create_buffer(
+        node.size,
+        node.stride,
+        node.dtype,
+    )
 
 
 def write_buffer(node: LowIRWriteBuffer):
-    return lambda: torch.ops.webgpu.write_buffer()
+    return lambda: torch.ops.webgpu.write_buffer()  # TODO
 
 
 low_ir_to_webgpu_ops: dict[LowIROp, Callable] = {

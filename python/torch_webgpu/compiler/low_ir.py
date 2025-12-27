@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, List
 import torch
 from enum import StrEnum, auto
 
@@ -18,8 +18,13 @@ class LowIROp(StrEnum):
 class LowIRNode(IRNode):
     ir_op: LowIROp
 
-    def __init__(self, high_ir_node: HighIRNode):
-        super().__init__()
+    def __init__(
+        self,
+        high_ir_node: HighIRNode,
+        value_id: Any = None,
+        inputs: List[Any] = [],
+    ):
+        super().__init__(value_id, inputs)
         self.high_ir_node = high_ir_node
 
     def __str__(self):
@@ -36,8 +41,13 @@ class LowIRCreateBuffer(LowIRNode):
     size = None
     # TODO adjust the list, for now I copied it from High IR
 
-    def __init__(self, high_ir_node: HighIRCreateTensor):
-        super().__init__(high_ir_node)
+    def __init__(
+        self,
+        high_ir_node: HighIRCreateTensor,
+        value_id: Any = None,
+        inputs: List[Any] = [],
+    ):
+        super().__init__(high_ir_node, value_id, inputs)
         self.shape = high_ir_node.shape
         self.dtype = high_ir_node.dtype
         self.device = high_ir_node.device
@@ -54,8 +64,10 @@ class LowIRWriteBuffer(LowIRNode):
 class LowIRRunShader(LowIRNode):
     ir_op = LowIROp.RUN_SHADER
 
-    def __init__(self, high_ir_node: HighIRNode):
-        super().__init__(high_ir_node)
+    def __init__(
+        self, high_ir_node: HighIRNode, value_id: Any = None, inputs: List[Any] = []
+    ):
+        super().__init__(high_ir_node, value_id=value_id, inputs=inputs)
         self.shader_name = high_ir_node.ir_op
 
 
@@ -94,7 +106,9 @@ def get_low_ir_node(high_ir_op, high_ir_node):
     for op in low_ir_ops:
         ir_node_type = low_ir_op_to_low_ir_node.get(op)
         if ir_node_type:
-            ir_node = ir_node_type(high_ir_node)
+            ir_node = ir_node_type(
+                high_ir_node, value_id=high_ir_node.value_id, inputs=high_ir_node.inputs
+            )
             low_ir_nodes.append(ir_node)
         else:
             print(f"Didn't find a Low IR Node for Low IR Op: {op}")
@@ -132,5 +146,16 @@ def low_ir_print_tabular(nodes: List[LowIRNode]) -> None:
         )
         raise
 
-    node_specs = [[n.ir_op, n.high_ir_node] for n in nodes]
-    print(tabulate(node_specs, headers=["opcode", "high ir node"]))
+    node_specs = [[n.ir_op, n.high_ir_node, n.value_id, n.inputs] for n in nodes]
+    print(
+        tabulate(
+            node_specs,
+            headers=[
+                "opcode",
+                "high ir node",
+                "value_id",
+                "inputs",
+            ],
+        )
+        + "\n"
+    )

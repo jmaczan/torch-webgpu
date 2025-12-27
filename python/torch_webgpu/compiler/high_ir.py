@@ -21,7 +21,10 @@ class HighIRNode(IRNode):
     inputs: List[Any] = []
 
     def __init__(
-        self, fx_node: torch.fx.Node, value_id: Any = None, inputs: List[Any] = []
+        self,
+        fx_node: torch.fx.Node,
+        value_id: Any = None,
+        inputs: List[Any] = [],
     ):
         self.fx_node = fx_node
         if value_id:
@@ -44,7 +47,10 @@ class HighIRCreateTensor(HighIRNode):
     size = None
 
     def __init__(
-        self, fx_node: torch.fx.Node, value_id: Any = None, inputs: List[Any] = []
+        self,
+        fx_node: torch.fx.Node,
+        value_id: Any = None,
+        inputs: List[Any] = [],
     ):
         super().__init__(fx_node=fx_node, value_id=value_id, inputs=inputs)
 
