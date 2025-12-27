@@ -16,6 +16,7 @@ Runtime = dict
 def create_buffer(
     node: LowIRCreateBuffer, runtime: Runtime
 ) -> Callable[[], torch.Tensor]:
+    # TODO: take into account wher the buffer should be allocated (device)
     buf = torch.ops.webgpu.create_buffer(
         node.size,
         node.stride,
@@ -28,14 +29,29 @@ def create_buffer(
 def write_buffer(
     node: LowIRWriteBuffer, runtime: Runtime
 ) -> Callable[[], torch.Tensor]:
+    # TODO: take into account wher the buffer should be allocated (device)
     dst = runtime[node.value_id]
     src = torch.tensor(node.constant_data)  # TODO: handle also other kinds of data
     return torch.ops.webgpu.write_buffer(dst, src)
 
 
+def run_shader(node: LowIRRunShader, runtime: Runtime):
+    inputs = {}
+    for node_input in node.inputs:
+        inputs[node_input.name] = runtime[node_input.name]
+    assert len(inputs) == len(node.inputs)
+    # TODO: this is a mock implementation, because I need to rethink
+    # if I want to implement a generic machinery for running
+    # an arbitraty shader or just want to invoke a
+    # particular shader with known parameters etc
+    out = inputs["a"].data + inputs["b"].data
+    return out  # TODO
+
+
 low_ir_to_webgpu_ops: dict[LowIROp, Callable] = {
     LowIROp.CREATE_BUFFER: create_buffer,
     LowIROp.WRITE_BUFFER: write_buffer,
+    LowIROp.RUN_SHADER: run_shader,
 }
 
 
