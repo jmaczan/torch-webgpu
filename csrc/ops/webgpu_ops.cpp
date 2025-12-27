@@ -5,6 +5,7 @@
 #include "core/webgpu_context.h"
 #include "core/webgpu_allocator.h"
 #include <torch/library.h>
+#include "binary.h"
 
 namespace torch_webgpu
 {
@@ -22,11 +23,31 @@ namespace torch_webgpu
             return self;
         }
 
+        at::Tensor fused_add_relu(
+            const at::Tensor &self,
+            const at::Tensor &other)
+        {
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(self);
+            config.add_input(self);
+            config.add_input(other);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(false);
+            auto iter = config.build();
+
+            binary_kernel<BinaryOp::FusedAddRelu>(iter, 1.0f);
+
+            return self;
+        }
+
     }
     TORCH_LIBRARY(webgpu, m)
     {
         m.def("create_buffer(int[] size, int[] stride, ScalarType? dtype=None) -> Tensor");
         m.def("write_buffer(Tensor self, Tensor src) -> Tensor");
+        m.def("fused_add_relu(Tensor self, Tensor src) -> Tensor");
     }
     TORCH_LIBRARY_IMPL(webgpu, PrivateUse1, m)
     {
