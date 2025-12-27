@@ -40,6 +40,7 @@ class HighIRCreateTensor(HighIRNode):
     ir_op = HighIROp.CREATE_TENSOR
     shape = None
     stride = None
+    constant_data = None
     data = None
     dtype = None
     device = None
@@ -59,9 +60,11 @@ class HighIRCreateTensor(HighIRNode):
         self.device = fx_node.meta["example_value"].device
         self.numel = fx_node.meta["example_value"].itemsize
         self.stride = fx_node.meta["example_value"].stride()
-        self.data = fx_node.meta[
-            "example_value"
-        ].data  # TODO: not sure about this one yet
+        self.data = fx_node.meta["example_value"].data
+        # TODO: put better checks here, because it's possible that
+        # fx_node.args[0] is not a constant data I expect it to be
+        if len(fx_node.args) == 1 and isinstance(fx_node.args[0], list):
+            self.constant_data = fx_node.args[0]
         self.size = fx_node.meta["example_value"].size()
 
 
