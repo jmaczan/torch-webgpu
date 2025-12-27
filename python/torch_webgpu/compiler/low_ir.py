@@ -120,6 +120,11 @@ class LowIRMoveTo(LowIRNode):
 class LowIROutput(LowIRNode):
     ir_op = LowIROp.OUTPUT
 
+    def __init__(
+        self, high_ir_node: HighIRNode, value_id: Any = None, inputs: List[Any] = []
+    ):
+        super().__init__(high_ir_node, value_id=value_id, inputs=inputs)
+
 
 high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.CREATE_TENSOR: [LowIROp.CREATE_BUFFER, LowIROp.WRITE_BUFFER],

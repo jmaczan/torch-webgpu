@@ -57,8 +57,8 @@ def move_to(node: LowIRMoveTo, runtime: Runtime):
 
 
 def output(node: LowIROutput, runtime: Runtime):
-    # TODO: maybe this is not needed at all? not sure yet
-    return None  # TODO
+    assert len(node.inputs) == 1
+    return runtime[node.inputs[0].name]
 
 
 low_ir_to_webgpu_ops: dict[LowIROp, Callable] = {
