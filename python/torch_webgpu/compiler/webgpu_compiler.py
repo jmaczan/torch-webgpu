@@ -52,8 +52,11 @@ def webgpu_backend(
     # low_ir_print_tabular(low_ir)
 
     program = lowering(low_ir)
-    print(program())
-    # BUILD A COMPILED FN (closure? lambda?) AND RETURN
+    out = program()  # compiled program execution
+    if isinstance(out, torch.Tensor):
+        out = out.to("cpu")
+        print("Move runtime result to CPU")
+    print(out)
 
     # Noqa 501 TODO: see if it's still relevant https://docs.pytorch.org/docs/stable/generated/torch.jit.optimize_for_inference.html
     return gm.forward
