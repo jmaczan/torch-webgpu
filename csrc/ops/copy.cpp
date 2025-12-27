@@ -175,7 +175,7 @@ namespace torch_webgpu
             at::ScalarType dtype,
             bool non_blocking = false,
             bool copy = false,
-            std::optional<c10::MemoryFormat> memory_format)
+            std::optional<c10::MemoryFormat> memory_format = std::nullopt)
         {
             return at::native::to(self, device, dtype, non_blocking, copy, memory_format);
         }
@@ -193,3 +193,4 @@ namespace torch_webgpu
             m.impl("copy_", TORCH_FN(ops::cpu_copy_with_webgpu));
         }
     }
+}
