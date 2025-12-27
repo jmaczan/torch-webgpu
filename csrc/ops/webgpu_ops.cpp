@@ -12,6 +12,7 @@ namespace torch_webgpu
     {
         at::Tensor create_buffer(c10::IntArrayRef size, c10::IntArrayRef stride, c10::optional<at::ScalarType> dtype_opt)
         {
+            // TODO: probably pass a device as an argument and replace below?
             return at::empty_strided(size, stride, at::TensorOptions().dtype(dtype_opt).device(c10::Device(c10::kPrivateUse1)));
         }
 
