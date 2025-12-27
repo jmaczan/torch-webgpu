@@ -2,8 +2,10 @@ from typing import Any, Callable, List
 from functools import partial
 from .low_ir import (
     LowIRCreateBuffer,
+    LowIRMoveTo,
     LowIRNode,
     LowIROp,
+    LowIROutput,
     LowIRRunShader,
     LowIRWriteBuffer,
 )
@@ -13,9 +15,7 @@ import torch
 Runtime = dict
 
 
-def create_buffer(
-    node: LowIRCreateBuffer, runtime: Runtime
-) -> Callable[[], torch.Tensor]:
+def create_buffer(node: LowIRCreateBuffer, runtime: Runtime) -> torch.Tensor:
     # TODO: take into account wher the buffer should be allocated (device)
     buf = torch.ops.webgpu.create_buffer(
         node.size,
@@ -26,16 +26,14 @@ def create_buffer(
     return buf
 
 
-def write_buffer(
-    node: LowIRWriteBuffer, runtime: Runtime
-) -> Callable[[], torch.Tensor]:
+def write_buffer(node: LowIRWriteBuffer, runtime: Runtime) -> torch.Tensor:
     # TODO: take into account wher the buffer should be allocated (device)
     dst = runtime[node.value_id]
     src = torch.tensor(node.constant_data)  # TODO: handle also other kinds of data
     return torch.ops.webgpu.write_buffer(dst, src)
 
 
-def run_shader(node: LowIRRunShader, runtime: Runtime):
+def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
     inputs = {}
     for node_input in node.inputs:
         inputs[node_input.name] = runtime[node_input.name]
@@ -45,13 +43,30 @@ def run_shader(node: LowIRRunShader, runtime: Runtime):
     # an arbitraty shader or just want to invoke a
     # particular shader with known parameters etc
     out = inputs["a"].data + inputs["b"].data
-    return out  # TODO
+    runtime[node.value_id] = out
+    return out
+
+
+def move_to(node: LowIRMoveTo, runtime: Runtime):
+    assert len(node.inputs) == 1
+    assert node.to
+    to_be_moved = runtime[node.inputs[0].name]
+    result = torch.ops.webgpu.to(to_be_moved, node.to)
+    runtime[node.value_id] = result
+    return result
+
+
+def output(node: LowIROutput, runtime: Runtime):
+    # TODO: maybe this is not needed at all? not sure yet
+    return None  # TODO
 
 
 low_ir_to_webgpu_ops: dict[LowIROp, Callable] = {
     LowIROp.CREATE_BUFFER: create_buffer,
     LowIROp.WRITE_BUFFER: write_buffer,
     LowIROp.RUN_SHADER: run_shader,
+    LowIROp.MOVE_TO: move_to,
+    LowIROp.OUTPUT: output,
 }
 
 
@@ -68,7 +83,7 @@ def lowering(nodes: List[LowIRNode]) -> Callable:
             print(f"WebGPU op is none for LowIROp: {node.ir_op}")
 
     def program():
-        # ultra naive and non-flexible, just to start with something
+        # ultra naive and non-flexible "scheduler", just to start with something
         output = None
         for call in calls:
             output = call(runtime)

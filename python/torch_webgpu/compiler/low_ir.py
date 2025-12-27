@@ -86,6 +86,8 @@ class LowIRWriteBuffer(LowIRNode):
 
 class LowIRRunShader(LowIRNode):
     ir_op = LowIROp.RUN_SHADER
+    # TODO: not sure if I want to have a generic shader runner or define IR per shader
+    # TODO: possibly more properties will be needed here to run a shader [efficiently]
 
     def __init__(
         self, high_ir_node: HighIRNode, value_id: Any = None, inputs: List[Any] = []
@@ -96,6 +98,23 @@ class LowIRRunShader(LowIRNode):
 
 class LowIRMoveTo(LowIRNode):
     ir_op = LowIROp.MOVE_TO
+    to = None
+
+    def __init__(
+        self, high_ir_node: HighIRNode, value_id: Any = None, inputs: List[Any] = []
+    ):
+        super().__init__(high_ir_node, value_id=value_id, inputs=inputs)
+        # TODO: make this condition more reliable
+        if len(high_ir_node.fx_node.args) and isinstance(
+            high_ir_node.fx_node.args[1], str
+        ):
+            self.to = high_ir_node.fx_node.args[1]
+        else:
+            raise Exception(
+                "Can't build LowIRMoveTo, because I don't know where the tensor should be moved to.",
+                f"Debug context: high_ir_node={high_ir_node}, ",
+                f"value_id={value_id}, inputs={inputs}",
+            )
 
 
 class LowIROutput(LowIRNode):
