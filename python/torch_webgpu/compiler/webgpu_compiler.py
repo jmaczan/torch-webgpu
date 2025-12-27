@@ -52,7 +52,7 @@ def webgpu_backend(
     # low_ir_print_tabular(low_ir)
 
     program = lowering(low_ir)
-    program()
+    print(program())
     # BUILD A COMPILED FN (closure? lambda?) AND RETURN
 
     # Noqa 501 TODO: see if it's still relevant https://docs.pytorch.org/docs/stable/generated/torch.jit.optimize_for_inference.html
