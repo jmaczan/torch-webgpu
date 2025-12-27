@@ -168,17 +168,28 @@ namespace torch_webgpu
             dst.resize_(self.sizes());
             return dst.copy_(self);
         }
-    }
 
-    TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
-    {
-        m.impl("copy_", TORCH_FN(ops::copy_));
-        m.impl("_copy_from", TORCH_FN(ops::_copy_from));
-        m.impl("_copy_from_and_resize", TORCH_FN(ops::_copy_from_and_resize));
-    }
+        at::Tensor to_device(
+            const at::Tensor &self,
+            at::Device device,
+            at::ScalarType dtype,
+            bool non_blocking = false,
+            bool copy = false,
+            std::optional<c10::MemoryFormat> memory_format)
+        {
+            return at::native::to(self, device, dtype, non_blocking, copy, memory_format);
+        }
 
-    TORCH_LIBRARY_IMPL(aten, CPU, m)
-    {
-        m.impl("copy_", TORCH_FN(ops::cpu_copy_with_webgpu));
+        TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
+        {
+            m.impl("copy_", TORCH_FN(ops::copy_));
+            m.impl("_copy_from", TORCH_FN(ops::_copy_from));
+            m.impl("_copy_from_and_resize", TORCH_FN(ops::_copy_from_and_resize));
+            m.impl("to.device", TORCH_FN(ops::to_device));
+        }
+
+        TORCH_LIBRARY_IMPL(aten, CPU, m)
+        {
+            m.impl("copy_", TORCH_FN(ops::cpu_copy_with_webgpu));
+        }
     }
-}

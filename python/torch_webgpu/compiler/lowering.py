@@ -49,9 +49,9 @@ def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
 
 def move_to(node: LowIRMoveTo, runtime: Runtime):
     assert len(node.inputs) == 1
-    assert node.to
+    assert node.to_device
     to_be_moved = runtime[node.inputs[0].name]
-    result = torch.ops.webgpu.to(to_be_moved, node.to)
+    result = to_be_moved.to(device=node.to_device)
     runtime[node.value_id] = result
     return result
 

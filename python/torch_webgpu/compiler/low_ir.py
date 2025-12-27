@@ -98,7 +98,7 @@ class LowIRRunShader(LowIRNode):
 
 class LowIRMoveTo(LowIRNode):
     ir_op = LowIROp.MOVE_TO
-    to = None
+    to_device = None
 
     def __init__(
         self, high_ir_node: HighIRNode, value_id: Any = None, inputs: List[Any] = []
@@ -108,7 +108,7 @@ class LowIRMoveTo(LowIRNode):
         if len(high_ir_node.fx_node.args) and isinstance(
             high_ir_node.fx_node.args[1], str
         ):
-            self.to = high_ir_node.fx_node.args[1]
+            self.to_device = high_ir_node.fx_node.args[1]
         else:
             raise Exception(
                 "Can't build LowIRMoveTo, because I don't know where the tensor should be moved to.",
