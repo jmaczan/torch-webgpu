@@ -35,7 +35,7 @@ namespace torch_webgpu
             TORCH_CHECK(iter.dtype(0) == iter.dtype(1));
             TORCH_CHECK(iter.dtype(1) == iter.dtype(2));
 
-            BinaryKernel &kernel = get_binary_kernel(BinaryOp::Add);
+            BinaryKernel &kernel = get_binary_kernel(Op);
 
             auto out = iter.tensor(0);
             auto self = iter.tensor(1);
