@@ -55,7 +55,7 @@ def lowering(nodes: List[LowIRNode]) -> Callable:
         # ultra naive and non-flexible, just to start with something
         output = None
         for call in calls:
-            output = call(runtime)
+            output = call(runtime)()
         return output
 
     return program

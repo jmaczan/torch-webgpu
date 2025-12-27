@@ -14,7 +14,7 @@ def fn(x):
 
 
 if __name__ == "__main__":
-    result = fn(torch.empty(0))
+    result = fn(None)
     expected = torch.tensor([0, 3.6, 2.1, 0], device="cpu")
     assert torch.allclose(result, expected)
     print(expected, result, expected.equal(result))

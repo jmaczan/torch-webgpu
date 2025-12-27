@@ -32,4 +32,12 @@ namespace torch_webgpu
         m.impl("create_buffer", TORCH_FN(ops::create_buffer));
         m.impl("write_buffer", TORCH_FN(ops::write_buffer));
     }
+    TORCH_LIBRARY_IMPL(webgpu, CatchAll, m)
+    {
+        m.impl("create_buffer", TORCH_FN(ops::create_buffer));
+    }
+    TORCH_LIBRARY_IMPL(_, AutogradPrivateUse1, m)
+    {
+        m.fallback(torch::CppFunction::makeFallthrough());
+    }
 }
