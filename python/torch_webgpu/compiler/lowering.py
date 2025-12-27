@@ -42,7 +42,7 @@ def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
     # if I want to implement a generic machinery for running
     # an arbitraty shader or just want to invoke a
     # particular shader with known parameters etc
-    out = inputs["a"].data + inputs["b"].data
+    out = torch.relu(inputs["a"].data + inputs["b"].data)
     runtime[node.value_id] = out
     return out
 
