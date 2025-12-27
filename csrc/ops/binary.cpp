@@ -130,7 +130,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
             wgpu::ShaderModuleDescriptor shader_descriptor{};
             shader_descriptor.nextInChain = &shader_source;
-            shader_descriptor.label = "at::Tensor add shader";
+            shader_descriptor.label = "Binary shader";
             core::WebGPUContext &ctx = core::getWebGPUContext();
             wgpu::ShaderModule shader_module = ctx.getDevice().CreateShaderModule(&shader_descriptor);
 

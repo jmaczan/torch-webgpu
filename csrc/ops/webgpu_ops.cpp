@@ -27,9 +27,10 @@ namespace torch_webgpu
             const at::Tensor &self,
             const at::Tensor &other)
         {
+            auto out = at::empty_like(self);
             at::TensorIteratorConfig config;
             config.set_check_mem_overlap(true);
-            config.add_output(self);
+            config.add_output(out);
             config.add_input(self);
             config.add_input(other);
             config.promote_inputs_to_common_dtype(true);
@@ -39,7 +40,7 @@ namespace torch_webgpu
 
             binary_kernel<BinaryOp::FusedAddRelu>(iter, 1.0f);
 
-            return self;
+            return out;
         }
 
     }
@@ -53,6 +54,7 @@ namespace torch_webgpu
     {
         m.impl("create_buffer", TORCH_FN(ops::create_buffer));
         m.impl("write_buffer", TORCH_FN(ops::write_buffer));
+        m.impl("fused_add_relu", TORCH_FN(ops::fused_add_relu));
     }
     TORCH_LIBRARY_IMPL(webgpu, CatchAll, m)
     {
