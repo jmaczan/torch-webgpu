@@ -99,6 +99,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             case BinaryOp::Mul:
                 op_impl = "selfBuffer[idx_self] * otherBuffer[idx_other]";
                 break;
+            case BinaryOp::FusedAddRelu:
+                op_impl = "max(0.0, selfBuffer[idx_self] + otherBuffer[idx_other])";
+                break;
             default:
                 TORCH_CHECK(false, "Unsupported binary op, can't produce a WGSL shader");
             }

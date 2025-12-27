@@ -19,7 +19,8 @@ namespace torch_webgpu
         enum class BinaryOp
         {
             Add,
-            Mul
+            Mul,
+            FusedAddRelu
         };
 
         std::string get_binary_shader(BinaryOp binary_op);
