@@ -59,6 +59,29 @@ class LowIRCreateBuffer(LowIRNode):
 
 class LowIRWriteBuffer(LowIRNode):
     ir_op = LowIROp.WRITE_BUFFER
+    shape = None
+    stride = None
+    dtype = None
+    device = None
+    numel = None
+    size = None
+    data = None
+    constant_data = None
+
+    def __init__(
+        self,
+        high_ir_node: HighIRCreateTensor,
+        value_id: Any = None,
+        inputs: List[Any] = [],
+    ):
+        super().__init__(high_ir_node, value_id, inputs)
+        self.shape = high_ir_node.shape
+        self.dtype = high_ir_node.dtype
+        self.device = high_ir_node.device
+        self.numel = high_ir_node.numel
+        self.stride = high_ir_node.stride
+        self.size = high_ir_node.size
+        self.constant_data = high_ir_node.constant_data
 
 
 class LowIRRunShader(LowIRNode):
@@ -97,7 +120,7 @@ low_ir_op_to_low_ir_node: dict[LowIROp, type[LowIRNode]] = {
 low_ir_compiler_passes: list[CompilerPass[LowIRNode]] = []  # TODO
 
 
-def get_low_ir_node(high_ir_op, high_ir_node):
+def get_low_ir_node(high_ir_op: HighIROp, high_ir_node: HighIRNode):
     low_ir_ops = high_ir_op_to_low_ir_op.get(high_ir_op)
     if not low_ir_ops or len(low_ir_ops) == 0:
         print(f"Didn't find a Low IR Op for High IR Op: {high_ir_op}")
@@ -115,7 +138,7 @@ def get_low_ir_node(high_ir_op, high_ir_node):
     return low_ir_nodes
 
 
-def high_ir_to_low_ir(high_ir_graph) -> List[LowIRNode]:
+def high_ir_to_low_ir(high_ir_graph: List[HighIRNode]) -> List[LowIRNode]:
     ir_graph: list[LowIRNode] = []
     for i, node in enumerate(high_ir_graph):
         ir_nodes = get_low_ir_node(high_ir_op=node.ir_op, high_ir_node=node)
