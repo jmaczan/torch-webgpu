@@ -4,7 +4,7 @@ from torch_webgpu import webgpu_backend
 
 
 @torch.compile(backend=webgpu_backend)
-def fn(x):
+def fn():
     a = torch.tensor([-1.5, 2.7, 1.0, 2.0], device="webgpu")
     b = torch.tensor([-1.0, 0.9, 1.1, -2.1], device="webgpu")
     result = a + b
@@ -14,7 +14,7 @@ def fn(x):
 
 
 if __name__ == "__main__":
-    result = fn(None)
+    result = fn()
     expected = torch.tensor([0, 3.6, 2.1, 0], device="cpu")
     assert torch.allclose(result, expected)
     print(expected, result, expected.equal(result))

@@ -14,14 +14,20 @@ Not even 0.0.1 release yet! I make the repository public, so you give me support
 <span>WebGPU logo by <a href="https://www.w3.org/"><abbr title="World Wide Web Consortium">W3C</abbr></a></span>
 
 ## Coolest thing you can do with torch-webgpu now
-**Add tensors on WebGPU and move data between CPU and WebGPU!**
+**Compile and run: allocate tensors on WebGPU device, compute add+relu on WebGPU (fused during compilation to a single op) and move data between CPU and WebGPU!**
 
 ```py
-a = torch.tensor([-1.5, 2.7, 1.0, 2.0], device="webgpu")
-b = torch.tensor([-1.0, 0.9, 1.1, -2.1], device="webgpu")
-result = a + b
-expected = torch.tensor([-2.5, 3.6, 2.1, -0.1], device="cpu")
-assert torch.allclose(result.to("cpu"), expected)
+@torch.compile(backend=webgpu_backend)
+def fn():
+    a = torch.tensor([-1.5, 2.7, 1.0, 2.0], device="webgpu")
+    b = torch.tensor([-1.0, 0.9, 1.1, -2.1], device="webgpu")
+    result = a + b
+    result = torch.relu(result)
+    result = result.to("cpu")
+    return result
+result = fn()
+expected = torch.tensor([0, 3.6, 2.1, 0], device="cpu")
+assert torch.allclose(result, expected)
 ```
 
 This is a TL;DR showcase of where we currently are with torch-webgpu. It will get regularly updated when new features land
