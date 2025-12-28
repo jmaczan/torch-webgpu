@@ -40,7 +40,7 @@ def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
     assert len(inputs) == len(node.inputs)
     # lots of assumptions, still lots of hardcoded things here
     # assuming that the order of elements matches the shader argument list order
-    out = torch.ops.webgpu.fused_add_relu(*inputs.values())
+    out = getattr(torch.ops.webgpu, node.shader_name.value)(*inputs.values())
     runtime[node.value_id] = out
     return out
 
