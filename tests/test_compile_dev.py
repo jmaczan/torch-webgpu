@@ -7,7 +7,7 @@ from torch_webgpu import webgpu_backend
 def fn():
     a = torch.tensor([-1.5, 2.7, 1.0, 2.0], device="webgpu")
     b = torch.tensor([-1.0, 0.9, 1.1, -2.1], device="webgpu")
-    result = a + b
+    result = torch.add(a, b)
     result = torch.relu(result)
     result = result.to("cpu")
     return result
