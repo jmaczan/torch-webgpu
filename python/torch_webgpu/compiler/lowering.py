@@ -38,12 +38,9 @@ def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
     for node_input in node.inputs:
         inputs[node_input.name] = runtime[node_input.name]
     assert len(inputs) == len(node.inputs)
-    # TODO: this is a mock implementation, because I need to rethink
-    # if I want to implement a generic machinery for running
-    # an arbitraty shader or just want to invoke a
-    # particular shader with known parameters etc
-    out = torch.ops.webgpu.fused_add_relu(inputs["a"], inputs["b"])
-    # out = torch.relu(inputs["a"].data + inputs["b"].data)
+    # lots of assumptions, still lots of hardcoded things here
+    # assuming that the order of elements matches the shader argument list order
+    out = torch.ops.webgpu.fused_add_relu(*inputs.values())
     runtime[node.value_id] = out
     return out
 
