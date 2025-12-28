@@ -53,7 +53,8 @@ def webgpu_backend(
 
     program = lowering(low_ir)
     out = program()  # compiled program execution
-    if isinstance(out, torch.Tensor):
+
+    if isinstance(out, torch.Tensor) and out.device.type != "cpu":
         out = out.to("cpu")
         print("Move runtime result to CPU")
     print(out)
