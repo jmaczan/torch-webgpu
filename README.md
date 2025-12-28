@@ -131,6 +131,7 @@ f32 only for now!
 - [x] silu
 - [x] relu
 - [x] masked_select
+- [x] mul.out
 - [ ] add.Scalar
 - [ ] add
 - [ ] sub.Tensor

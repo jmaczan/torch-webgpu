@@ -4,12 +4,17 @@ from torch_webgpu import webgpu_backend
 
 
 @torch.compile(backend=webgpu_backend)
-def fn(x):
-    return x + x
+def fn():
+    a = torch.tensor([-1.5, 2.7, 1.0, 2.0], device="webgpu")
+    b = torch.tensor([-1.0, 0.9, 1.1, -2.1], device="webgpu")
+    result = a + b
+    result = torch.relu(result)
+    result = result.to("cpu")
+    return result
 
 
 if __name__ == "__main__":
-    a = torch.tensor([2.0, 3.0, 4.0], device="webgpu")
-    out = fn(a)
-    out = out.to("cpu")
-    print(out)
+    result = fn()
+    expected = torch.tensor([0, 3.6, 2.1, 0], device="cpu")
+    assert torch.allclose(result, expected)
+    print(expected, result, expected.equal(result))
