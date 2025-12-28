@@ -11,6 +11,8 @@ class LowIROp(StrEnum):
     CREATE_BUFFER = auto()
     WRITE_BUFFER = auto()
     RUN_SHADER = auto()
+    RELU = auto()
+    MUL = auto()
     MOVE_TO = auto()
     OUTPUT = auto()
 
@@ -128,7 +130,10 @@ class LowIROutput(LowIRNode):
 
 high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.CREATE_TENSOR: [LowIROp.CREATE_BUFFER, LowIROp.WRITE_BUFFER],
+    HighIROp.MUL: [LowIROp.RUN_SHADER],
     HighIROp.FUSED_ADD_RELU: [LowIROp.RUN_SHADER],
+    HighIROp.RELU: [LowIROp.RUN_SHADER],
+    HighIROp.MUL: [LowIROp.RUN_SHADER],
     HighIROp.MOVE_TO: [LowIROp.MOVE_TO],
     HighIROp.OUTPUT: [LowIROp.OUTPUT],
 }

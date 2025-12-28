@@ -40,7 +40,14 @@ def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
     assert len(inputs) == len(node.inputs)
     # lots of assumptions, still lots of hardcoded things here
     # assuming that the order of elements matches the shader argument list order
-    out = getattr(torch.ops.webgpu, node.shader_name.value)(*inputs.values())
+    if hasattr(torch.ops.webgpu, node.shader_name.value):
+        out = getattr(torch.ops.webgpu, node.shader_name.value)(*inputs.values())
+    elif hasattr(torch, node.shader_name.value):
+        out = getattr(torch, node.shader_name.value)(*inputs.values())
+    else:
+        raise Exception(
+            f"I don't know where to put a relevant op for this shader: {node.shader_name}. Node: {node}"
+        )
     runtime[node.value_id] = out
     return out
 
