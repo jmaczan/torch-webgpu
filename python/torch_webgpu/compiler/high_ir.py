@@ -96,6 +96,7 @@ class HighIRMul(HighIRNode):
 fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     torch.tensor: HighIROp.CREATE_TENSOR,
     "add": HighIROp.ADD,
+    torch.add: HighIROp.ADD,
     torch.relu: HighIROp.RELU,
     "to": HighIROp.MOVE_TO,
     "output": HighIROp.OUTPUT,
@@ -112,19 +113,19 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.MUL: HighIRMul,
 }
 
-high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = [
-    CompilerPass(
-        transforms=[
-            Transform(
-                pattern=[
-                    Pattern("ir_op", HighIROp.ADD),
-                    Pattern("ir_op", HighIROp.RELU),
-                ],
-                output=HighIROp.FUSED_ADD_RELU,
-            )
-        ]
-    ),
-]
+high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = []
+#     CompilerPass(
+#         transforms=[
+#             Transform(
+#                 pattern=[
+#                     Pattern("ir_op", HighIROp.ADD),
+#                     Pattern("ir_op", HighIROp.RELU),
+#                 ],
+#                 output=HighIROp.FUSED_ADD_RELU,
+#             )
+#         ]
+#     ),
+# ]
 
 
 def get_high_ir_node(fx_op, fx_node: torch.fx.Node) -> Optional[HighIRNode]:
