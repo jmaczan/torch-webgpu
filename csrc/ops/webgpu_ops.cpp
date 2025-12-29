@@ -38,7 +38,7 @@ namespace torch_webgpu
             config.check_all_same_device(false);
             auto iter = config.build();
 
-            binary_kernel<BinaryOp::FusedAddRelu>(iter, 1.0f);
+            run_binary_kernel<BinaryOp::FusedAddRelu>(iter, 1.0f);
 
             return out;
         }
