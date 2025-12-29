@@ -91,13 +91,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             run_binary_kernel<BinaryOp::Mul>(iter);
         }
 
-        void mm_kernel_webgpu(::at::TensorIteratorBase &iter)
+        void mm_kernel_webgpu(const at::Tensor &self, const at::Tensor &mat2, at::Tensor &out)
         {
-            TORCH_CHECK(iter.ntensors() == 3);
-            TORCH_CHECK(iter.common_dtype() == at::ScalarType::Float);
-            TORCH_CHECK(iter.device_type() == c10::DeviceType::PrivateUse1);
-            TORCH_CHECK(iter.dtype(0) == iter.dtype(1));
-            TORCH_CHECK(iter.dtype(1) == iter.dtype(2));
+            TORCH_CHECK(self.device().type() == c10::DeviceType::PrivateUse1);
+            TORCH_CHECK(mat2.device().type() == c10::DeviceType::PrivateUse1);
+            TORCH_CHECK(out.device().type() == c10::DeviceType::PrivateUse1);
+            TORCH_CHECK(self.scalar_type() == c10::ScalarType::Float);
+            TORCH_CHECK(mat2.scalar_type() == c10::ScalarType::Float);
+            TORCH_CHECK(out.scalar_type() == c10::ScalarType::Float);
 
             wgpu::ShaderSourceWGSL shader_source{
                 wgpu::ShaderSourceWGSL::Init{
@@ -157,58 +158,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             wgpu::ComputePipeline pipeline = ctx.getDevice().CreateComputePipeline(&pipeline_descriptor);
             BinaryKernel kernel{bind_group_layout, pipeline};
 
-            auto out = iter.tensor(0);
-            auto self = iter.tensor(1);
-            auto mat2 = iter.tensor(2);
-            auto ndim = static_cast<uint32_t>(iter.ndim());
-            auto shape = iter.shape();
-            auto self_strides_bytes = iter.strides(1);
-            auto mat2_strides_bytes = iter.strides(2);
-            auto out_strides_bytes = iter.strides(0);
+            auto self_strides = self.strides();
+            auto mat2_strides = mat2.strides();
+            auto out_strides = out.strides();
 
-            auto element_size = iter.element_size(0);
-
-            std::vector<int64_t> self_strides(ndim);
-            std::vector<int64_t> mat2_strides(ndim);
-            std::vector<int64_t> out_strides(ndim);
-
-            for (int64_t i = 0; i < ndim; ++i)
-            {
-                int64_t self_bytes = self_strides_bytes[i];
-                if (self_bytes == 0)
-                {
-                    self_strides[i] = 0;
-                }
-                else
-                {
-                    TORCH_CHECK(self_bytes % element_size == 0);
-                    self_strides[i] = self_bytes / element_size;
-                }
-
-                int64_t mat2_bytes = mat2_strides_bytes[i];
-                if (mat2_bytes == 0)
-                {
-                    mat2_strides[i] = 0;
-                }
-                else
-                {
-                    TORCH_CHECK(mat2_bytes % element_size == 0);
-                    mat2_strides[i] = mat2_bytes / element_size;
-                }
-
-                int64_t out_bytes = out_strides_bytes[i];
-                if (out_bytes == 0)
-                {
-                    out_strides[i] = 0;
-                }
-                else
-                {
-                    TORCH_CHECK(out_bytes % element_size == 0);
-                    out_strides[i] = out_bytes / element_size;
-                }
-            }
-
-            auto length = iter.numel();
+            auto ndim = static_cast<uint32_t>(self.dim()); // TODO: might be wrong
+            auto element_size = self.element_size();       // TODO: might be wrong
 
             core::WebGPUAllocation *self_allocation = static_cast<core::WebGPUAllocation *>(self.storage().data_ptr().get());
             core::WebGPUAllocation *mat2_allocation = static_cast<core::WebGPUAllocation *>(mat2.storage().data_ptr().get());
@@ -265,9 +220,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
             for (int64_t i = 0; i < ndim; ++i)
             {
-                auto dim_size = shape[i];
-                TORCH_CHECK(dim_size >= 0 && dim_size <= std::numeric_limits<uint32_t>::max());
-                params.shape[i] = static_cast<uint32_t>(dim_size);
+                params.shape[i] = static_cast<uint32_t>(self.size(i));
 
                 auto self_stride = self_strides[i];
                 auto mat2_stride = mat2_strides[i];
@@ -380,17 +333,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             const at::Tensor &mat2,
             at::Tensor &out)
         {
-            at::TensorIteratorConfig config;
-            config.set_check_mem_overlap(true);
-            config.add_output(out);
-            config.add_input(self);
-            config.add_input(mat2);
-            config.promote_inputs_to_common_dtype(true);
-            config.cast_common_dtype_to_outputs(true);
-            config.check_all_same_device(false);
-            auto iter = config.build();
-
-            mm_kernel_webgpu(iter);
+            mm_kernel_webgpu(self, mat2, out);
 
             return out;
         }

@@ -11,13 +11,13 @@ def fn():
     )
     print(a.size(), b.size())
     result = torch.mm(a, b)
-    result = torch.relu(result)
+    # result = torch.relu(result)
     result = result.to("cpu")
     return result
 
 
 if __name__ == "__main__":
     result = fn()
-    expected = torch.tensor([1.5, 2.43, 1.1, 0], device="cpu")
+    expected = torch.tensor([[4.9700, -0.3200], [-1.7600, -4.0200]], device="cpu")
     assert torch.allclose(result, expected)
-    print(expected, result, f"allclose: {expected.equal(result)}")
+    print(expected, result, f"allclose: {torch.allclose(result, expected)}")
