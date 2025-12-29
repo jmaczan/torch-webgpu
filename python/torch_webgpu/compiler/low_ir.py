@@ -132,6 +132,7 @@ high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.FUSED_ADD_RELU: [LowIROp.RUN_SHADER],
     HighIROp.RELU: [LowIROp.RUN_SHADER],
     HighIROp.ADD: [LowIROp.RUN_SHADER],
+    HighIROp.MM: [LowIROp.RUN_SHADER],
     HighIROp.MOVE_TO: [LowIROp.MOVE_TO],
     HighIROp.OUTPUT: [LowIROp.OUTPUT],
 }
