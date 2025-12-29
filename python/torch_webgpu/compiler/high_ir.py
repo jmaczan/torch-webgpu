@@ -14,6 +14,7 @@ class HighIROp(StrEnum):
     MOVE_TO = auto()
     OUTPUT = auto()
     MUL = auto()
+    MM = auto()
 
 
 class HighIRNode(IRNode):
@@ -93,6 +94,10 @@ class HighIRMul(HighIRNode):
     ir_op = HighIROp.MUL
 
 
+class HighIRMM(HighIRNode):
+    ir_op = HighIROp.MM
+
+
 fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     torch.tensor: HighIROp.CREATE_TENSOR,
     "add": HighIROp.ADD,
@@ -101,6 +106,7 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     "to": HighIROp.MOVE_TO,
     "output": HighIROp.OUTPUT,
     torch.mul: HighIROp.MUL,
+    torch.mm: HighIROp.MM,
 }
 
 high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
@@ -111,6 +117,7 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.OUTPUT: HighIROutput,
     HighIROp.FUSED_ADD_RELU: HighIRFusedAddRelu,
     HighIROp.MUL: HighIRMul,
+    HighIROp.MM: HighIRMM,
 }
 
 high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = [
