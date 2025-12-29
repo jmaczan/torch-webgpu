@@ -113,7 +113,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         BinaryKernel &get_binary_kernel(BinaryOp binary_op)
         {
-            static std::unordered_map<BinaryOp, BinaryKernel, CacheHash> kernel_cache;
+            static std::unordered_map<BinaryOp, BinaryKernel, CacheHash> kernel_cache; // TODO: have a single, central shared kernel_cache for all ops, not just BinaryOp
             auto cached_kernel = kernel_cache.find(binary_op);
             if (cached_kernel != kernel_cache.end())
             {
