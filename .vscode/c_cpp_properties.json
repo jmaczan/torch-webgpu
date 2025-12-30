@@ -7,6 +7,7 @@
       "cStandard": "c17",
       "cppStandard": "c++17",
       "intelliSenseMode": "gcc-x64",
+      "compileCommands": "${workspaceFolder}/build/benchmarks/compile_commands.json",
 
       "includePath": [
         "${workspaceFolder}/csrc",

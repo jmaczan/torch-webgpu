@@ -12,6 +12,7 @@ cmake -S benchmarks -B build/benchmarks \
   -DDAWN_PREFIX="$DAWN_PREFIX" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
   -DCMAKE_CUDA_ARCHITECTURES=120
 
 cmake --build build/benchmarks -j
