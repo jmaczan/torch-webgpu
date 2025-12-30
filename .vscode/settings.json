@@ -106,5 +106,6 @@
 
   // Turn on diagnostics
   "C_Cpp.errorSquiggles": "enabled",
-  "C_Cpp.intelliSenseEngine": "default"
+  "C_Cpp.intelliSenseEngine": "default",
+  "cmake.sourceDirectory": "/home/jedrzej/dev/torch-webgpu/ctests"
 }
