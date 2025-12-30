@@ -256,3 +256,7 @@ __marimo__/
 
 temp.txt
 temp.py
+wandb/
+bench.json
+bench_percentiles.json
+bench_summary.csv
