@@ -27,7 +27,15 @@ namespace torch_webgpu
                 });
             instance.WaitAny(adapter_future, UINT64_MAX);
 
-            wgpu::DeviceDescriptor device_descriptor;
+            wgpu::Limits adapter_limits{};
+            if (adapter.GetLimits(&adapter_limits) != wgpu::Status::Success)
+            {
+                std::cout << "Failed to query WebGPU adapter limits" << "\n";
+                exit(1);
+            }
+
+            wgpu::DeviceDescriptor device_descriptor{};
+            device_descriptor.requiredLimits = &adapter_limits;
             device_descriptor.SetUncapturedErrorCallback([](const wgpu::Device &, wgpu::ErrorType errorType, wgpu::StringView message)
                                                          { std::cout << "Error in device descriptor" << static_cast<int>(errorType) << std::string(message.data, message.length) << "\n"; });
 
