@@ -85,8 +85,8 @@ static void BM_MM(benchmark::State &state)
 BENCHMARK(BM_MM)
     ->Args({128, 128, 128})
     ->Args({256, 256, 256})
-    // ->Args({512, 512, 512})
-    // ->Args({1024, 1024, 1024})
+    ->Args({512, 512, 512})
+    ->Args({1024, 1024, 1024})
     ->Iterations(10)
     ->Unit(benchmark::kMillisecond);
 
