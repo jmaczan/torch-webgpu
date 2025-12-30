@@ -14,6 +14,7 @@
         "${workspaceFolder}/.venv/lib/python3.12/site-packages/torch/include",
         "${workspaceFolder}/.venv/lib/python3.12/site-packages/torch/include/torch/csrc/api/include",
         "/usr/include/python3.12",
+        "${workspaceFolder}/build/benchmarks/_deps/googlebench-src/include",
         "${workspaceFolder}/build/ctests/_deps/googletest-src/googletest/include",
         "${workspaceFolder}/build/ctests/_deps/googletest-src/googlemock/include",
         "/home/jedrzej/dev/dawn/include",
