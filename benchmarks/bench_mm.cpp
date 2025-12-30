@@ -36,10 +36,15 @@ static at::Tensor make_webgpu_tensor(const std::vector<int64_t> &sizes)
 static void wait_for_queue()
 {
     auto &ctx = getWebGPUContext();
+    bool ok = true;
     auto fut = ctx.getQueue().OnSubmittedWorkDone(
         wgpu::CallbackMode::WaitAnyOnly,
-        [](wgpu::QueueWorkDoneStatus, wgpu::StringView) {});
+        [&ok](wgpu::QueueWorkDoneStatus status, wgpu::StringView)
+        {
+            ok = (status == wgpu::QueueWorkDoneStatus::Success);
+        });
     ctx.getInstance().WaitAny(fut, UINT64_MAX);
+    TORCH_CHECK(ok, "WebGPU queue reported failure in benchmark");
 }
 
 static void BM_MM(benchmark::State &state)
@@ -53,9 +58,12 @@ static void BM_MM(benchmark::State &state)
     auto out_strides = make_contiguous_strides({M, K});
     auto out = at::empty_strided({M, K}, out_strides, at::TensorOptions().dtype(at::kFloat).device(c10::Device(c10::kPrivateUse1)));
 
-    // Warmup once so we don't include lazy init in measured iterations.
-    torch_webgpu::ops::mm_kernel_webgpu(a, b, out);
-    wait_for_queue();
+    // Warmups to exclude lazy init / pipeline compilation from measured iterations.
+    for (int i = 0; i < 2; ++i)
+    {
+        torch_webgpu::ops::mm_kernel_webgpu(a, b, out);
+        wait_for_queue();
+    }
 
     const double flops_per_call = 2.0 * static_cast<double>(M) * static_cast<double>(N) * static_cast<double>(K);
     const double bytes_per_call = static_cast<double>(a.nbytes() + b.nbytes() + out.nbytes());
@@ -64,13 +72,13 @@ static void BM_MM(benchmark::State &state)
     {
         torch_webgpu::ops::mm_kernel_webgpu(a, b, out);
         wait_for_queue();
-        state.PauseTiming();
-        // Optionally re-use buffers; nothing to reset for now.
-        state.ResumeTiming();
+        benchmark::DoNotOptimize(out);
+        benchmark::ClobberMemory();
     }
 
-    state.counters["gflops"] = benchmark::Counter{flops_per_call / 1e9, benchmark::Counter::kIsRate};
-    state.counters["bytes"] = benchmark::Counter{bytes_per_call, benchmark::Counter::kIsRate};
+    const auto flags = benchmark::Counter::kIsRate | benchmark::Counter::kIsIterationInvariantRate;
+    state.counters["gflops"] = benchmark::Counter{flops_per_call / 1e9, flags};
+    state.counters["bytes"] = benchmark::Counter{bytes_per_call, flags};
 }
 
 // Register a few common shapes; tweak as needed.
