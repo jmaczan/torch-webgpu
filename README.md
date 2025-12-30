@@ -50,23 +50,6 @@ In Python:
 
 And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real webgpu!
 
-## Rough edges
-
-This list helps me pick up what to work on next, aside of adding new ops
-
-- only float32 supported
-- `wgpu::Queue.Submit()` handled synchronously
-- not enough unit tests ([a standarized testing out-of-tree backends is still in progress as of Dec 2025](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270), I hope to [involve torch-webgpu into this effort](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270/6))
-- some ops might fallback to CPU
-
-## Device / to
-
-- [x] CPU <-> WebGPU
-- [ ] CUDA <-> WebGPU
-- [ ] MPS <-> WebGPU
-- [ ] Intel Gaudi <-> WebGPU
-- [ ] XLA <-> WebGPU
-
 ## FAQ
 
 ### How serious are you about this project? Is it a research or PoC in mind or are you going to make it production quality?
@@ -232,11 +215,36 @@ f32 only for now!
 - [ ] max_pool2d
 - [ ] interpolate
 
+## Device / to
+
+- [x] CPU <-> WebGPU
+- [ ] CUDA <-> WebGPU
+- [ ] MPS <-> WebGPU
+- [ ] Intel Gaudi <-> WebGPU
+- [ ] XLA <-> WebGPU
+
+## Rough edges
+
+This list helps me pick up what to work on next, aside of adding new ops
+
+- only float32 supported
+- `wgpu::Queue.Submit()` handled synchronously
+- not enough unit tests ([a standarized testing out-of-tree backends is still in progress as of Dec 2025](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270), I hope to [involve torch-webgpu into this effort](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270/6))
+- some ops might fallback to CPU
+
 ## Resources
 
 I mainly use Ascend's NPU backend for PyTorch https://github.com/ascend/pytorch, Elie's WebGPU guide https://eliemichel.github.io/LearnWebGPU/index.html, WGSL spec https://www.w3.org/TR/WGSL/ and PyTorch PrivateUse1 custom backend docs as a reference https://docs.pytorch.org/tutorials/advanced/privateuseone.html https://docs.pytorch.org/tutorials/advanced/extend_dispatcher.html https://docs.pytorch.org/tutorials/advanced/dispatcher
 
 Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/webgpu-torch), which is a neat PyTorch reimplementation in TypeScript targeting WebGPU
+
+## Dev resources
+
+### C++ unit tests
+0. `chmod +x build-ctests.sh run-ctests.sh`
+1. Update `build-ctests.sh` with your paths
+2. `./build-ctests.sh`
+3. `./run-ctests.sh`
 
 ## Credits
 
