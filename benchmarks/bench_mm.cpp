@@ -69,17 +69,16 @@ static void BM_MM(benchmark::State &state)
         state.ResumeTiming();
     }
 
-    // GFLOP/s and GB/s
-    state.counters["gflop_s"] = benchmark::Counter(flops_per_call / 1e9, benchmark::Counter::kIsRate);
-    state.counters["gbps"] = benchmark::Counter(bytes_per_call / 1e9, benchmark::Counter::kIsRate);
+    state.counters["gflops"] = benchmark::Counter{flops_per_call / 1e9, benchmark::Counter::kIsRate};
+    state.counters["bytes"] = benchmark::Counter{bytes_per_call, benchmark::Counter::kIsRate};
 }
 
 // Register a few common shapes; tweak as needed.
 BENCHMARK(BM_MM)
     ->Args({128, 128, 128})
     ->Args({256, 256, 256})
-    ->Args({512, 512, 512})
-    ->Args({1024, 1024, 1024})
+    // ->Args({512, 512, 512})
+    // ->Args({1024, 1024, 1024})
     ->Iterations(10)
     ->Unit(benchmark::kMillisecond);
 

@@ -25,15 +25,35 @@ def load_benchmark(path: Path) -> List[Dict[str, Any]]:
     return data.get("benchmarks", [])
 
 
+def _to_ms(entry: Dict[str, Any]) -> float:
+    value = float(entry["real_time"])
+    unit = entry.get("time_unit", "ns")
+    scale = {
+        "ns": 1e-6,  # ns -> ms
+        "us": 1e-3,  # µs -> ms
+        "ms": 1.0,  # ms -> ms
+        "s": 1e3,  # s -> ms
+    }.get(unit, 1e-6)
+    return value * scale
+
+
+def _counter(entry: Dict[str, Any], key: str) -> float:
+    counters = entry.get("counters", {})
+    if key in counters:
+        return float(counters[key])
+    if key in entry:
+        return float(entry[key])
+    return math.nan
+
+
 def summarize(benchmarks: List[Dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for b in benchmarks:
         name = b["name"]
-        time_ms = b["real_time"] / 1e6  # gbench reports ns
+        time_ms = _to_ms(b)
         iters = b.get("iterations", 1)
-        counters = b.get("counters", {})
-        gflops = counters.get("gflops", math.nan)
-        bytes_moved = counters.get("bytes", math.nan)
+        gflops = _counter(b, "gflops")
+        bytes_moved = _counter(b, "bytes")
         rows.append(
             {
                 "name": name,
@@ -50,7 +70,7 @@ def summarize_repetitions(benchmarks: List[Dict[str, Any]]) -> pd.DataFrame:
     groups: Dict[str, List[float]] = {}
     for b in benchmarks:
         name = b["name"]
-        time_ms = b["real_time"] / 1e6
+        time_ms = _to_ms(b)
         groups.setdefault(name, []).append(time_ms)
     rows = []
     for name, samples in groups.items():
