@@ -40,6 +40,7 @@ namespace torch_webgpu
         m.impl("bitwise_and.Tensor_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
         m.impl("bitwise_and.Tensor", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
         m.impl("masked_select", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+        m.impl("zero_", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
     }
 }
 
