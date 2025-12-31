@@ -21,7 +21,8 @@ namespace torch_webgpu
             Copy,
             ReLU,
             GeLU,
-            SiLU
+            SiLU,
+            Cos
         };
 
         std::string get_unary_shader(UnaryOp unary_op);
