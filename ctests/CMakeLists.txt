@@ -35,7 +35,10 @@ target_compile_options(torch_webgpu_core PRIVATE ${TORCH_CXX_FLAGS})
 
 enable_testing()
 
-add_executable(test_math test_math.cpp)
-target_link_libraries(test_math PRIVATE torch_webgpu_core GTest::gtest_main)
-
-gtest_discover_tests(test_math)
+file(GLOB ctest_sources CONFIGURE_DEPENDS *.cpp)
+foreach(test_src ${ctest_sources})
+  get_filename_component(test_name ${test_src} NAME_WE)
+  add_executable(${test_name} ${test_src})
+  target_link_libraries(${test_name} PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,torch_webgpu_core> GTest::gtest_main Python3::Python)
+  gtest_discover_tests(${test_name})
+endforeach()
