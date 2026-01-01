@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Maczan"
+  given-names: "Jędrzej Paweł"
+  orcid: "https://orcid.org/0000-0003-1741-6064"
+title: "torch-webgpu"
+version: 1.0.0
+date-released: 2025-10-26
+url: "https://github.com/jmaczan/torch-webgpu"
