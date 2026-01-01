@@ -27,7 +27,7 @@ namespace torch_webgpu
             config.add_input(self);
             config.promote_inputs_to_common_dtype(true);
             config.cast_common_dtype_to_outputs(true);
-            config.check_all_same_device(false);
+            config.check_all_same_device(true);
             auto iter = config.build();
 
             cos_kernel_webgpu(iter);
@@ -45,7 +45,7 @@ namespace torch_webgpu
             config.add_input(self);
             config.promote_inputs_to_common_dtype(true);
             config.cast_common_dtype_to_outputs(true);
-            config.check_all_same_device(false);
+            config.check_all_same_device(true);
             auto iter = config.build();
 
             cos_kernel_webgpu(iter);
