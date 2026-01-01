@@ -236,15 +236,35 @@ This list helps me pick up what to work on next, aside of adding new ops
 
 I mainly use Ascend's NPU backend for PyTorch https://github.com/ascend/pytorch, Elie's WebGPU guide https://eliemichel.github.io/LearnWebGPU/index.html, WGSL spec https://www.w3.org/TR/WGSL/ and PyTorch PrivateUse1 custom backend docs as a reference https://docs.pytorch.org/tutorials/advanced/privateuseone.html https://docs.pytorch.org/tutorials/advanced/extend_dispatcher.html https://docs.pytorch.org/tutorials/advanced/dispatcher
 
+https://www.nuss-and-bolts.com/p/optimizing-a-webgpu-matmul-kernel
+
 Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/webgpu-torch), which is a neat PyTorch reimplementation in TypeScript targeting WebGPU
 
 ## Dev resources
 
 ### C++ unit tests
-0. `chmod +x build-ctests.sh run-ctests.sh`
-1. Update `build-ctests.sh` with your paths
-2. `./build-ctests.sh`
-3. `./run-ctests.sh`
+
+0. Remember to rebuild your code before testing - `./build.sh`
+1. `chmod +x build-ctests.sh run-ctests.sh`
+2. Update `build-ctests.sh` with your paths
+3. `rm -rf build/ctests`
+4. `./build-ctests.sh`
+5. `./run-ctests.sh`
+
+## Cite
+
+If you use this software, please cite it as below.
+
+```bibtex
+@software{Maczan_torch-webgpu_2025,
+author = {Maczan, Jędrzej Paweł},
+month = oct,
+title = {{torch-webgpu}},
+url = {https://github.com/jmaczan/torch-webgpu},
+version = {1.0.0},
+year = {2025}
+}
+```
 
 ## Credits
 
