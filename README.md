@@ -259,7 +259,7 @@ If you use this software, please cite it as below.
 @software{Maczan_torch-webgpu_2025,
 author = {Maczan, Jędrzej Paweł},
 month = oct,
-title = {{torch-webgpu}},
+title = {{torch-webgpu - PyTorch compiler and WebGPU runtime}},
 url = {https://github.com/jmaczan/torch-webgpu},
 version = {1.0.0},
 year = {2025}
