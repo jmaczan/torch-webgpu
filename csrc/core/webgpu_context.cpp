@@ -14,18 +14,52 @@ namespace torch_webgpu
                 .requiredFeatures = &k_timed_wait_any};
             instance = wgpu::CreateInstance(&instance_descriptor);
 
+            wgpu::RequestAdapterOptions adapter_options{};
+            adapter_options.powerPreference = wgpu::PowerPreference::HighPerformance;
+            bool acquired_high_perf_adapter = false;
             wgpu::Future adapter_future = instance.RequestAdapter(
-                nullptr, wgpu::CallbackMode::WaitAnyOnly,
-                [this](wgpu::RequestAdapterStatus status, wgpu::Adapter a, wgpu::StringView message)
+                &adapter_options, wgpu::CallbackMode::WaitAnyOnly,
+                [this, &acquired_high_perf_adapter](wgpu::RequestAdapterStatus status, wgpu::Adapter a, wgpu::StringView message)
                 {
                     if (status != wgpu::RequestAdapterStatus::Success)
                     {
-                        std::cout << "Failed to load WebGPU Adapter" << "\n";
-                        exit(1);
+                        std::cout << "Failed to load High Performance WebGPU Adapter. Trying to get a regular one..." << "\n";
+                        return;
                     }
                     this->adapter = std::move(a);
+                    acquired_high_perf_adapter = true;
+                    std::cout << "Chosen high performance WebGPU Adapter" << "\n";
+                    wgpu::AdapterInfo info{};
+                    if (adapter.GetInfo(&info) == wgpu::Status::Success)
+                    {
+                        std::cout << "High performance WebGPU Adapter details:" << info.vendor.data << " " << info.architecture.data
+                                  << " " << info.description.data << "\n";
+                    }
                 });
             instance.WaitAny(adapter_future, UINT64_MAX);
+
+            if (!acquired_high_perf_adapter)
+            {
+                wgpu::Future adapter_future = instance.RequestAdapter(
+                    nullptr, wgpu::CallbackMode::WaitAnyOnly,
+                    [this](wgpu::RequestAdapterStatus status, wgpu::Adapter a, wgpu::StringView message)
+                    {
+                        if (status != wgpu::RequestAdapterStatus::Success)
+                        {
+                            std::cout << "Failed to load WebGPU adapter \n";
+                            exit(1);
+                        }
+                        this->adapter = std::move(a);
+                        std::cout << "Chosen a regular WebGPU Adapter (not high performance)" << "\n";
+                        wgpu::AdapterInfo info{};
+                        if (adapter.GetInfo(&info) == wgpu::Status::Success)
+                        {
+                            std::cout << "Chosen WebGPU Adapter details:" << info.vendor.data << " " << info.architecture.data
+                                      << " " << info.description.data << "\n";
+                        }
+                    });
+                instance.WaitAny(adapter_future, UINT64_MAX);
+            }
 
             wgpu::Limits adapter_limits{};
             if (adapter.GetLimits(&adapter_limits) != wgpu::Status::Success)
