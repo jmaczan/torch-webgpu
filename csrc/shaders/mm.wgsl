@@ -1,7 +1,7 @@
-// TODO: improve performance, currently it's a native impl
-// based on my first CUDA matrix multiplication kernel
 // A(M,N) x B(N,K) = C(M,K), where M,N,K are dims
 const MAX_DIMS: u32 = 8u;
+const BLOCKSIZE: u32 = 16u;
+const TILESIZE: u32 = 4u;
 
 struct Params {
     M: u32,
@@ -32,19 +32,28 @@ var<storage, read_write> C: array<f32>; // out
 var<uniform> params: Params;
 
 // one thread = one output element C[column, row]
-@compute @workgroup_size(16, 16, 1)
+@compute @workgroup_size(BLOCKSIZE, TILESIZE, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let col = gid.x; // 0..K-1
+    let col = gid.x * TILESIZE; // 0..K-1
     let row = gid.y; // 0..M-1
     if (col >= params.K || row >= params.M) { return; }
 
-    var acc: f32 = 0.0;
+    var acc0: f32 = 0.0;
+    var acc1: f32 = 0.0;
+    var acc2: f32 = 0.0;
+    var acc3: f32 = 0.0;
 
     for (var k: u32 = 0u; k < params.N; k = k + 1u) {
         let a_idx = params.self_offset + row * params.N + k;
         let b_idx = params.mat2_offset + k * params.K + col;
-        acc = acc + A[a_idx] * B[b_idx];
+        acc0 = acc0 + A[a_idx] * B[b_idx];
+        acc1 = acc1 + A[a_idx] * B[b_idx + 1u];
+        acc2 = acc2 + A[a_idx] * B[b_idx + 2u];
+        acc3 = acc3 + A[a_idx] * B[b_idx + 3u];
     }
     let c_idx = params.out_offset + row * params.K + col;
-    C[c_idx] = acc;
+    C[c_idx] = acc0;
+    C[c_idx+1u] = acc1;
+    C[c_idx+2u] = acc2;
+    C[c_idx+3u] = acc3;
 }
