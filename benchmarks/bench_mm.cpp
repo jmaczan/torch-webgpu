@@ -70,8 +70,12 @@ static void BM_MM(benchmark::State &state)
 
     for (auto _ : state)
     {
+        auto t0 = std::chrono::high_resolution_clock::now();
         torch_webgpu::ops::mm_kernel_webgpu(a, b, out);
         wait_for_queue();
+        auto t1 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> duration = t1 - t0;
+        state.SetIterationTime(duration.count());
         benchmark::DoNotOptimize(out);
         benchmark::ClobberMemory();
     }
@@ -89,7 +93,7 @@ BENCHMARK(BM_MM)
     ->Args({1024, 1024, 1024})
     ->Args({2048, 2048, 2048})
     ->Args({4096, 4096, 4096})
-    ->UseRealTime()
+    ->UseManualTime()
     ->Iterations(2)
     ->Unit(benchmark::kMillisecond);
 
