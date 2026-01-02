@@ -6,6 +6,10 @@ import statistics
 from pathlib import Path
 from typing import Any, Dict, List
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -79,6 +83,38 @@ def summarize_repetitions(benchmarks: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def aggregate_iteration_means(benchmarks: List[Dict[str, Any]]) -> pd.DataFrame:
+    rows = []
+    for b in benchmarks:
+        if b.get("run_type") != "iteration":
+            continue
+        name = b["name"]
+        gflops = _counter(b, "gflops")
+        bytes_moved = _counter(b, "bytes")
+        rows.append({"name": name, "gflops": gflops, "bytes": bytes_moved})
+    if not rows:
+        return pd.DataFrame(columns=["name", "avg_gflops", "avg_bytes"])
+    df = pd.DataFrame(rows)
+    agg = df.groupby("name", as_index=False).mean(numeric_only=True)
+    agg = agg.rename(columns={"gflops": "avg_gflops", "bytes": "avg_bytes"})
+    return agg.sort_values("avg_gflops", ascending=True)
+
+
+def plot_gflops(df: pd.DataFrame, output_path: Path) -> None:
+    if df.empty:
+        print("No iteration entries found; skipping gflops plot.")
+        return
+    plt.figure(figsize=(10, 6))
+    plt.plot(df["name"], df["avg_gflops"], marker="o", color="#4C72B0")
+    plt.ylabel("Average GFLOPS")
+    plt.xlabel("Benchmark name")
+    plt.title("Average GFLOPS per benchmark (iteration runs)")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+
 def maybe_log_wandb(
     df: pd.DataFrame, df_rep: pd.DataFrame, args: argparse.Namespace
 ) -> None:
@@ -108,14 +144,19 @@ def main() -> None:
     benches = load_benchmark(args.input)
     df = summarize(benches)
     df_rep = summarize_repetitions(benches)
+    df_avg = aggregate_iteration_means(benches)
 
     df.to_csv(args.out_csv, index=False)
     df_rep.to_json(args.out_json, orient="records", indent=2)
+    plot_gflops(df_avg, Path("gflops_benchmark.png"))
 
     print("=== Summary ===")
     print(df.to_markdown(index=False))
     print("\n=== Percentiles ===")
     print(df_rep.to_markdown(index=False))
+    if not df_avg.empty:
+        print("\n=== Averaged (iteration) ===")
+        print(df_avg.to_markdown(index=False))
 
     maybe_log_wandb(df, df_rep, args)
 
