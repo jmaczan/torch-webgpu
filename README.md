@@ -234,9 +234,12 @@ This list helps me pick up what to work on next, aside of adding new ops
 
 ## Resources
 
-I mainly use Ascend's NPU backend for PyTorch https://github.com/ascend/pytorch, Elie's WebGPU guide https://eliemichel.github.io/LearnWebGPU/index.html, WGSL spec https://www.w3.org/TR/WGSL/ and PyTorch PrivateUse1 custom backend docs as a reference https://docs.pytorch.org/tutorials/advanced/privateuseone.html https://docs.pytorch.org/tutorials/advanced/extend_dispatcher.html https://docs.pytorch.org/tutorials/advanced/dispatcher
-
-https://www.nuss-and-bolts.com/p/optimizing-a-webgpu-matmul-kernel
+- Ascend's NPU backend for PyTorch https://github.com/ascend/pytorch
+- Elie's WebGPU guide https://eliemichel.github.io/LearnWebGPU/index.html
+- WGSL spec https://www.w3.org/TR/WGSL/
+- PyTorch PrivateUse1 custom backend docs as a reference https://docs.pytorch.org/tutorials/advanced/privateuseone.html https://docs.pytorch.org/tutorials/advanced/extend_dispatcher.html https://docs.pytorch.org/tutorials/advanced/dispatcher
+- https://www.nuss-and-bolts.com/p/optimizing-a-webgpu-matmul-kernel
+- https://webgpufundamentals.org/webgpu/lessons/webgpu-compute-shaders.html
 
 Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/webgpu-torch), which is a neat PyTorch reimplementation in TypeScript targeting WebGPU
 
@@ -250,6 +253,20 @@ Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/
 3. `rm -rf build/ctests`
 4. `./build-ctests.sh`
 5. `./run-ctests.sh`
+
+### C++ benchmarks
+
+0. Remember to rebuild your code before testing - `./build.sh` and optionally log in to your wandb.ai account
+1. `chmod +x build-benchmark.sh run-benchmark.sh`
+2. Update `build-benchmark.sh` with your paths
+3. `rm -rf build/benchmarks`
+4. `./build-benchmark.sh`
+5. `./run-benchmark.sh`
+
+### Python unit tests
+
+0. Remember to rebuild your code before testing - `./build.sh`
+1. `pytest tests` to run all tests. `pytest tests/ops/test_cos.py` to run a chosen test file, like here we test cosinus
 
 ## Cite
 
