@@ -87,7 +87,9 @@ BENCHMARK(BM_MM)
     ->Args({256, 256, 256})
     ->Args({512, 512, 512})
     ->Args({1024, 1024, 1024})
-    ->Iterations(10)
+    ->Args({2048, 2048, 2048})
+    ->Args({4096, 4096, 4096})
+    ->Iterations(2)
     ->Unit(benchmark::kMillisecond);
 
 BENCHMARK_MAIN();
