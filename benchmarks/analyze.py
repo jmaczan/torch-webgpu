@@ -116,7 +116,13 @@ def plot_gflops(df: pd.DataFrame, output_path: Path) -> None:
 
 
 def maybe_log_wandb(
-    df: pd.DataFrame, df_rep: pd.DataFrame, args: argparse.Namespace
+    df: pd.DataFrame,
+    df_rep: pd.DataFrame,
+    df_avg: pd.DataFrame,
+    out_csv: Path,
+    out_json: Path,
+    plot_path: Path,
+    args: argparse.Namespace,
 ) -> None:
     if not args.wandb_project:
         return
@@ -127,6 +133,19 @@ def maybe_log_wandb(
     run = wandb.init(project=args.wandb_project, config={"run_tag": args.run_tag})
     wandb.log({"summary_table": wandb.Table(dataframe=df)})
     wandb.log({"percentiles": wandb.Table(dataframe=df_rep)})
+    if not df_avg.empty:
+        wandb.log({"averaged_iteration": wandb.Table(dataframe=df_avg)})
+    if plot_path.exists():
+        wandb.log({"gflops_plot": wandb.Image(str(plot_path))})
+
+    artifact = wandb.Artifact("bench_results", type="benchmark")
+    if out_csv.exists():
+        artifact.add_file(str(out_csv))
+    if out_json.exists():
+        artifact.add_file(str(out_json))
+    if plot_path.exists():
+        artifact.add_file(str(plot_path))
+    run.log_artifact(artifact)
     run.finish()
 
 
@@ -148,7 +167,8 @@ def main() -> None:
 
     df.to_csv(args.out_csv, index=False)
     df_rep.to_json(args.out_json, orient="records", indent=2)
-    plot_gflops(df_avg, Path("gflops_benchmark.png"))
+    plot_path = Path("gflops_benchmark.png")
+    plot_gflops(df_avg, plot_path)
 
     print("=== Summary ===")
     print(df.to_markdown(index=False))
@@ -158,7 +178,15 @@ def main() -> None:
         print("\n=== Averaged (iteration) ===")
         print(df_avg.to_markdown(index=False))
 
-    maybe_log_wandb(df, df_rep, args)
+    maybe_log_wandb(
+        df,
+        df_rep,
+        df_avg,
+        args.out_csv,
+        args.out_json,
+        plot_path,
+        args,
+    )
 
 
 if __name__ == "__main__":
