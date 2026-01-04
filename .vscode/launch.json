@@ -53,6 +53,21 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
-        }
+        },
+        {
+            "name": "Ops: Debug pytest tests/ops/test_mm.py",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/ops/test_mm.py"
+            ],
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "justMyCode": false,
+            "subProcess": true,
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        
     ]
 }
