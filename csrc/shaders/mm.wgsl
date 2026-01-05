@@ -80,7 +80,7 @@ var<uniform> params: Params;
 // total output elements: M * K = 30 * 10 = 300
 // so I need to run at least 300 threads to compute the output (I don't do any tiling etc, YET)
 // I need to compute dispatch size based on both workgroup_size and M and K
-// for simplicity, I start with 1D dispatch
+// let's go with 2D dispatch
 // M * K = 300, each workgroup has 4 * 4 = 16 elements
 // so we need to dispatch as many workgroups to barely cover the 300 output elements
 // and ideally dispatch not more elements
@@ -114,8 +114,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_index) li: u32,
     @builtin(num_workgroups) nwg: vec3<u32>    
 ) {
-    // workgroups are still dispatched in 1D, so wid can be simply used as wid.x
-    let global_invocation_index: u32 = wid.x * (wsx * wsy * wsz) + li;
+    let workgroup_index: u32 = wid.x + nwg.x * wid.y + nwg.y * wid.z;
+
+    let global_invocation_index: u32 = workgroup_index * (wsx * wsy * wsz) + li;
 
     if (global_invocation_index < params.M * params.K) {
         var c_x: u32 = global_invocation_index / params.K;
