@@ -70,7 +70,7 @@ var<storage, read_write> C: array<f32>; // out
 @group(0) @binding(3)
 var<uniform> params: Params;
 
-@compute @workgroup_size(4)
+@compute @workgroup_size(16)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // say I dispatched M * K workgroups and workgroup_size is 4
     // total threads: M * K * 4 = 3 * 4 * 4 = 48
