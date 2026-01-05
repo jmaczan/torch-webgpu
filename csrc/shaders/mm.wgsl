@@ -70,9 +70,15 @@ var<storage, read_write> C: array<f32>; // out
 @group(0) @binding(3)
 var<uniform> params: Params;
 
-@compute @workgroup_size(1)
+@compute @workgroup_size(4)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    // say I dispatched M * K workgroups and workgroup_size is 1
+    // say I dispatched M * K workgroups and workgroup_size is 4
+    // total threads: M * K * 4 = 3 * 4 * 4 = 48
+    // but total output elements: M * K = 12
+    // so I need to compute dispatch size based on both workgroup_size and M and K
+    // in this scenario dispatch should be M * K / workgroup_size 12 / 4 = 3 dispatch
+    // let's check: dispatch 3 workgroups where each workgroup is 4 threads = 12 threads. purrfect
+    // I still keep it x only (1D)
     // and now say gid.x is 4, then how do I pick correct row of A and col of B to compute C[gid.x]?
     // I know M is 3 and K is 4
     // I want to compute coordinates of c[c_x, c_y]. c_x rows, c_y cols.
@@ -88,6 +94,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         for (var i: u32 = 0; i < params.N; i = i + 1u) {
             output = output + A[c_x*params.N + i] * B[i * params.K + c_y]; // + A[c_x + i] * B[c_y + i];
         }
-        C[gid.x] = output;
+        // I can still use gid.x because of 1D, but soon I'll need to switch to something else
+        // perhaps "missing builtin" global_invocation_index?
+        C[gid.x] = output; 
     }
 }
