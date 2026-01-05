@@ -231,7 +231,8 @@ namespace torch_webgpu
             const uint32_t x_group_size = ceil_div_u32(params.K, TILE_X);
             const uint32_t y_group_size = ceil_div_u32(params.M, TILE_Y);
             const uint32_t wsx = 4;
-            const uint32_t wgx = params.K * params.M / wsx;
+            const uint32_t wsy = 4;
+            const uint32_t wgx = ceil_div_u32(params.K * params.M, wsx * wsy);
             pass_encoder.DispatchWorkgroups(wgx);
             pass_encoder.End();
 

@@ -70,32 +70,61 @@ var<storage, read_write> C: array<f32>; // out
 @group(0) @binding(3)
 var<uniform> params: Params;
 
-@compute @workgroup_size(16)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    // say I dispatched M * K workgroups and workgroup_size is 4
-    // total threads: M * K * 4 = 3 * 4 * 4 = 48
-    // but total output elements: M * K = 12
-    // so I need to compute dispatch size based on both workgroup_size and M and K
-    // in this scenario dispatch should be M * K / workgroup_size 12 / 4 = 3 dispatch
-    // let's check: dispatch 3 workgroups where each workgroup is 4 threads = 12 threads. purrfect
-    // I still keep it x only (1D)
-    // and now say gid.x is 4, then how do I pick correct row of A and col of B to compute C[gid.x]?
-    // I know M is 3 and K is 4
-    // I want to compute coordinates of c[c_x, c_y]. c_x rows, c_y cols.
-    // row major, so c_y changes faster - by 1 - and c_x changes every K elements
-    // I computed by hand that C[4] = c[1, 0], so let's try to reverse that
-    // c_x = gid.x / M and rounded to lower int? // changes slower
-    // c_y = gid.x % K // changes faster
-    if (gid.x < params.M * params.K) {
-        var c_x: u32 = gid.x / params.K;
-        var c_y: u32 = gid.x % params.K; 
+// time for 2D lfg!!
+// workgroup_size is 4, 4
+// gid.x in range [0, 4) and gid.y in range [0, 4)
+// now let's say A(M,N) * B(N,K) = C(M,K
+// M is 30
+// N is 20
+// K is 10
+// total output elements: M * K = 30 * 10 = 300
+// so I need to run at least 300 threads to compute the output (I don't do any tiling etc, YET)
+// I need to compute dispatch size based on both workgroup_size and M and K
+// for simplicity, I start with 1D dispatch
+// M * K = 300, each workgroup has 4 * 4 = 16 elements
+// so we need to dispatch as many workgroups to barely cover the 300 output elements
+// and ideally dispatch not more elements
+// often might be impossible because total output elements and workgroup_size
+// divison might give other value than 0, but I should strive to get as close to 300 output element
+// as possible
+// so, since 1D dispatch for now, then: 
+// wgx = M * K / wix * wiy = 300 / 16 = 18.75
+// I can't ofc dispatch 0.75 of a workgroup
+// if I dispatch 18 workgroups, then I get 288 threads
+// so I need to round this number up to nearest int, so wgx = 19
+// 16 * 19 = 304, so just 4 threads will be dropped. Ok I guess?
+// so 19 workgroups of 16 threads (in 2D) will be dispatched
+// ok, so how do I compute index of C that current thread should compute?
+// let's try global_invocation_index
+// and now say gid.x is 4, then how do I pick correct row of A and col of B to compute C[gid.x]?
+// I know M is 3 and K is 4
+// I want to compute coordinates of c[c_x, c_y]. c_x rows, c_y cols.
+// row major, so c_y changes faster - by 1 - and c_x changes every K elements
+// I computed by hand that C[4] = c[1, 0], so let's try to reverse that
+// c_x = gid.x / M and rounded to lower int? // changes slower
+// c_y = gid.x % K // changes faster
+
+const wsx: u32 = 4u;
+const wsy: u32 = 4u;
+const wsz: u32 = 1u;
+
+@compute @workgroup_size(wsx, wsy)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_index) li: u32,
+    @builtin(num_workgroups) nwg: vec3<u32>    
+) {
+    // workgroups are still dispatched in 1D, so wid can be simply used as wid.x
+    let global_invocation_index: u32 = wid.x * (wsx * wsy * wsz) + li;
+
+    if (global_invocation_index < params.M * params.K) {
+        var c_x: u32 = global_invocation_index / params.K;
+        var c_y: u32 = global_invocation_index % params.K; 
         // now I know c[c_x, c_y] and I can iterate over c_x..c_x+N (?) and c_y..c_y+N (not sure if correct?)
         var output: f32 = 0.0;
         for (var i: u32 = 0; i < params.N; i = i + 1u) {
             output = output + A[c_x*params.N + i] * B[i * params.K + c_y]; // + A[c_x + i] * B[c_y + i];
         }
-        // I can still use gid.x because of 1D, but soon I'll need to switch to something else
-        // perhaps "missing builtin" global_invocation_index?
-        C[gid.x] = output; 
+        C[global_invocation_index] = output; 
     }
 }
