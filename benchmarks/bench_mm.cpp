@@ -57,7 +57,6 @@ static void BM_MM(benchmark::State &state)
     auto b = make_webgpu_tensor({N, K});
     auto out_strides = make_contiguous_strides({M, K});
     auto out = at::empty_strided({M, K}, out_strides, at::TensorOptions().dtype(at::kFloat).device(c10::Device(c10::kPrivateUse1)));
-
     // Warmups to exclude lazy init / pipeline compilation from measured iterations.
     for (int i = 0; i < 2; ++i)
     {
@@ -87,12 +86,14 @@ static void BM_MM(benchmark::State &state)
 
 // Register a few common shapes; tweak as needed.
 BENCHMARK(BM_MM)
+    ->Args({32, 32, 32})
+    ->Args({64, 64, 64})
     ->Args({128, 128, 128})
     ->Args({256, 256, 256})
-    ->Args({512, 512, 512})
-    ->Args({1024, 1024, 1024})
-    ->Args({2048, 2048, 2048})
-    ->Args({4096, 4096, 4096})
+    // ->Args({512, 512, 512})
+    // ->Args({1024, 1024, 1024})
+    // ->Args({2048, 2048, 2048})
+    // ->Args({4096, 4096, 4096})
     ->UseManualTime()
     ->Iterations(2)
     ->Unit(benchmark::kMillisecond);
