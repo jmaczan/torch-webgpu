@@ -104,8 +104,8 @@ var<uniform> params: Params;
 // c_x = gid.x / M and rounded to lower int? // changes slower
 // c_y = gid.x % K // changes faster
 
-const wsx: u32 = 4u;
-const wsy: u32 = 4u;
+const wsx: u32 = 16u;
+const wsy: u32 = 16u;
 const wsz: u32 = 1u;
 
 @compute @workgroup_size(wsx, wsy)

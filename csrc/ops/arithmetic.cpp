@@ -230,10 +230,7 @@ namespace torch_webgpu
 
             const uint32_t x_group_size = ceil_div_u32(params.K, TILE_X);
             const uint32_t y_group_size = ceil_div_u32(params.M, TILE_Y);
-            const uint32_t wsx = 4;
-            const uint32_t wsy = 4;
-            const uint32_t wgx = ceil_div_u32(params.M, wsx);
-            const uint32_t wgy = ceil_div_u32(params.K, wsy);
+
             // just a thought - if both M/wsx and K/wsy get ceiled, then we get too many threads, that's clear
             // but what if we are able to (auto)tune the organization of workgroups, based on
             // which configuration we waste less threads?
@@ -251,7 +248,12 @@ namespace torch_webgpu
             // and it's very possible that small changes in initial values affect computed performance
             // so to get reliable conclusions, we need to compute a lot
             // TODO: continue this analysis
-            pass_encoder.DispatchWorkgroups(wgx, wsy);
+            const uint32_t wsx = 16;
+            const uint32_t wsy = 16;
+            const uint32_t wgx = ceil_div_u32(params.M, wsx);
+            const uint32_t wgy = ceil_div_u32(params.K, wsy);
+
+            pass_encoder.DispatchWorkgroups(wgx, wgy);
             pass_encoder.End();
 
             wgpu::CommandBuffer command_buffer = encoder.Finish();
