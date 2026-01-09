@@ -34,6 +34,8 @@ namespace torch_webgpu
 
         void mm_kernel_webgpu(const at::Tensor &self, const at::Tensor &mat2, at::Tensor &out)
         {
+            // TODO: big perf improvement will be to cache many of reusable parts
+            // like shader_module, bind_group_layout, pipeline_layout, pipeline
             TORCH_CHECK(self.device().type() == c10::DeviceType::PrivateUse1);
             TORCH_CHECK(mat2.device().type() == c10::DeviceType::PrivateUse1);
             TORCH_CHECK(out.device().type() == c10::DeviceType::PrivateUse1);
