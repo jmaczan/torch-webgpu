@@ -3,7 +3,7 @@
 #include <webgpu/webgpu_cpp.h>
 #include "utils/string.h"
 #include "core/webgpu_context.h"
-#include "unary.h"
+#include "scalar_unary.h"
 
 namespace torch_webgpu
 {
@@ -20,17 +20,18 @@ namespace torch_webgpu
                 }
             };
 
-            const std::string unary_shader_template = R"wgsl(
+            const std::string scalar_unary_shader_template = R"wgsl(
 const MAX_DIMS: u32 = 8u;
 
 struct Params {
     length: u32,
     ndim: u32,
-    _pad: u32,
-
+    scalar_val: f32,
     out_offset: u32,
     self_offset: u32,
+    _pad: u32,
     _pad2: u32,
+    _pad3: u32,
 
     out_strides: array<u32, MAX_DIMS>,
     self_strides: array<u32, MAX_DIMS>,
@@ -73,69 +74,39 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     idx_out += params.out_offset;
     idx_self += params.self_offset;
 
-    outBuffer[idx_out] = __UNARY_OP__;
+    outBuffer[idx_out] = __SCALAR_UNARY_OP__;
 }
 )wgsl";
         }
 
-        std::string get_unary_shader(UnaryOp unary_op)
+        std::string get_scalar_unary_shader(ScalarUnaryOp op)
         {
-            std::string shader = unary_shader_template;
+            std::string shader = scalar_unary_shader_template;
             std::string op_impl;
-            switch (unary_op)
+            switch (op)
             {
-            case UnaryOp::Copy:
-                op_impl = "selfBuffer[idx_self]";
-                break;
-            case UnaryOp::ReLU:
-                op_impl = "max(0.0, selfBuffer[idx_self])";
-                break;
-            case UnaryOp::GeLU:
-                op_impl = "0.5*selfBuffer[idx_self]*(1 + tanh(sqrt(2/radians(180)) * (selfBuffer[idx_self] + 0.044715 * pow(selfBuffer[idx_self], 3))))";
-                break;
-            case UnaryOp::SiLU:
-                op_impl = "selfBuffer[idx_self] * ( 1 / (1 + exp(-1 * selfBuffer[idx_self])))";
-                break;
-            case UnaryOp::Cos:
-                op_impl = "cos(selfBuffer[idx_self])";
-                break;
-            case UnaryOp::Sin:
-                op_impl = "sin(selfBuffer[idx_self])";
-                break;
-            case UnaryOp::Rsqrt:
-                op_impl = "inverseSqrt(selfBuffer[idx_self])";
-                break;
-            case UnaryOp::Neg:
-                op_impl = "-selfBuffer[idx_self]";
-                break;
-            case UnaryOp::Exp:
-                op_impl = "exp(selfBuffer[idx_self])";
-                break;
-            case UnaryOp::Tanh:
-                op_impl = "tanh(selfBuffer[idx_self])";
-                break;
-            case UnaryOp::Abs:
-                op_impl = "abs(selfBuffer[idx_self])";
+            case ScalarUnaryOp::Pow:
+                op_impl = "pow(selfBuffer[idx_self], params.scalar_val)";
                 break;
             default:
-                TORCH_CHECK(false, "Unsupported unary op, can't produce a WGSL shader");
+                TORCH_CHECK(false, "Unsupported scalar unary op, can't produce a WGSL shader");
             }
 
-            replace_string(shader, "__UNARY_OP__", op_impl);
+            replace_string(shader, "__SCALAR_UNARY_OP__", op_impl);
 
             return shader;
         }
 
-        UnaryKernel &get_unary_kernel(UnaryOp unary_op)
+        ScalarUnaryKernel &get_scalar_unary_kernel(ScalarUnaryOp op)
         {
-            static std::unordered_map<UnaryOp, UnaryKernel, CacheHash> kernel_cache;
-            auto cached_kernel = kernel_cache.find(unary_op);
+            static std::unordered_map<ScalarUnaryOp, ScalarUnaryKernel, CacheHash> kernel_cache;
+            auto cached_kernel = kernel_cache.find(op);
             if (cached_kernel != kernel_cache.end())
             {
                 return cached_kernel->second;
             }
 
-            std::string shader = get_unary_shader(unary_op);
+            std::string shader = get_scalar_unary_shader(op);
 
             wgpu::ShaderSourceWGSL shader_source{
                 wgpu::ShaderSourceWGSL::Init{
@@ -145,7 +116,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
             wgpu::ShaderModuleDescriptor shader_descriptor{};
             shader_descriptor.nextInChain = &shader_source;
-            shader_descriptor.label = "Unary kernel";
+            shader_descriptor.label = "Scalar Unary kernel";
             core::WebGPUContext &ctx = core::getWebGPUContext();
             wgpu::ShaderModule shader_module = ctx.getDevice().CreateShaderModule(&shader_descriptor);
 
@@ -187,10 +158,55 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             pipeline_descriptor.compute.entryPoint = wgpu::StringView{"main", 4};
 
             wgpu::ComputePipeline pipeline = ctx.getDevice().CreateComputePipeline(&pipeline_descriptor);
-            auto [iter, inserted] = kernel_cache.emplace(unary_op, UnaryKernel{bind_group_layout, pipeline});
+            auto [iter, inserted] = kernel_cache.emplace(op, ScalarUnaryKernel{bind_group_layout, pipeline});
             TORCH_CHECK(inserted, "Failed to insert a kernel to the cache");
             return iter->second;
         }
 
+        // Pow implementation
+        void pow_kernel_webgpu(at::TensorIteratorBase &iter, float exponent)
+        {
+            scalar_unary_kernel<ScalarUnaryOp::Pow>(iter, exponent);
+        }
+
+        at::Tensor pow_tensor_scalar(const at::Tensor &self, const at::Scalar &exponent)
+        {
+            at::Tensor out = at::empty_like(self, self.options().device(at::DeviceType::PrivateUse1));
+
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(out);
+            config.add_input(self);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(true);
+            auto iter = config.build();
+
+            pow_kernel_webgpu(iter, exponent.to<float>());
+
+            return out;
+        }
+
+        at::Tensor &pow_tensor_scalar_out(const at::Tensor &self, const at::Scalar &exponent, at::Tensor &out)
+        {
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(out);
+            config.add_input(self);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(true);
+            auto iter = config.build();
+
+            pow_kernel_webgpu(iter, exponent.to<float>());
+
+            return out;
+        }
+    }
+
+    TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
+    {
+        m.impl("pow.Tensor_Scalar", TORCH_FN(ops::pow_tensor_scalar));
+        m.impl("pow.Tensor_Scalar_out", TORCH_FN(ops::pow_tensor_scalar_out));
     }
 }

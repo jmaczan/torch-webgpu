@@ -10,37 +10,27 @@ namespace torch_webgpu
 {
     namespace ops
     {
-        struct UnaryKernel
+        struct ScalarUnaryKernel
         {
             wgpu::BindGroupLayout bind_group_layout;
             wgpu::ComputePipeline pipeline;
         };
 
-        enum class UnaryOp
+        enum class ScalarUnaryOp
         {
-            Copy,
-            ReLU,
-            GeLU,
-            SiLU,
-            Cos,
-            Sin,
-            Rsqrt,
-            Neg,
-            Exp,
-            Tanh,
-            Abs
+            Pow
         };
 
-        std::string get_unary_shader(UnaryOp unary_op);
-        UnaryKernel &get_unary_kernel(UnaryOp unary_op);
+        std::string get_scalar_unary_shader(ScalarUnaryOp op);
+        ScalarUnaryKernel &get_scalar_unary_kernel(ScalarUnaryOp op);
 
-        template <UnaryOp Op>
-        inline void unary_kernel(at::TensorIteratorBase &iter)
+        template <ScalarUnaryOp Op>
+        inline void scalar_unary_kernel(at::TensorIteratorBase &iter, float scalar_val)
         {
             TORCH_CHECK(iter.ntensors() == 2);
             TORCH_CHECK(iter.common_dtype() == at::ScalarType::Float);
             TORCH_CHECK(iter.device_type() == c10::DeviceType::PrivateUse1);
-            UnaryKernel &kernel = get_unary_kernel(Op);
+            ScalarUnaryKernel &kernel = get_scalar_unary_kernel(Op);
             auto out = iter.tensor(0);
             auto self = iter.tensor(1);
             auto ndim = static_cast<uint32_t>(iter.ndim());
@@ -96,11 +86,12 @@ namespace torch_webgpu
             {
                 uint32_t length;
                 uint32_t ndim;
-                uint32_t _pad; // allegedly, it's a padding we need for webgpu
-
+                float scalar_val;
                 uint32_t out_offset;
                 uint32_t self_offset;
+                uint32_t _pad;
                 uint32_t _pad2;
+                uint32_t _pad3;
 
                 uint32_t out_strides[MAX_DIMS];
                 uint32_t self_strides[MAX_DIMS];
@@ -110,11 +101,13 @@ namespace torch_webgpu
             Params params{};
             params.length = length;
             params.ndim = ndim;
-            params._pad = 0;
+            params.scalar_val = scalar_val;
 
             params.out_offset = static_cast<uint32_t>(out_offset);
             params.self_offset = static_cast<uint32_t>(self_offset);
+            params._pad = 0;
             params._pad2 = 0;
+            params._pad3 = 0;
 
             for (uint32_t d = 0; d < MAX_DIMS; ++d)
             {
