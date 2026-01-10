@@ -32,6 +32,16 @@ namespace torch_webgpu
             run_binary_kernel<BinaryOp::Mul>(iter);
         }
 
+        void sub_kernel_webgpu(::at::TensorIteratorBase &iter, const ::at::Scalar &alpha)
+        {
+            run_binary_kernel<BinaryOp::Sub>(iter, alpha);
+        }
+
+        void div_kernel_webgpu(::at::TensorIteratorBase &iter)
+        {
+            run_binary_kernel<BinaryOp::Div>(iter);
+        }
+
         void mm_kernel_webgpu(const at::Tensor &self, const at::Tensor &mat2, at::Tensor &out)
         {
             // TODO: big perf improvement will be to cache many of reusable parts
@@ -312,6 +322,47 @@ namespace torch_webgpu
 
             return out;
         }
+
+        at::Tensor &sub_out_webgpu(
+            const at::Tensor &self,
+            const at::Tensor &other,
+            const at::Scalar &alpha,
+            at::Tensor &out)
+        {
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(out);
+            config.add_input(self);
+            config.add_input(other);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(false);
+            auto iter = config.build();
+
+            sub_kernel_webgpu(iter, alpha);
+
+            return out;
+        }
+
+        at::Tensor &div_out_webgpu(
+            const at::Tensor &self,
+            const at::Tensor &other,
+            at::Tensor &out)
+        {
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(out);
+            config.add_input(self);
+            config.add_input(other);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(false);
+            auto iter = config.build();
+
+            div_kernel_webgpu(iter);
+
+            return out;
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -319,6 +370,8 @@ namespace torch_webgpu
         m.impl("add.out", TORCH_FN(ops::add_out_webgpu));
         m.impl("mul.out", TORCH_FN(ops::mul_out_webgpu));
         m.impl("mm.out", TORCH_FN(ops::mm_out_webgpu));
+        m.impl("sub.out", TORCH_FN(ops::sub_out_webgpu));
+        m.impl("div.out", TORCH_FN(ops::div_out_webgpu));
     }
 }
 
@@ -338,5 +391,17 @@ namespace at
             torch_webgpu::ops::mul_kernel_webgpu(iter);
         }
         REGISTER_PRIVATEUSE1_DISPATCH(mul_stub, &mul_kernel_webgpu);
+
+        void sub_kernel_webgpu(TensorIteratorBase &iter, const Scalar &alpha)
+        {
+            torch_webgpu::ops::sub_kernel_webgpu(iter, alpha);
+        }
+        REGISTER_PRIVATEUSE1_DISPATCH(sub_stub, &sub_kernel_webgpu);
+
+        void div_true_kernel_webgpu(TensorIteratorBase &iter)
+        {
+            torch_webgpu::ops::div_kernel_webgpu(iter);
+        }
+        REGISTER_PRIVATEUSE1_DISPATCH(div_true_stub, &div_true_kernel_webgpu);
     }
 }

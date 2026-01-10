@@ -20,6 +20,8 @@ namespace torch_webgpu
         {
             Add,
             Mul,
+            Sub,
+            Div,
             FusedAddRelu
         };
 

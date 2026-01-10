@@ -289,6 +289,327 @@ namespace torch_webgpu
             out.unsafeGetTensorImpl()->set_sizes_and_strides(size, stride);
             return out;
         }
+
+        // Transpose - swap two dimensions
+        at::Tensor transpose(const at::Tensor &self, int64_t dim0, int64_t dim1)
+        {
+            auto ndim = self.dim();
+            if (dim0 < 0)
+                dim0 += ndim;
+            if (dim1 < 0)
+                dim1 += ndim;
+
+            TORCH_CHECK(dim0 >= 0 && dim0 < ndim, "dim0 out of range");
+            TORCH_CHECK(dim1 >= 0 && dim1 < ndim, "dim1 out of range");
+
+            if (dim0 == dim1)
+            {
+                return self;
+            }
+
+            std::vector<int64_t> new_sizes(self.sizes().begin(), self.sizes().end());
+            std::vector<int64_t> new_strides(self.strides().begin(), self.strides().end());
+
+            std::swap(new_sizes[dim0], new_sizes[dim1]);
+            std::swap(new_strides[dim0], new_strides[dim1]);
+
+            return at::as_strided(self, new_sizes, new_strides, self.storage_offset());
+        }
+
+        // Permute - rearrange dimensions
+        at::Tensor permute(const at::Tensor &self, at::IntArrayRef dims)
+        {
+            auto ndim = self.dim();
+            TORCH_CHECK(dims.size() == static_cast<size_t>(ndim), "permute: dims size must match tensor dimensions");
+
+            std::vector<bool> seen(ndim, false);
+            for (auto d : dims)
+            {
+                auto dim = d < 0 ? d + ndim : d;
+                TORCH_CHECK(dim >= 0 && dim < ndim, "permute: dimension out of range");
+                TORCH_CHECK(!seen[dim], "permute: duplicate dimension");
+                seen[dim] = true;
+            }
+
+            std::vector<int64_t> new_sizes(ndim);
+            std::vector<int64_t> new_strides(ndim);
+
+            for (int64_t i = 0; i < ndim; ++i)
+            {
+                auto old_dim = dims[i] < 0 ? dims[i] + ndim : dims[i];
+                new_sizes[i] = self.size(old_dim);
+                new_strides[i] = self.stride(old_dim);
+            }
+
+            return at::as_strided(self, new_sizes, new_strides, self.storage_offset());
+        }
+
+        // Unsqueeze - add dimension of size 1
+        at::Tensor unsqueeze(const at::Tensor &self, int64_t dim)
+        {
+            auto ndim = self.dim();
+            if (dim < 0)
+                dim += ndim + 1;
+
+            TORCH_CHECK(dim >= 0 && dim <= ndim, "unsqueeze: dimension out of range");
+
+            std::vector<int64_t> new_sizes;
+            std::vector<int64_t> new_strides;
+
+            for (int64_t i = 0; i < ndim + 1; ++i)
+            {
+                if (i == dim)
+                {
+                    new_sizes.push_back(1);
+                    // Stride for size-1 dimension can be anything, use 1 for simplicity
+                    new_strides.push_back(i < ndim ? self.stride(i) : 1);
+                }
+                else
+                {
+                    auto old_dim = i < dim ? i : i - 1;
+                    new_sizes.push_back(self.size(old_dim));
+                    new_strides.push_back(self.stride(old_dim));
+                }
+            }
+
+            return at::as_strided(self, new_sizes, new_strides, self.storage_offset());
+        }
+
+        // Squeeze - remove dimensions of size 1
+        at::Tensor squeeze(const at::Tensor &self)
+        {
+            std::vector<int64_t> new_sizes;
+            std::vector<int64_t> new_strides;
+
+            for (int64_t i = 0; i < self.dim(); ++i)
+            {
+                if (self.size(i) != 1)
+                {
+                    new_sizes.push_back(self.size(i));
+                    new_strides.push_back(self.stride(i));
+                }
+            }
+
+            if (new_sizes.empty())
+            {
+                new_sizes.push_back(1);
+                new_strides.push_back(1);
+            }
+
+            return at::as_strided(self, new_sizes, new_strides, self.storage_offset());
+        }
+
+        at::Tensor squeeze_dim(const at::Tensor &self, int64_t dim)
+        {
+            auto ndim = self.dim();
+            if (dim < 0)
+                dim += ndim;
+
+            TORCH_CHECK(dim >= 0 && dim < ndim, "squeeze: dimension out of range");
+
+            if (self.size(dim) != 1)
+            {
+                return self;
+            }
+
+            std::vector<int64_t> new_sizes;
+            std::vector<int64_t> new_strides;
+
+            for (int64_t i = 0; i < ndim; ++i)
+            {
+                if (i != dim)
+                {
+                    new_sizes.push_back(self.size(i));
+                    new_strides.push_back(self.stride(i));
+                }
+            }
+
+            if (new_sizes.empty())
+            {
+                new_sizes.push_back(1);
+                new_strides.push_back(1);
+            }
+
+            return at::as_strided(self, new_sizes, new_strides, self.storage_offset());
+        }
+
+        // Expand - broadcast tensor to new shape
+        at::Tensor expand(const at::Tensor &self, c10::IntArrayRef size, bool implicit)
+        {
+            auto ndim = static_cast<int64_t>(size.size());
+            auto self_ndim = self.dim();
+
+            TORCH_CHECK(ndim >= self_ndim, "expand: target dimensions must be at least as large as input dimensions");
+
+            std::vector<int64_t> new_sizes(ndim);
+            std::vector<int64_t> new_strides(ndim);
+
+            auto dim_offset = ndim - self_ndim;
+
+            for (int64_t i = 0; i < ndim; ++i)
+            {
+                if (i < dim_offset)
+                {
+                    // New leading dimensions
+                    TORCH_CHECK(size[i] >= 0, "expand: size cannot be negative");
+                    new_sizes[i] = size[i];
+                    new_strides[i] = 0; // Broadcasting stride
+                }
+                else
+                {
+                    auto self_dim = i - dim_offset;
+                    auto self_size = self.size(self_dim);
+                    auto target_size = size[i];
+
+                    if (target_size == -1)
+                    {
+                        // Keep original size
+                        new_sizes[i] = self_size;
+                        new_strides[i] = self.stride(self_dim);
+                    }
+                    else if (self_size == 1)
+                    {
+                        // Can broadcast
+                        new_sizes[i] = target_size;
+                        new_strides[i] = 0; // Broadcasting stride
+                    }
+                    else if (self_size == target_size)
+                    {
+                        // Same size, no broadcast
+                        new_sizes[i] = self_size;
+                        new_strides[i] = self.stride(self_dim);
+                    }
+                    else
+                    {
+                        TORCH_CHECK(false, "expand: sizes must be compatible (", self_size, " vs ", target_size, ")");
+                    }
+                }
+            }
+
+            at::Tensor out = at::detail::make_tensor<at::TensorImpl>(c10::TensorImpl::VIEW, c10::Storage(self.storage()), self.key_set(), self.dtype());
+            out.unsafeGetTensorImpl()->set_storage_offset(self.storage_offset());
+            out.unsafeGetTensorImpl()->set_sizes_and_strides(new_sizes, new_strides);
+            return out;
+        }
+
+        // Contiguous - make tensor contiguous in memory (may copy)
+        at::Tensor contiguous(const at::Tensor &self, c10::MemoryFormat memory_format)
+        {
+            if (self.is_contiguous(memory_format))
+            {
+                return self;
+            }
+
+            // Need to make a copy
+            at::Tensor out = at::empty(self.sizes(), self.options());
+            out.copy_(self);
+            return out;
+        }
+
+        // Clone - create a copy of the tensor
+        at::Tensor clone(const at::Tensor &self, c10::optional<c10::MemoryFormat> memory_format)
+        {
+            auto format = memory_format.value_or(c10::MemoryFormat::Contiguous);
+            at::Tensor out = at::empty(self.sizes(), self.options(), format);
+            out.copy_(self);
+            return out;
+        }
+
+        // Slice - select a range along a dimension
+        at::Tensor slice(const at::Tensor &self, int64_t dim, c10::optional<c10::SymInt> start_opt, c10::optional<c10::SymInt> end_opt, c10::SymInt step)
+        {
+            auto ndim = self.dim();
+            if (dim < 0)
+                dim += ndim;
+
+            TORCH_CHECK(dim >= 0 && dim < ndim, "slice: dimension out of range");
+
+            auto dim_size = self.size(dim);
+            auto step_val = step.expect_int();
+            TORCH_CHECK(step_val > 0, "slice: step must be positive");
+
+            int64_t start = start_opt.has_value() ? start_opt->expect_int() : 0;
+            int64_t end = end_opt.has_value() ? end_opt->expect_int() : dim_size;
+
+            if (start < 0)
+                start += dim_size;
+            if (end < 0)
+                end += dim_size;
+
+            start = std::max<int64_t>(0, std::min(start, dim_size));
+            end = std::max<int64_t>(0, std::min(end, dim_size));
+
+            if (start >= end)
+            {
+                // Empty result
+                std::vector<int64_t> new_sizes(self.sizes().begin(), self.sizes().end());
+                new_sizes[dim] = 0;
+                return at::empty(new_sizes, self.options());
+            }
+
+            auto new_size = (end - start + step_val - 1) / step_val;
+
+            std::vector<int64_t> new_sizes(self.sizes().begin(), self.sizes().end());
+            std::vector<int64_t> new_strides(self.strides().begin(), self.strides().end());
+
+            new_sizes[dim] = new_size;
+            new_strides[dim] = self.stride(dim) * step_val;
+
+            auto new_offset = self.storage_offset() + start * self.stride(dim);
+
+            return at::as_strided(self, new_sizes, new_strides, new_offset);
+        }
+
+        // Select - select a single index along a dimension (reduces dimension)
+        at::Tensor select(const at::Tensor &self, int64_t dim, c10::SymInt index_sym)
+        {
+            auto ndim = self.dim();
+            if (dim < 0)
+                dim += ndim;
+
+            TORCH_CHECK(dim >= 0 && dim < ndim, "select: dimension out of range");
+
+            auto index = index_sym.expect_int();
+            auto dim_size = self.size(dim);
+
+            if (index < 0)
+                index += dim_size;
+
+            TORCH_CHECK(index >= 0 && index < dim_size, "select: index out of range");
+
+            std::vector<int64_t> new_sizes;
+            std::vector<int64_t> new_strides;
+
+            for (int64_t i = 0; i < ndim; ++i)
+            {
+                if (i != dim)
+                {
+                    new_sizes.push_back(self.size(i));
+                    new_strides.push_back(self.stride(i));
+                }
+            }
+
+            auto new_offset = self.storage_offset() + index * self.stride(dim);
+
+            if (new_sizes.empty())
+            {
+                // 0-dim tensor
+                return at::as_strided(self, {}, {}, new_offset);
+            }
+
+            return at::as_strided(self, new_sizes, new_strides, new_offset);
+        }
+
+        // T - transpose for 2D tensors (alias for transpose(0, 1))
+        at::Tensor t(const at::Tensor &self)
+        {
+            TORCH_CHECK(self.dim() <= 2, "t() expects a tensor with <= 2 dimensions, but got ", self.dim());
+            if (self.dim() < 2)
+            {
+                return self;
+            }
+            return torch_webgpu::ops::transpose(self, 0, 1);
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -299,6 +620,17 @@ namespace torch_webgpu
         m.impl("empty.memory_format", TORCH_FN(ops::empty_memory_format));
         m.impl("empty_strided", TORCH_FN(ops::empty_strided));
         m.impl("as_strided", TORCH_FN(ops::as_strided));
+        m.impl("transpose.int", TORCH_FN(ops::transpose));
+        m.impl("permute", TORCH_FN(ops::permute));
+        m.impl("unsqueeze", TORCH_FN(ops::unsqueeze));
+        m.impl("squeeze", TORCH_FN(ops::squeeze));
+        m.impl("squeeze.dim", TORCH_FN(ops::squeeze_dim));
+        m.impl("expand", TORCH_FN(ops::expand));
+        m.impl("contiguous", TORCH_FN(ops::contiguous));
+        m.impl("clone", TORCH_FN(ops::clone));
+        m.impl("slice.Tensor", TORCH_FN(ops::slice));
+        m.impl("select.int", TORCH_FN(ops::select));
+        m.impl("t", TORCH_FN(ops::t));
     }
 
     TORCH_LIBRARY_IMPL(aten, AutogradPrivateUse1, m)
