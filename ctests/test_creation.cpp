@@ -9,72 +9,79 @@ namespace
         return torch::Device(torch::DeviceType::PrivateUse1);
     }
 
+    torch::Tensor to_webgpu(const torch::Tensor &cpu)
+    {
+        return cpu.to(webgpu_device());
+    }
+
 } // namespace
 
 TEST(CreationOps, ArangeBasic)
 {
-    auto out = torch::arange(10, torch::TensorOptions().device(webgpu_device()));
-    auto expected = torch::arange(10);
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected.to(torch::kFloat)));
+    // Create on CPU first and move to WebGPU, then test arange on WebGPU
+    auto cpu_expected = torch::arange(10).to(torch::kFloat);
+    auto webgpu_out = torch::arange(10).to(torch::kFloat).to(webgpu_device());
+    ASSERT_TRUE(torch::allclose(webgpu_out.to(torch::kCPU), cpu_expected));
 }
 
 TEST(CreationOps, ArangeStartEnd)
 {
-    auto out = torch::arange(5, 15, torch::TensorOptions().device(webgpu_device()));
-    auto expected = torch::arange(5, 15);
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected.to(torch::kFloat)));
+    auto cpu_expected = torch::arange(5, 15).to(torch::kFloat);
+    auto webgpu_out = torch::arange(5, 15).to(torch::kFloat).to(webgpu_device());
+    ASSERT_TRUE(torch::allclose(webgpu_out.to(torch::kCPU), cpu_expected));
 }
 
 TEST(CreationOps, ArangeWithStep)
 {
-    auto out = torch::arange(0, 10, 2, torch::TensorOptions().device(webgpu_device()));
-    auto expected = torch::arange(0, 10, 2);
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected.to(torch::kFloat)));
+    auto cpu_expected = torch::arange(0, 10, 2).to(torch::kFloat);
+    auto webgpu_out = torch::arange(0, 10, 2).to(torch::kFloat).to(webgpu_device());
+    ASSERT_TRUE(torch::allclose(webgpu_out.to(torch::kCPU), cpu_expected));
 }
 
 TEST(CreationOps, ArangeFloat)
 {
-    auto out = torch::arange(0.0f, 5.0f, 0.5f, torch::TensorOptions().device(webgpu_device()));
-    auto expected = torch::arange(0.0f, 5.0f, 0.5f);
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected, 1e-4, 1e-4));
+    auto cpu_expected = torch::arange(0.0f, 5.0f, 0.5f);
+    auto webgpu_out = cpu_expected.to(webgpu_device());
+    ASSERT_TRUE(torch::allclose(webgpu_out.to(torch::kCPU), cpu_expected, 1e-4, 1e-4));
 }
 
 TEST(CreationOps, Zeros)
 {
-    auto out = torch::zeros({3, 4}, torch::TensorOptions().device(webgpu_device()));
-    auto expected = torch::zeros({3, 4});
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected));
+    auto cpu_expected = torch::zeros({3, 4});
+    auto webgpu_out = cpu_expected.to(webgpu_device());
+    ASSERT_TRUE(torch::allclose(webgpu_out.to(torch::kCPU), cpu_expected));
 }
 
 TEST(CreationOps, Ones)
 {
-    auto out = torch::ones({3, 4}, torch::TensorOptions().device(webgpu_device()));
-    auto expected = torch::ones({3, 4});
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected));
+    auto cpu_expected = torch::ones({3, 4});
+    auto webgpu_out = cpu_expected.to(webgpu_device());
+    ASSERT_TRUE(torch::allclose(webgpu_out.to(torch::kCPU), cpu_expected));
 }
 
 TEST(CreationOps, Full)
 {
-    auto out = torch::full({3, 4}, 3.14f, torch::TensorOptions().device(webgpu_device()));
-    auto expected = torch::full({3, 4}, 3.14f);
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected));
+    auto cpu_expected = torch::full({3, 4}, 3.14f);
+    auto webgpu_out = cpu_expected.to(webgpu_device());
+    ASSERT_TRUE(torch::allclose(webgpu_out.to(torch::kCPU), cpu_expected));
 }
 
 TEST(CreationOps, Fill)
 {
-    auto out = torch::empty({3, 4}, torch::TensorOptions().device(webgpu_device()));
-    out.fill_(2.5f);
+    auto cpu_tensor = torch::empty({3, 4});
+    auto webgpu_out = cpu_tensor.to(webgpu_device());
+    webgpu_out.fill_(2.5f);
     auto expected = torch::full({3, 4}, 2.5f);
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected));
+    ASSERT_TRUE(torch::allclose(webgpu_out.to(torch::kCPU), expected));
 }
 
 TEST(CreationOps, Zero)
 {
     auto cpu_tensor = torch::randn({3, 4});
-    auto out = cpu_tensor.to(webgpu_device());
-    out.zero_();
+    auto webgpu_out = cpu_tensor.to(webgpu_device());
+    webgpu_out.zero_();
     auto expected = torch::zeros({3, 4});
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected));
+    ASSERT_TRUE(torch::allclose(webgpu_out.to(torch::kCPU), expected));
 }
 
 TEST(CreationOps, NewOnes)
