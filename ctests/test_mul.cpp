@@ -28,6 +28,6 @@ TEST(ArithmeticOps, MulBasic)
     ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected));
 
     auto out_buf = torch::zeros_like(a);
-    torch::mul_out(a, b, out_buf);
+    torch::mul_out(out_buf, a, b);
     ASSERT_TRUE(torch::allclose(out_buf.to(torch::kCPU), expected));
 }

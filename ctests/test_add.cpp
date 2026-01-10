@@ -32,6 +32,6 @@ TEST(ArithmeticOps, AddBasicAndAlpha)
     ASSERT_TRUE(torch::allclose(out_alpha.to(torch::kCPU), expected_alpha));
 
     auto out_buf = torch::zeros_like(a);
-    torch::add_out(a, b, out_buf);
+    torch::add_out(out_buf, a, b);
     ASSERT_TRUE(torch::allclose(out_buf.to(torch::kCPU), expected));
 }

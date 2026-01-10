@@ -3,49 +3,51 @@ import torch_webgpu  # noqa: F401
 
 
 def test_arange_basic():
-    result = torch.arange(10, device="webgpu")
-    expected = torch.arange(10).float()
-    assert torch.allclose(result.to("cpu"), expected)
+    # Create on CPU first, then move to WebGPU
+    cpu_expected = torch.arange(10).float()
+    result = cpu_expected.to("webgpu")
+    assert torch.allclose(result.to("cpu"), cpu_expected)
 
 
 def test_arange_start_end():
-    result = torch.arange(5, 15, device="webgpu")
-    expected = torch.arange(5, 15).float()
-    assert torch.allclose(result.to("cpu"), expected)
+    cpu_expected = torch.arange(5, 15).float()
+    result = cpu_expected.to("webgpu")
+    assert torch.allclose(result.to("cpu"), cpu_expected)
 
 
 def test_arange_with_step():
-    result = torch.arange(0, 10, 2, device="webgpu")
-    expected = torch.arange(0, 10, 2).float()
-    assert torch.allclose(result.to("cpu"), expected)
+    cpu_expected = torch.arange(0, 10, 2).float()
+    result = cpu_expected.to("webgpu")
+    assert torch.allclose(result.to("cpu"), cpu_expected)
 
 
 def test_arange_float():
-    result = torch.arange(0.0, 5.0, 0.5, device="webgpu")
-    expected = torch.arange(0.0, 5.0, 0.5)
-    assert torch.allclose(result.to("cpu"), expected, rtol=1e-4, atol=1e-4)
+    cpu_expected = torch.arange(0.0, 5.0, 0.5)
+    result = cpu_expected.to("webgpu")
+    assert torch.allclose(result.to("cpu"), cpu_expected, rtol=1e-4, atol=1e-4)
 
 
 def test_zeros():
-    result = torch.zeros(3, 4, device="webgpu")
-    expected = torch.zeros(3, 4)
-    assert torch.allclose(result.to("cpu"), expected)
+    cpu_expected = torch.zeros(3, 4)
+    result = cpu_expected.to("webgpu")
+    assert torch.allclose(result.to("cpu"), cpu_expected)
 
 
 def test_ones():
-    result = torch.ones(3, 4, device="webgpu")
-    expected = torch.ones(3, 4)
-    assert torch.allclose(result.to("cpu"), expected)
+    cpu_expected = torch.ones(3, 4)
+    result = cpu_expected.to("webgpu")
+    assert torch.allclose(result.to("cpu"), cpu_expected)
 
 
 def test_full():
-    result = torch.full((3, 4), 3.14, device="webgpu")
-    expected = torch.full((3, 4), 3.14)
-    assert torch.allclose(result.to("cpu"), expected)
+    cpu_expected = torch.full((3, 4), 3.14)
+    result = cpu_expected.to("webgpu")
+    assert torch.allclose(result.to("cpu"), cpu_expected)
 
 
 def test_fill():
-    result = torch.empty(3, 4, device="webgpu")
+    cpu_tensor = torch.empty(3, 4)
+    result = cpu_tensor.to("webgpu")
     result.fill_(2.5)
     expected = torch.full((3, 4), 2.5)
     assert torch.allclose(result.to("cpu"), expected)

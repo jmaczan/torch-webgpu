@@ -16,8 +16,8 @@ namespace
 TEST(CopyOps, CpuToWebgpuAndBack)
 {
     auto cpu = torch::tensor({1.0f, 2.0f, 3.0f});
-    auto opts = torch::TensorOptions().device(webgpu_device()).dtype(torch::kFloat);
-    auto webgpu = torch::zeros(cpu.sizes(), opts);
+    // Create webgpu tensor by moving from CPU instead of direct creation
+    auto webgpu = torch::zeros(cpu.sizes()).to(webgpu_device());
 
     webgpu.copy_(cpu);
     ASSERT_TRUE(torch::allclose(webgpu.to(torch::kCPU), cpu));

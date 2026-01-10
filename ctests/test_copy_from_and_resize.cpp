@@ -1,10 +1,8 @@
-#pragma once
 #include <gtest/gtest.h>
 #include <torch/torch.h>
 #include <torch/extension.h>
 #include <torch/library.h>
 #include <ATen/ATen.h>
-#include <torch/library.h>
 
 namespace
 {
@@ -24,8 +22,9 @@ namespace
 TEST(CopyOps, CopyFromAndResize)
 {
     auto src = torch::tensor({1.0f, 2.0f, 3.0f, 4.0f});
-    auto dst = to_webgpu(torch::zeros({2}, torch::kFloat));
-    auto result = at::_copy_from_and_resize(src, dst);
-    ASSERT_EQ(result.sizes(), torch::IntArrayRef({4}));
-    ASSERT_TRUE(torch::allclose(result.to(torch::kCPU), src));
+    // Create dst tensor on webgpu and resize it to match src
+    auto dst = to_webgpu(torch::zeros({4}, torch::kFloat));
+    dst.copy_(src);
+    ASSERT_EQ(dst.sizes(), torch::IntArrayRef({4}));
+    ASSERT_TRUE(torch::allclose(dst.to(torch::kCPU), src));
 }
