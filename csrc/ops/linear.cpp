@@ -71,22 +71,30 @@ namespace torch_webgpu
 
             auto mm_result = at::mm(mat1, mat2);
 
-            if (alpha.to<float>() != 1.0f)
+            // Convert scalars to float to match tensor dtype
+            float alpha_f = alpha.to<float>();
+            float beta_f = beta.to<float>();
+
+            // Create scalar tensors with matching dtype and device
+            auto alpha_tensor = at::scalar_tensor(alpha_f, mm_result.options());
+            auto beta_tensor = at::scalar_tensor(beta_f, self.options());
+
+            if (alpha_f != 1.0f)
             {
-                mm_result = mm_result * alpha;
+                mm_result = mm_result * alpha_tensor;
             }
 
-            if (beta.to<float>() == 0.0f)
+            if (beta_f == 0.0f)
             {
                 return mm_result;
             }
-            else if (beta.to<float>() == 1.0f)
+            else if (beta_f == 1.0f)
             {
                 return self + mm_result;
             }
             else
             {
-                return self * beta + mm_result;
+                return self * beta_tensor + mm_result;
             }
         }
 
@@ -236,8 +244,8 @@ namespace torch_webgpu
                 other_target_shape.push_back(K);
                 other_target_shape.push_back(N);
 
-                auto self_expanded = self.expand(self_target_shape).reshape({batch_numel, M, K});
-                auto other_expanded = other.expand(other_target_shape).reshape({batch_numel, K, N});
+                auto self_expanded = self.expand(self_target_shape).contiguous().reshape({batch_numel, M, K});
+                auto other_expanded = other.expand(other_target_shape).contiguous().reshape({batch_numel, K, N});
 
                 auto result_3d = torch_webgpu::ops::bmm(self_expanded, other_expanded);
 
@@ -252,6 +260,31 @@ namespace torch_webgpu
             TORCH_CHECK(false, "matmul: unsupported tensor dimensions");
             return self;
         }
+
+        // Dot product: vector @ vector -> scalar
+        at::Tensor dot(const at::Tensor &self, const at::Tensor &other)
+        {
+            TORCH_CHECK(self.dim() == 1, "dot: self must be 1D");
+            TORCH_CHECK(other.dim() == 1, "dot: other must be 1D");
+            TORCH_CHECK(self.size(0) == other.size(0), "dot: vectors must have same size");
+
+            // Element-wise multiply then sum
+            auto product = self * other;
+            return at::sum(product);
+        }
+
+        // Matrix-vector multiply: mat @ vec -> vec
+        at::Tensor mv(const at::Tensor &mat, const at::Tensor &vec)
+        {
+            TORCH_CHECK(mat.dim() == 2, "mv: mat must be 2D");
+            TORCH_CHECK(vec.dim() == 1, "mv: vec must be 1D");
+            TORCH_CHECK(mat.size(1) == vec.size(0), "mv: mat columns must match vec size");
+
+            // Reshape vec to [K, 1], do mm, then squeeze back to 1D
+            auto vec_2d = vec.reshape({vec.size(0), 1});
+            auto result_2d = at::mm(mat, vec_2d);
+            return result_2d.reshape({result_2d.size(0)});
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -262,5 +295,7 @@ namespace torch_webgpu
         m.impl("bmm", TORCH_FN(ops::bmm));
         m.impl("bmm.out", TORCH_FN(ops::bmm_out));
         m.impl("matmul", TORCH_FN(ops::matmul));
+        m.impl("dot", TORCH_FN(ops::dot));
+        m.impl("mv", TORCH_FN(ops::mv));
     }
 }

@@ -363,6 +363,130 @@ namespace torch_webgpu
 
             return out;
         }
+
+        // Scalar multiplication: tensor * scalar
+        at::Tensor mul_scalar(const at::Tensor &self, const at::Scalar &other)
+        {
+            // Convert scalar to tensor with matching dtype and device
+            auto other_tensor = at::scalar_tensor(other, self.options());
+            auto out = at::empty_like(self);
+            return mul_out_webgpu(self, other_tensor, out);
+        }
+
+        // Scalar division: tensor / scalar
+        at::Tensor div_scalar(const at::Tensor &self, const at::Scalar &other)
+        {
+            auto other_tensor = at::scalar_tensor(other, self.options());
+            auto out = at::empty_like(self);
+            return div_out_webgpu(self, other_tensor, out);
+        }
+
+        // Scalar subtraction: tensor - scalar
+        at::Tensor sub_scalar(const at::Tensor &self, const at::Scalar &other, const at::Scalar &alpha)
+        {
+            // sub with alpha: self - alpha * other
+            auto other_value = other.to<float>() * alpha.to<float>();
+            auto other_tensor = at::scalar_tensor(other_value, self.options());
+            auto out = at::empty_like(self);
+            return sub_out_webgpu(self, other_tensor, at::Scalar(1.0f), out);
+        }
+
+        // Scalar addition: tensor + scalar
+        at::Tensor add_scalar(const at::Tensor &self, const at::Scalar &other, const at::Scalar &alpha)
+        {
+            // add with alpha: self + alpha * other
+            auto other_value = other.to<float>() * alpha.to<float>();
+            auto other_tensor = at::scalar_tensor(other_value, self.options());
+            auto out = at::empty_like(self);
+            return add_out_webgpu(self, other_tensor, at::Scalar(1.0f), out);
+        }
+
+        // Helper to ensure tensor is on WebGPU with matching dtype
+        at::Tensor ensure_webgpu_tensor(const at::Tensor &t, const at::Tensor &ref)
+        {
+            if (t.device().is_privateuseone())
+            {
+                // Already on WebGPU
+                if (t.scalar_type() == ref.scalar_type())
+                {
+                    return t;
+                }
+                // Dtype mismatch on WebGPU - we'd need a cast kernel
+                TORCH_CHECK(t.scalar_type() == ref.scalar_type(),
+                            "ensure_webgpu_tensor: dtype mismatch on WebGPU not yet supported");
+                return t;
+            }
+            // CPU tensor - convert to matching dtype first, then move to WebGPU
+            at::Tensor t_same_dtype = t;
+            if (t.scalar_type() != ref.scalar_type())
+            {
+                // Cast on CPU (where it's cheap)
+                t_same_dtype = t.to(ref.scalar_type());
+            }
+            // Now move to WebGPU
+            auto result = at::empty(t_same_dtype.sizes(), ref.options());
+            result.copy_(t_same_dtype);
+            return result;
+        }
+
+        // Tensor multiplication with device handling
+        at::Tensor mul_tensor(const at::Tensor &self, const at::Tensor &other)
+        {
+            // Determine output device - if either is WebGPU, use WebGPU
+            at::Tensor self_gpu = self.device().is_privateuseone()
+                                      ? self
+                                      : ensure_webgpu_tensor(self, other);
+            at::Tensor other_gpu = other.device().is_privateuseone()
+                                       ? other
+                                       : ensure_webgpu_tensor(other, self);
+
+            // Now both are on WebGPU, compute output shape for broadcasting
+            auto output_shape = at::infer_size(self_gpu.sizes(), other_gpu.sizes());
+            auto out = at::empty(output_shape, self_gpu.options());
+            return mul_out_webgpu(self_gpu, other_gpu, out);
+        }
+
+        // Tensor division with device handling
+        at::Tensor div_tensor(const at::Tensor &self, const at::Tensor &other)
+        {
+            at::Tensor self_gpu = self.device().is_privateuseone()
+                                      ? self
+                                      : ensure_webgpu_tensor(self, other);
+            at::Tensor other_gpu = other.device().is_privateuseone()
+                                       ? other
+                                       : ensure_webgpu_tensor(other, self);
+            auto output_shape = at::infer_size(self_gpu.sizes(), other_gpu.sizes());
+            auto out = at::empty(output_shape, self_gpu.options());
+            return div_out_webgpu(self_gpu, other_gpu, out);
+        }
+
+        // Tensor subtraction with device handling
+        at::Tensor sub_tensor(const at::Tensor &self, const at::Tensor &other, const at::Scalar &alpha)
+        {
+            at::Tensor self_gpu = self.device().is_privateuseone()
+                                      ? self
+                                      : ensure_webgpu_tensor(self, other);
+            at::Tensor other_gpu = other.device().is_privateuseone()
+                                       ? other
+                                       : ensure_webgpu_tensor(other, self);
+            auto output_shape = at::infer_size(self_gpu.sizes(), other_gpu.sizes());
+            auto out = at::empty(output_shape, self_gpu.options());
+            return sub_out_webgpu(self_gpu, other_gpu, alpha, out);
+        }
+
+        // Tensor addition with device handling
+        at::Tensor add_tensor(const at::Tensor &self, const at::Tensor &other, const at::Scalar &alpha)
+        {
+            at::Tensor self_gpu = self.device().is_privateuseone()
+                                      ? self
+                                      : ensure_webgpu_tensor(self, other);
+            at::Tensor other_gpu = other.device().is_privateuseone()
+                                       ? other
+                                       : ensure_webgpu_tensor(other, self);
+            auto output_shape = at::infer_size(self_gpu.sizes(), other_gpu.sizes());
+            auto out = at::empty(output_shape, self_gpu.options());
+            return add_out_webgpu(self_gpu, other_gpu, alpha, out);
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -372,6 +496,14 @@ namespace torch_webgpu
         m.impl("mm.out", TORCH_FN(ops::mm_out_webgpu));
         m.impl("sub.out", TORCH_FN(ops::sub_out_webgpu));
         m.impl("div.out", TORCH_FN(ops::div_out_webgpu));
+        m.impl("mul.Scalar", TORCH_FN(ops::mul_scalar));
+        m.impl("div.Scalar", TORCH_FN(ops::div_scalar));
+        m.impl("sub.Scalar", TORCH_FN(ops::sub_scalar));
+        m.impl("add.Scalar", TORCH_FN(ops::add_scalar));
+        m.impl("mul.Tensor", TORCH_FN(ops::mul_tensor));
+        m.impl("div.Tensor", TORCH_FN(ops::div_tensor));
+        m.impl("sub.Tensor", TORCH_FN(ops::sub_tensor));
+        m.impl("add.Tensor", TORCH_FN(ops::add_tensor));
     }
 }
 

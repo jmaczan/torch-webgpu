@@ -112,7 +112,7 @@ const wsz: u32 = 1u;
 fn main(@builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_index) li: u32,
-    @builtin(num_workgroups) nwg: vec3<u32>    
+    @builtin(num_workgroups) nwg: vec3<u32>
 ) {
     let workgroup_index: u32 = wid.x + nwg.x * wid.y + nwg.y * wid.z;
 
@@ -120,12 +120,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>,
 
     if (global_invocation_index < params.M * params.K) {
         var c_x: u32 = global_invocation_index / params.K;
-        var c_y: u32 = global_invocation_index % params.K; 
+        var c_y: u32 = global_invocation_index % params.K;
         // now I know c[c_x, c_y] and I can iterate over c_x..c_x+N (?) and c_y..c_y+N (not sure if correct?)
         var output: f32 = 0.0;
         for (var i: u32 = 0; i < params.N; i = i + 1u) {
-            output = output + A[c_x*params.N + i] * B[i * params.K + c_y]; // + A[c_x + i] * B[c_y + i];
+            // Use storage offsets for A and B
+            let a_idx = params.self_offset + c_x * params.N + i;
+            let b_idx = params.mat2_offset + i * params.K + c_y;
+            output = output + A[a_idx] * B[b_idx];
         }
-        C[global_invocation_index] = output; 
+        // Use storage offset for C
+        C[params.out_offset + global_invocation_index] = output;
     }
 }

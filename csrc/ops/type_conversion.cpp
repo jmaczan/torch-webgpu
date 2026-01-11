@@ -1,6 +1,8 @@
 #include <ATen/ATen.h>
+#include <ATen/RedispatchFunctions.h>
 #include <torch/library.h>
 #include <webgpu/webgpu_cpp.h>
+#include <iostream>
 #include "core/webgpu_context.h"
 #include "core/webgpu_allocator.h"
 
@@ -377,7 +379,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // Fallback: convert through CPU
                 at::Tensor cpu_src = src_contig.to(at::kCPU);
                 at::Tensor cpu_converted = cpu_src.to(target_dtype);
-                out.copy_(cpu_converted.to(out.device()));
+                at::Tensor webgpu_converted = cpu_converted.to(out.device());
+                out.copy_(webgpu_converted);
             }
 
             return out;
@@ -387,5 +390,62 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     {
         m.impl("_to_copy", TORCH_FN(ops::_to_copy));
+    }
+
+    namespace ops
+    {
+        at::Tensor cpu_to_copy_with_webgpu(
+            const at::Tensor &self,
+            c10::optional<at::ScalarType> dtype,
+            c10::optional<at::Layout> layout,
+            c10::optional<at::Device> device,
+            c10::optional<bool> pin_memory,
+            bool non_blocking,
+            c10::optional<c10::MemoryFormat> memory_format)
+        {
+            // Only handle CPU → WebGPU transfer
+            // For other cases (including WebGPU dtype conversions), fall through
+            if (self.device().is_cpu() && device.has_value() && device->type() == c10::DeviceType::PrivateUse1)
+            {
+                at::ScalarType target_dtype = dtype.value_or(self.scalar_type());
+                c10::MemoryFormat mem_fmt = memory_format.value_or(c10::MemoryFormat::Contiguous);
+
+                // Create tensor on WebGPU
+                auto result = at::empty(
+                    self.sizes(),
+                    self.options().device(*device).dtype(target_dtype).memory_format(mem_fmt));
+
+                // Handle dtype conversion if needed
+                if (target_dtype != self.scalar_type()) {
+                    at::Tensor converted = self.to(target_dtype);
+                    result.copy_(converted, non_blocking);
+                } else {
+                    result.copy_(self, non_blocking);
+                }
+                return result;
+            }
+
+            // For WebGPU tensors, redispatch to PrivateUse1 (not native)
+            if (self.device().is_privateuseone())
+            {
+                return at::redispatch::_to_copy(
+                    c10::DispatchKeySet(c10::DispatchKey::PrivateUse1),
+                    self, dtype, layout, device, pin_memory, non_blocking, memory_format);
+            }
+
+            // Fallback for other cases (CPU → CPU)
+            return at::native::_to_copy(self, dtype, layout, device, pin_memory, non_blocking, memory_format);
+        }
+    }
+
+    TORCH_LIBRARY_IMPL(aten, CPU, m)
+    {
+        m.impl("_to_copy", TORCH_FN(ops::cpu_to_copy_with_webgpu));
+    }
+
+    // Also register with BackendSelect for device selection during to() calls
+    TORCH_LIBRARY_IMPL(aten, BackendSelect, m)
+    {
+        m.impl("_to_copy", TORCH_FN(ops::cpu_to_copy_with_webgpu));
     }
 }

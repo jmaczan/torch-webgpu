@@ -7,12 +7,18 @@ namespace torch_webgpu
 {
     namespace core
     {
+        // WebGPU requires buffer sizes to be a multiple of 4 bytes for WriteBuffer operations
+        constexpr size_t WGPU_BUFFER_ALIGNMENT = 4;
+
         void WebGPUAllocator::allocate(void **ptr, size_t size)
         {
+            // Round up size to next multiple of alignment
+            size_t aligned_size = ((size + WGPU_BUFFER_ALIGNMENT - 1) / WGPU_BUFFER_ALIGNMENT) * WGPU_BUFFER_ALIGNMENT;
+
             wgpu::BufferDescriptor buffer_desc;
             buffer_desc.label = "WebGPU buffer";
             buffer_desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::Storage;
-            buffer_desc.size = size;
+            buffer_desc.size = aligned_size;
             buffer_desc.mappedAtCreation = false;
             *ptr = new WebGPUAllocation(std::move(torch_webgpu::core::getWebGPUContext().getDevice().CreateBuffer(&buffer_desc)));
         }

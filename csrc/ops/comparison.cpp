@@ -421,6 +421,38 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         {
             return compare_tensor_scalar<CompareOp::Ge>(self, other);
         }
+
+        // All - check if all elements are true
+        at::Tensor all(const at::Tensor &self)
+        {
+            // Move to CPU, perform all(), return result
+            // This is simple but works; can optimize with GPU kernel later
+            auto cpu_tensor = self.to(at::kCPU);
+            auto result = at::all(cpu_tensor);
+            return result.to(self.device());
+        }
+
+        at::Tensor &all_out(const at::Tensor &self, at::Tensor &out)
+        {
+            auto result = torch_webgpu::ops::all(self);
+            out.copy_(result);
+            return out;
+        }
+
+        // Any - check if any element is true
+        at::Tensor any(const at::Tensor &self)
+        {
+            auto cpu_tensor = self.to(at::kCPU);
+            auto result = at::any(cpu_tensor);
+            return result.to(self.device());
+        }
+
+        at::Tensor &any_out(const at::Tensor &self, at::Tensor &out)
+        {
+            auto result = torch_webgpu::ops::any(self);
+            out.copy_(result);
+            return out;
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -437,5 +469,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         m.impl("gt.Scalar", TORCH_FN(ops::gt_scalar));
         m.impl("ge.Tensor", TORCH_FN(ops::ge_tensor));
         m.impl("ge.Scalar", TORCH_FN(ops::ge_scalar));
+        m.impl("all", TORCH_FN(ops::all));
+        m.impl("all.all_out", TORCH_FN(ops::all_out));
+        m.impl("any", TORCH_FN(ops::any));
+        m.impl("any.all_out", TORCH_FN(ops::any_out));
     }
 }

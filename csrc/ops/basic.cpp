@@ -610,6 +610,15 @@ namespace torch_webgpu
             }
             return torch_webgpu::ops::transpose(self, 0, 1);
         }
+
+        // _local_scalar_dense - convert single-element tensor to scalar
+        at::Scalar _local_scalar_dense(const at::Tensor &self)
+        {
+            TORCH_CHECK(self.numel() == 1, "_local_scalar_dense requires a single-element tensor");
+            // Move to CPU and get the scalar value
+            auto cpu_tensor = self.to(at::kCPU);
+            return cpu_tensor.item();
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -631,6 +640,7 @@ namespace torch_webgpu
         m.impl("slice.Tensor", TORCH_FN(ops::slice));
         m.impl("select.int", TORCH_FN(ops::select));
         m.impl("t", TORCH_FN(ops::t));
+        m.impl("_local_scalar_dense", TORCH_FN(ops::_local_scalar_dense));
     }
 
     TORCH_LIBRARY_IMPL(aten, AutogradPrivateUse1, m)

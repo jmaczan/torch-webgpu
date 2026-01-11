@@ -117,6 +117,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             case UnaryOp::Abs:
                 op_impl = "abs(selfBuffer[idx_self])";
                 break;
+            case UnaryOp::Log:
+                op_impl = "log(selfBuffer[idx_self])";
+                break;
             default:
                 TORCH_CHECK(false, "Unsupported unary op, can't produce a WGSL shader");
             }

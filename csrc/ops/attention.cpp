@@ -32,11 +32,15 @@ namespace torch_webgpu
 
             // Compute attention scale
             double head_dim = static_cast<double>(query.size(-1));
-            double attn_scale = scale.value_or(1.0 / std::sqrt(head_dim));
+            float attn_scale_f = static_cast<float>(scale.value_or(1.0 / std::sqrt(head_dim)));
 
             // Q @ K^T -> [batch, heads, seq_len_q, seq_len_k]
             auto key_t = key.transpose(-2, -1);
-            auto attn_weights = at::matmul(query, key_t) * attn_scale;
+            auto attn_weights = at::matmul(query, key_t);
+
+            // Scale with matching dtype
+            auto scale_tensor = at::scalar_tensor(attn_scale_f, attn_weights.options());
+            attn_weights = attn_weights * scale_tensor;
 
             // Apply causal mask if requested
             if (is_causal)
@@ -47,7 +51,10 @@ namespace torch_webgpu
                 // Create causal mask on CPU and move to device
                 auto mask = at::ones({seq_len_q, seq_len_k}, at::TensorOptions().dtype(at::kFloat));
                 mask = at::triu(mask, 1); // Upper triangular excluding diagonal
-                mask = mask * (-1e9);     // Large negative value for masked positions
+
+                // Multiply by large negative value with correct dtype
+                auto neg_inf = at::scalar_tensor(-1e9f, mask.options());
+                mask = mask * neg_inf;
 
                 // Move to device
                 mask = mask.to(query.device());
@@ -63,7 +70,9 @@ namespace torch_webgpu
                 {
                     // Boolean mask: True means masked (should be -inf)
                     auto float_mask = mask.to(at::kFloat);
-                    float_mask = (1.0 - float_mask) * (-1e9);
+                    auto one_tensor = at::scalar_tensor(1.0f, float_mask.options());
+                    auto neg_inf = at::scalar_tensor(-1e9f, float_mask.options());
+                    float_mask = (one_tensor - float_mask) * neg_inf;
                     attn_weights = attn_weights + float_mask;
                 }
                 else

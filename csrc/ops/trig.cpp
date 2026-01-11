@@ -304,6 +304,48 @@ namespace torch_webgpu
 
             return out;
         }
+
+        // Log
+        void log_kernel_webgpu(at::TensorIteratorBase &iter)
+        {
+            unary_kernel<UnaryOp::Log>(iter);
+        }
+
+        at::Tensor log(const at::Tensor &self)
+        {
+            at::Tensor out = at::empty_like(self, self.options().device(at::DeviceType::PrivateUse1));
+
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(out);
+            config.add_input(self);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(true);
+            auto iter = config.build();
+
+            log_kernel_webgpu(iter);
+
+            return out;
+        }
+
+        at::Tensor &log_out(
+            const at::Tensor &self,
+            at::Tensor &out)
+        {
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(out);
+            config.add_input(self);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(true);
+            auto iter = config.build();
+
+            log_kernel_webgpu(iter);
+
+            return out;
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -322,5 +364,7 @@ namespace torch_webgpu
         m.impl("rsqrt.out", TORCH_FN(ops::rsqrt_out));
         m.impl("neg", TORCH_FN(ops::neg));
         m.impl("neg.out", TORCH_FN(ops::neg_out));
+        m.impl("log", TORCH_FN(ops::log));
+        m.impl("log.out", TORCH_FN(ops::log_out));
     }
 }
