@@ -47,7 +47,7 @@ fn main(
     var idx = global_id;
     while (idx < params.length) {
         sum += selfBuffer[params.self_offset + idx];
-        idx += 256u * 256u; // stride by total threads
+        idx += 256u; // stride by workgroup size (single workgroup dispatch)
     }
 
     partial_sums[local_id] = sum;
@@ -102,7 +102,7 @@ fn main(
     var idx = global_id;
     while (idx < params.length) {
         sum += selfBuffer[params.self_offset + idx];
-        idx += 256u * 256u; // stride by total threads
+        idx += 256u; // stride by workgroup size (single workgroup dispatch)
     }
 
     partial_sums[local_id] = sum;
@@ -319,10 +319,10 @@ fn main(
                 return result;
             }
 
-            // TODO: Implement dim-specific reduction
-            // For now, fall back to moving to CPU, doing the operation, and moving back
-            TORCH_CHECK(false, "sum with specific dims not yet implemented on WebGPU - use contiguous reduction");
-            return self;
+            // Fallback: move to CPU, do the reduction, move back
+            auto cpu_tensor = self.to(at::kCPU);
+            auto result_cpu = at::sum(cpu_tensor, dim.value(), keepdim, dtype);
+            return result_cpu.to(self.device());
         }
 
         // Mean with dims
@@ -340,9 +340,10 @@ fn main(
                 return result;
             }
 
-            // TODO: Implement dim-specific reduction
-            TORCH_CHECK(false, "mean with specific dims not yet implemented on WebGPU - use contiguous reduction");
-            return self;
+            // Fallback: move to CPU, do the reduction, move back
+            auto cpu_tensor = self.to(at::kCPU);
+            auto result_cpu = at::mean(cpu_tensor, dim.value(), keepdim, dtype);
+            return result_cpu.to(self.device());
         }
     }
 

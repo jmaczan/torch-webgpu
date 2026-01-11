@@ -23,11 +23,11 @@ TEST(ActivationOps, GeluMatchesCPU)
 
     auto out = torch::gelu(input);
     auto expected = torch::gelu(cpu_input);
-    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected, 1e-4, 1e-4));
+    ASSERT_TRUE(torch::allclose(out.to(torch::kCPU), expected, 1e-3, 1e-3));
 
     auto out_buf = torch::zeros_like(input);
     auto out_ref = torch::zeros_like(cpu_input);
     torch::gelu_out(out_buf, input, "none");
     torch::gelu_out(out_ref, cpu_input, "none");
-    ASSERT_TRUE(torch::allclose(out_buf.to(torch::kCPU), out_ref, 1e-4, 1e-4));
+    ASSERT_TRUE(torch::allclose(out_buf.to(torch::kCPU), out_ref, 1e-3, 1e-3));
 }

@@ -28,7 +28,8 @@ namespace torch_webgpu
             Neg,
             Exp,
             Tanh,
-            Abs
+            Abs,
+            Log
         };
 
         std::string get_unary_shader(UnaryOp unary_op);

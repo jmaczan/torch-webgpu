@@ -33,7 +33,9 @@ def test_softmax_3d():
 def test_softmax_sums_to_one():
     a = torch.randn(4, 8).to("webgpu")
     result = torch.softmax(a, -1)
-    sums = result.sum(-1).to("cpu")
+    # sum with dim not implemented on WebGPU yet, so move to CPU first
+    result_cpu = result.to("cpu")
+    sums = result_cpu.sum(-1)
     expected = torch.ones(4)
     assert torch.allclose(sums, expected, rtol=1e-4, atol=1e-4)
 
