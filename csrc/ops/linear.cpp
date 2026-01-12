@@ -35,7 +35,8 @@ namespace torch_webgpu
             auto input_2d = input.reshape({batch_size, in_features});
 
             // Transpose weight: [out_features, in_features] -> [in_features, out_features]
-            auto weight_t = weight.t().contiguous();
+            // Note: No .contiguous() needed - mm kernel handles transposed matrices via strides
+            auto weight_t = weight.t();
 
             // Matrix multiply: [batch, in_features] @ [in_features, out_features] = [batch, out_features]
             auto output_2d = at::mm(input_2d, weight_t);

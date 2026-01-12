@@ -124,12 +124,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>,
         // now I know c[c_x, c_y] and I can iterate over c_x..c_x+N (?) and c_y..c_y+N (not sure if correct?)
         var output: f32 = 0.0;
         for (var i: u32 = 0; i < params.N; i = i + 1u) {
-            // Use storage offsets for A and B
-            let a_idx = params.self_offset + c_x * params.N + i;
-            let b_idx = params.mat2_offset + i * params.K + c_y;
+            // Use strides for proper indexing (handles transposed/non-contiguous matrices)
+            // A[c_x, i] with strides [stride0, stride1]
+            let a_idx = params.self_offset + c_x * params.self_strides[0] + i * params.self_strides[1];
+            // B[i, c_y] with strides [stride0, stride1]
+            let b_idx = params.mat2_offset + i * params.mat2_strides[0] + c_y * params.mat2_strides[1];
             output = output + A[a_idx] * B[b_idx];
         }
-        // Use storage offset for C
+        // Output is always contiguous, use simple linear indexing
         C[params.out_offset + global_invocation_index] = output;
     }
 }
