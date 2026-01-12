@@ -42,8 +42,8 @@ jobs:
           cmake -S . -B out/Release \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dawn-install \
-            -DBUILD_SHARED_LIBS=ON \
-            -DDAWN_BUILD_MONOLITHIC_LIBRARY=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DDAWN_BUILD_MONOLITHIC_LIBRARY=SHARED \
             -DDAWN_FETCH_DEPENDENCIES=ON \
             -DDAWN_ENABLE_D3D11=OFF \
             -DDAWN_ENABLE_D3D12=OFF \
@@ -132,8 +132,8 @@ jobs:
           cmake -S . -B out/Release \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dawn-install \
-            -DBUILD_SHARED_LIBS=ON \
-            -DDAWN_BUILD_MONOLITHIC_LIBRARY=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DDAWN_BUILD_MONOLITHIC_LIBRARY=SHARED \
             -DDAWN_FETCH_DEPENDENCIES=ON \
             -DDAWN_ENABLE_D3D11=OFF \
             -DDAWN_ENABLE_D3D12=OFF \
