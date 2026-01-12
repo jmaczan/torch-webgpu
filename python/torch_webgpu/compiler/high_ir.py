@@ -15,6 +15,59 @@ class HighIROp(StrEnum):
     OUTPUT = auto()
     MUL = auto()
     MM = auto()
+    # Transformer ops
+    SUB = auto()
+    DIV = auto()
+    MATMUL = auto()
+    TRANSPOSE = auto()
+    CAT = auto()
+    COS = auto()
+    SIN = auto()
+    RSQRT = auto()
+    POW = auto()
+    MEAN = auto()
+    SOFTMAX = auto()
+    SILU = auto()
+    LINEAR = auto()
+    EMBEDDING = auto()
+    LAYER_NORM = auto()
+    GETITEM = auto()
+    NEG = auto()
+    EXP = auto()
+    SUM = auto()
+    SQRT = auto()
+    TANH = auto()
+    GELU = auto()
+    VIEW = auto()
+    RESHAPE = auto()
+    UNSQUEEZE = auto()
+    SQUEEZE = auto()
+    PERMUTE = auto()
+    CONTIGUOUS = auto()
+    CLONE = auto()
+    EXPAND = auto()
+    ARANGE = auto()
+    FULL = auto()
+    ZEROS = auto()
+    ONES = auto()
+    WHERE = auto()
+    MAX = auto()
+    MIN = auto()
+    ARGMAX = auto()
+    EQ = auto()
+    NE = auto()
+    LT = auto()
+    LE = auto()
+    GT = auto()
+    GE = auto()
+    MASKED_FILL = auto()
+    TRIU = auto()
+    DROPOUT = auto()
+    SCALED_DOT_PRODUCT_ATTENTION = auto()
+    SLICE = auto()
+    SELECT = auto()
+    INDEX = auto()
+    CUMSUM = auto()
 
 
 class HighIRNode(IRNode):
@@ -98,18 +151,340 @@ class HighIRMM(HighIRNode):
     ir_op = HighIROp.MM
 
 
+class HighIRSub(HighIRNode):
+    ir_op = HighIROp.SUB
+
+
+class HighIRDiv(HighIRNode):
+    ir_op = HighIROp.DIV
+
+
+class HighIRMatmul(HighIRNode):
+    ir_op = HighIROp.MATMUL
+
+
+class HighIRTranspose(HighIRNode):
+    ir_op = HighIROp.TRANSPOSE
+
+
+class HighIRCat(HighIRNode):
+    ir_op = HighIROp.CAT
+
+
+class HighIRCos(HighIRNode):
+    ir_op = HighIROp.COS
+
+
+class HighIRSin(HighIRNode):
+    ir_op = HighIROp.SIN
+
+
+class HighIRRsqrt(HighIRNode):
+    ir_op = HighIROp.RSQRT
+
+
+class HighIRPow(HighIRNode):
+    ir_op = HighIROp.POW
+
+
+class HighIRMean(HighIRNode):
+    ir_op = HighIROp.MEAN
+
+
+class HighIRSoftmax(HighIRNode):
+    ir_op = HighIROp.SOFTMAX
+
+
+class HighIRSilu(HighIRNode):
+    ir_op = HighIROp.SILU
+
+
+class HighIRLinear(HighIRNode):
+    ir_op = HighIROp.LINEAR
+
+
+class HighIREmbedding(HighIRNode):
+    ir_op = HighIROp.EMBEDDING
+
+
+class HighIRLayerNorm(HighIRNode):
+    ir_op = HighIROp.LAYER_NORM
+
+
+class HighIRGetitem(HighIRNode):
+    ir_op = HighIROp.GETITEM
+
+
+class HighIRNeg(HighIRNode):
+    ir_op = HighIROp.NEG
+
+
+class HighIRExp(HighIRNode):
+    ir_op = HighIROp.EXP
+
+
+class HighIRSum(HighIRNode):
+    ir_op = HighIROp.SUM
+
+
+class HighIRSqrt(HighIRNode):
+    ir_op = HighIROp.SQRT
+
+
+class HighIRTanh(HighIRNode):
+    ir_op = HighIROp.TANH
+
+
+class HighIRGelu(HighIRNode):
+    ir_op = HighIROp.GELU
+
+
+class HighIRView(HighIRNode):
+    ir_op = HighIROp.VIEW
+
+
+class HighIRReshape(HighIRNode):
+    ir_op = HighIROp.RESHAPE
+
+
+class HighIRUnsqueeze(HighIRNode):
+    ir_op = HighIROp.UNSQUEEZE
+
+
+class HighIRSqueeze(HighIRNode):
+    ir_op = HighIROp.SQUEEZE
+
+
+class HighIRPermute(HighIRNode):
+    ir_op = HighIROp.PERMUTE
+
+
+class HighIRContiguous(HighIRNode):
+    ir_op = HighIROp.CONTIGUOUS
+
+
+class HighIRClone(HighIRNode):
+    ir_op = HighIROp.CLONE
+
+
+class HighIRExpand(HighIRNode):
+    ir_op = HighIROp.EXPAND
+
+
+class HighIRArange(HighIRNode):
+    ir_op = HighIROp.ARANGE
+
+
+class HighIRFull(HighIRNode):
+    ir_op = HighIROp.FULL
+
+
+class HighIRZeros(HighIRNode):
+    ir_op = HighIROp.ZEROS
+
+
+class HighIROnes(HighIRNode):
+    ir_op = HighIROp.ONES
+
+
+class HighIRWhere(HighIRNode):
+    ir_op = HighIROp.WHERE
+
+
+class HighIRMax(HighIRNode):
+    ir_op = HighIROp.MAX
+
+
+class HighIRMin(HighIRNode):
+    ir_op = HighIROp.MIN
+
+
+class HighIRArgmax(HighIRNode):
+    ir_op = HighIROp.ARGMAX
+
+
+class HighIREq(HighIRNode):
+    ir_op = HighIROp.EQ
+
+
+class HighIRNe(HighIRNode):
+    ir_op = HighIROp.NE
+
+
+class HighIRLt(HighIRNode):
+    ir_op = HighIROp.LT
+
+
+class HighIRLe(HighIRNode):
+    ir_op = HighIROp.LE
+
+
+class HighIRGt(HighIRNode):
+    ir_op = HighIROp.GT
+
+
+class HighIRGe(HighIRNode):
+    ir_op = HighIROp.GE
+
+
+class HighIRMaskedFill(HighIRNode):
+    ir_op = HighIROp.MASKED_FILL
+
+
+class HighIRTriu(HighIRNode):
+    ir_op = HighIROp.TRIU
+
+
+class HighIRDropout(HighIRNode):
+    ir_op = HighIROp.DROPOUT
+
+
+class HighIRScaledDotProductAttention(HighIRNode):
+    ir_op = HighIROp.SCALED_DOT_PRODUCT_ATTENTION
+
+
+class HighIRSlice(HighIRNode):
+    ir_op = HighIROp.SLICE
+
+
+class HighIRSelect(HighIRNode):
+    ir_op = HighIROp.SELECT
+
+
+class HighIRIndex(HighIRNode):
+    ir_op = HighIROp.INDEX
+
+
+class HighIRCumsum(HighIRNode):
+    ir_op = HighIROp.CUMSUM
+
+
+import operator
+import torch.nn.functional as F
+
 fx_op_to_high_ir_op: dict[Any, HighIROp] = {
+    # Tensor creation
     torch.tensor: HighIROp.CREATE_TENSOR,
+    torch.arange: HighIROp.ARANGE,
+    torch.full: HighIROp.FULL,
+    torch.zeros: HighIROp.ZEROS,
+    torch.ones: HighIROp.ONES,
+    # Basic ops
     "add": HighIROp.ADD,
     torch.add: HighIROp.ADD,
+    operator.add: HighIROp.ADD,
+    "sub": HighIROp.SUB,
+    torch.sub: HighIROp.SUB,
+    operator.sub: HighIROp.SUB,
+    "mul": HighIROp.MUL,
+    torch.mul: HighIROp.MUL,
+    operator.mul: HighIROp.MUL,
+    "div": HighIROp.DIV,
+    torch.div: HighIROp.DIV,
+    operator.truediv: HighIROp.DIV,
+    "neg": HighIROp.NEG,
+    torch.neg: HighIROp.NEG,
+    operator.neg: HighIROp.NEG,
+    # Matrix ops
+    torch.mm: HighIROp.MM,
+    torch.matmul: HighIROp.MATMUL,
+    operator.matmul: HighIROp.MATMUL,
+    # Activation functions
     torch.relu: HighIROp.RELU,
+    F.relu: HighIROp.RELU,
+    F.silu: HighIROp.SILU,
+    "silu": HighIROp.SILU,
+    F.gelu: HighIROp.GELU,
+    "gelu": HighIROp.GELU,
+    torch.tanh: HighIROp.TANH,
+    "tanh": HighIROp.TANH,
+    # Unary math
+    torch.cos: HighIROp.COS,
+    torch.sin: HighIROp.SIN,
+    torch.exp: HighIROp.EXP,
+    torch.sqrt: HighIROp.SQRT,
+    torch.rsqrt: HighIROp.RSQRT,
+    # Power
+    torch.pow: HighIROp.POW,
+    "pow": HighIROp.POW,
+    # Reductions
+    torch.sum: HighIROp.SUM,
+    "sum": HighIROp.SUM,
+    torch.mean: HighIROp.MEAN,
+    "mean": HighIROp.MEAN,
+    torch.max: HighIROp.MAX,
+    "max": HighIROp.MAX,
+    torch.min: HighIROp.MIN,
+    "min": HighIROp.MIN,
+    torch.argmax: HighIROp.ARGMAX,
+    "argmax": HighIROp.ARGMAX,
+    torch.cumsum: HighIROp.CUMSUM,
+    "cumsum": HighIROp.CUMSUM,
+    # Softmax
+    torch.softmax: HighIROp.SOFTMAX,
+    F.softmax: HighIROp.SOFTMAX,
+    # Normalization
+    F.layer_norm: HighIROp.LAYER_NORM,
+    # Linear and embedding
+    F.linear: HighIROp.LINEAR,
+    F.embedding: HighIROp.EMBEDDING,
+    # Shape ops
+    "view": HighIROp.VIEW,
+    "reshape": HighIROp.RESHAPE,
+    torch.reshape: HighIROp.RESHAPE,
+    "unsqueeze": HighIROp.UNSQUEEZE,
+    torch.unsqueeze: HighIROp.UNSQUEEZE,
+    "squeeze": HighIROp.SQUEEZE,
+    torch.squeeze: HighIROp.SQUEEZE,
+    "transpose": HighIROp.TRANSPOSE,
+    torch.transpose: HighIROp.TRANSPOSE,
+    "permute": HighIROp.PERMUTE,
+    torch.permute: HighIROp.PERMUTE,
+    "contiguous": HighIROp.CONTIGUOUS,
+    "clone": HighIROp.CLONE,
+    torch.clone: HighIROp.CLONE,
+    "expand": HighIROp.EXPAND,
+    torch.cat: HighIROp.CAT,
+    # Indexing
+    operator.getitem: HighIROp.GETITEM,
+    "select": HighIROp.SELECT,
+    torch.select: HighIROp.SELECT,
+    "slice": HighIROp.SLICE,
+    torch.index_select: HighIROp.INDEX,
+    # Comparisons
+    torch.eq: HighIROp.EQ,
+    operator.eq: HighIROp.EQ,
+    "eq": HighIROp.EQ,
+    torch.ne: HighIROp.NE,
+    operator.ne: HighIROp.NE,
+    "ne": HighIROp.NE,
+    torch.lt: HighIROp.LT,
+    operator.lt: HighIROp.LT,
+    "lt": HighIROp.LT,
+    torch.le: HighIROp.LE,
+    operator.le: HighIROp.LE,
+    "le": HighIROp.LE,
+    torch.gt: HighIROp.GT,
+    operator.gt: HighIROp.GT,
+    "gt": HighIROp.GT,
+    torch.ge: HighIROp.GE,
+    operator.ge: HighIROp.GE,
+    "ge": HighIROp.GE,
+    # Masking
+    torch.where: HighIROp.WHERE,
+    "masked_fill": HighIROp.MASKED_FILL,
+    torch.triu: HighIROp.TRIU,
+    # Dropout (usually no-op at inference)
+    F.dropout: HighIROp.DROPOUT,
+    # Attention
+    F.scaled_dot_product_attention: HighIROp.SCALED_DOT_PRODUCT_ATTENTION,
+    # Control flow
     "to": HighIROp.MOVE_TO,
     "output": HighIROp.OUTPUT,
-    torch.mul: HighIROp.MUL,
-    torch.mm: HighIROp.MM,
 }
 
 high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
+    # Existing ops
     HighIROp.CREATE_TENSOR: HighIRCreateTensor,
     HighIROp.ADD: HighIRAdd,
     HighIROp.RELU: HighIRRelu,
@@ -118,6 +493,73 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.FUSED_ADD_RELU: HighIRFusedAddRelu,
     HighIROp.MUL: HighIRMul,
     HighIROp.MM: HighIRMM,
+    # Basic arithmetic
+    HighIROp.SUB: HighIRSub,
+    HighIROp.DIV: HighIRDiv,
+    HighIROp.NEG: HighIRNeg,
+    # Matrix ops
+    HighIROp.MATMUL: HighIRMatmul,
+    # Activation functions
+    HighIROp.SILU: HighIRSilu,
+    HighIROp.GELU: HighIRGelu,
+    HighIROp.TANH: HighIRTanh,
+    # Unary math
+    HighIROp.COS: HighIRCos,
+    HighIROp.SIN: HighIRSin,
+    HighIROp.EXP: HighIRExp,
+    HighIROp.SQRT: HighIRSqrt,
+    HighIROp.RSQRT: HighIRRsqrt,
+    HighIROp.POW: HighIRPow,
+    # Reductions
+    HighIROp.SUM: HighIRSum,
+    HighIROp.MEAN: HighIRMean,
+    HighIROp.MAX: HighIRMax,
+    HighIROp.MIN: HighIRMin,
+    HighIROp.ARGMAX: HighIRArgmax,
+    HighIROp.CUMSUM: HighIRCumsum,
+    # Softmax
+    HighIROp.SOFTMAX: HighIRSoftmax,
+    # Normalization
+    HighIROp.LAYER_NORM: HighIRLayerNorm,
+    # Linear and embedding
+    HighIROp.LINEAR: HighIRLinear,
+    HighIROp.EMBEDDING: HighIREmbedding,
+    # Shape ops
+    HighIROp.VIEW: HighIRView,
+    HighIROp.RESHAPE: HighIRReshape,
+    HighIROp.UNSQUEEZE: HighIRUnsqueeze,
+    HighIROp.SQUEEZE: HighIRSqueeze,
+    HighIROp.TRANSPOSE: HighIRTranspose,
+    HighIROp.PERMUTE: HighIRPermute,
+    HighIROp.CONTIGUOUS: HighIRContiguous,
+    HighIROp.CLONE: HighIRClone,
+    HighIROp.EXPAND: HighIRExpand,
+    HighIROp.CAT: HighIRCat,
+    # Tensor creation
+    HighIROp.ARANGE: HighIRArange,
+    HighIROp.FULL: HighIRFull,
+    HighIROp.ZEROS: HighIRZeros,
+    HighIROp.ONES: HighIROnes,
+    # Indexing
+    HighIROp.GETITEM: HighIRGetitem,
+    HighIROp.SELECT: HighIRSelect,
+    HighIROp.SLICE: HighIRSlice,
+    HighIROp.INDEX: HighIRIndex,
+    # Comparisons
+    HighIROp.EQ: HighIREq,
+    HighIROp.NE: HighIRNe,
+    HighIROp.LT: HighIRLt,
+    HighIROp.LE: HighIRLe,
+    HighIROp.GT: HighIRGt,
+    HighIROp.GE: HighIRGe,
+    # Masking
+    HighIROp.WHERE: HighIRWhere,
+    HighIROp.MASKED_FILL: HighIRMaskedFill,
+    HighIROp.TRIU: HighIRTriu,
+    # Dropout
+    HighIROp.DROPOUT: HighIRDropout,
+    # Attention
+    HighIROp.SCALED_DOT_PRODUCT_ATTENTION: HighIRScaledDotProductAttention,
 }
 
 high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = [
