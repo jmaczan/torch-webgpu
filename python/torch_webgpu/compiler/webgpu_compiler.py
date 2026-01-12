@@ -8,6 +8,7 @@ from .high_ir import (
     high_ir_op_to_high_ir_node,
     high_ir_compiler_passes,
     high_ir_print_tabular,
+    HighIROp,
 )
 from .low_ir import (
     LowIRNode,
@@ -22,7 +23,7 @@ from .compiler_pass import run_compiler_passes
 @register_backend
 def webgpu_backend(
     gm: torch.fx.GraphModule,
-    example_inputs: List[torch.Tensor],  # TODO: don't ignore example_inputs
+    example_inputs: List[torch.Tensor],
 ) -> Callable:
     print("\nFX graph (input):")
     gm.graph.print_tabular()
@@ -30,6 +31,11 @@ def webgpu_backend(
     high_ir = fx_to_high_ir(gm)
     print("\nHigh IR graph:")
     high_ir_print_tabular(high_ir)
+
+    # Extract placeholder names for later binding
+    placeholder_names = [
+        node.value_id for node in high_ir if node.ir_op == HighIROp.PLACEHOLDER
+    ]
 
     high_ir = run_compiler_passes(
         input_ir_graph=high_ir,
@@ -48,16 +54,11 @@ def webgpu_backend(
         ir_op_to_ir_node=low_ir_op_to_low_ir_node,
         passes=low_ir_compiler_passes,
     )
-    # print("\nLow IR graph (after compilation):")
-    # low_ir_print_tabular(low_ir)
 
-    program = lowering(low_ir)
-    out = program()  # compiled program execution
+    # Create the compiled program with placeholder binding
+    program = lowering(low_ir, placeholder_names)
 
-    if isinstance(out, torch.Tensor) and out.device.type != "cpu":
-        out = out.to("cpu")
-        print("Move runtime result to CPU")
-    print(out)
+    def compiled_fn(*args):
+        return program(*args)
 
-    # Noqa 501 TODO: see if it's still relevant https://docs.pytorch.org/docs/stable/generated/torch.jit.optimize_for_inference.html
-    return gm.forward
+    return compiled_fn

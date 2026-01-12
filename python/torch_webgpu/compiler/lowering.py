@@ -33,21 +33,116 @@ def write_buffer(node: LowIRWriteBuffer, runtime: Runtime) -> torch.Tensor:
     return torch.ops.webgpu.write_buffer(dst, src)
 
 
+import torch.nn.functional as F
+
+# Map shader names to actual torch functions
+SHADER_TO_FUNC = {
+    "linear": F.linear,
+    "relu": torch.relu,
+    "silu": F.silu,
+    "gelu": F.gelu,
+    "softmax": F.softmax,
+    "layer_norm": F.layer_norm,
+    "embedding": F.embedding,
+    "add": torch.add,
+    "sub": torch.sub,
+    "mul": torch.mul,
+    "div": torch.div,
+    "neg": torch.neg,
+    "mm": torch.mm,
+    "matmul": torch.matmul,
+    "cos": torch.cos,
+    "sin": torch.sin,
+    "exp": torch.exp,
+    "sqrt": torch.sqrt,
+    "rsqrt": torch.rsqrt,
+    "pow": torch.pow,
+    "sum": torch.sum,
+    "mean": torch.mean,
+    "max": torch.max,
+    "min": torch.min,
+    "argmax": torch.argmax,
+    "tanh": torch.tanh,
+    "cat": torch.cat,
+    "view": lambda x, *args: x.view(*args),
+    "reshape": torch.reshape,
+    "transpose": torch.transpose,
+    "permute": lambda x, *args: x.permute(*args),
+    "unsqueeze": torch.unsqueeze,
+    "squeeze": torch.squeeze,
+    "contiguous": lambda x: x.contiguous(),
+    "clone": torch.clone,
+    "expand": lambda x, *args: x.expand(*args),
+    "eq": torch.eq,
+    "ne": torch.ne,
+    "lt": torch.lt,
+    "le": torch.le,
+    "gt": torch.gt,
+    "ge": torch.ge,
+    "where": torch.where,
+    "fused_add_relu": lambda a, b: torch.relu(torch.add(a, b)),
+    "cast": lambda x, dtype: x.to(dtype) if dtype else x,  # Perform dtype cast
+    "scaled_dot_product_attention": F.scaled_dot_product_attention,
+    "repeat_interleave": torch.repeat_interleave,
+    # Dtype casting methods (no dtype argument, implicit type)
+    "float": lambda x: x.float(),  # cast to float32
+    "half": lambda x: x.half(),    # cast to float16
+    "int": lambda x: x.int(),      # cast to int32
+    "long": lambda x: x.long(),    # cast to int64
+    "bool": lambda x: x.bool(),    # cast to bool
+}
+
+
+DEBUG_LOWERING = False  # Set to True to debug shape issues
+
 def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
-    inputs = {}
-    for node_input in node.inputs:
-        inputs[node_input.name] = runtime[node_input.name]
-    assert len(inputs) == len(node.inputs)
-    # lots of assumptions, still lots of hardcoded things here
-    # assuming that the order of elements matches the shader argument list order
-    if hasattr(torch.ops.webgpu, node.shader_name.value):
-        out = getattr(torch.ops.webgpu, node.shader_name.value)(*inputs.values())
-    elif hasattr(torch, node.shader_name.value):
-        out = getattr(torch, node.shader_name.value)(*inputs.values())
+    # Build args in the same order as the original FX node args
+    # by replacing tensor placeholders with actual tensors from runtime
+    fx_args = node.high_ir_node.fx_node.args
+    input_names = {inp.name for inp in node.inputs}
+
+    all_args = []
+    for arg in fx_args:
+        if hasattr(arg, 'name') and arg.name in input_names:
+            # This is a tensor input, get from runtime
+            all_args.append(runtime[arg.name])
+        elif isinstance(arg, (int, float, bool, type(None))):
+            all_args.append(arg)
+        elif isinstance(arg, torch.dtype):
+            all_args.append(arg)
+        elif isinstance(arg, (tuple, list)):
+            # Handle tuple/list args (e.g., normalized_shape for layer_norm)
+            all_args.append(arg)
+        # Skip other complex args
+
+    if DEBUG_LOWERING:
+        print(f"[DEBUG] run_shader: {node.shader_name}")
+        for i, a in enumerate(all_args):
+            if hasattr(a, 'shape'):
+                print(f"  Arg {i}: tensor shape={a.shape}")
+            else:
+                print(f"  Arg {i}: {type(a).__name__} = {a}")
+
+    # Get kwargs
+    fx_kwargs = node.high_ir_node.fx_node.kwargs
+
+    # shader_name can be an enum (with .value) or a plain string
+    shader_name = node.shader_name.value if hasattr(node.shader_name, 'value') else node.shader_name
+
+    # Look up the function
+    if shader_name in SHADER_TO_FUNC:
+        func = SHADER_TO_FUNC[shader_name]
+        out = func(*all_args, **fx_kwargs)
+    elif hasattr(torch.ops.webgpu, shader_name):
+        out = getattr(torch.ops.webgpu, shader_name)(*all_args, **fx_kwargs)
+    elif hasattr(torch, shader_name):
+        out = getattr(torch, shader_name)(*all_args, **fx_kwargs)
     else:
         raise Exception(
             f"I don't know where to put a relevant op for this shader: {node.shader_name}. Node: {node}"
         )
+    if DEBUG_LOWERING:
+        print(f"  Output: shape={out.shape if hasattr(out, 'shape') else 'N/A'}")
     runtime[node.value_id] = out
     return out
 
@@ -62,8 +157,14 @@ def move_to(node: LowIRMoveTo, runtime: Runtime):
 
 
 def output(node: LowIROutput, runtime: Runtime):
-    assert len(node.inputs) == 1
-    return runtime[node.inputs[0].name]
+    # torch.compile expects a tuple of outputs (matching FX GraphModule format)
+    # The output format is (tensor1, tensor2, ...) wrapped in a tuple
+    results = tuple(runtime[inp.name] for inp in node.inputs)
+    if DEBUG_LOWERING:
+        print(f"[DEBUG] output: returning tuple with {len(results)} tensor(s)")
+        for i, t in enumerate(results):
+            print(f"  [{i}] shape={t.shape if hasattr(t, 'shape') else 'N/A'}")
+    return results
 
 
 low_ir_to_webgpu_ops: dict[LowIROp, Callable] = {
@@ -75,11 +176,9 @@ low_ir_to_webgpu_ops: dict[LowIROp, Callable] = {
 }
 
 
-def lowering(nodes: List[LowIRNode]) -> Callable:
-    runtime: Runtime = {}
-    # hardcode to just see if the whole pipeline works
+def lowering(nodes: List[LowIRNode], placeholder_names: List[str] = None) -> Callable:
+    # Build list of ops to execute
     calls: List[Callable] = []
-    # TODO: use nodes instead of ops
     for node in nodes:
         webgpu_op = low_ir_to_webgpu_ops.get(node.ir_op)
         if webgpu_op is not None:
@@ -87,11 +186,22 @@ def lowering(nodes: List[LowIRNode]) -> Callable:
         else:
             print(f"WebGPU op is none for LowIROp: {node.ir_op}")
 
-    def program():
-        # ultra naive and non-flexible "scheduler", just to start with something
+    placeholder_names = placeholder_names or []
+
+    def program(*args):
+        # Initialize runtime with placeholder values
+        runtime: Runtime = {}
+        for name, value in zip(placeholder_names, args):
+            runtime[name] = value
+            if DEBUG_LOWERING:
+                print(f"[DEBUG] Placeholder '{name}': shape={value.shape if hasattr(value, 'shape') else 'N/A'}")
+
+        # Execute all ops
         output = None
         for call in calls:
             output = call(runtime)
+        if DEBUG_LOWERING:
+            print(f"[DEBUG] program returns: type={type(output)}, shape={output.shape if hasattr(output, 'shape') else 'N/A'}")
         return output
 
     return program
