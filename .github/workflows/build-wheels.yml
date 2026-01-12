@@ -85,6 +85,7 @@ jobs:
           # Copy headers
           cp -r dawn/include/webgpu dawn-install/include/ 2>/dev/null || true
           cp -r dawn/include/dawn dawn-install/include/ 2>/dev/null || true
+          cp -r dawn/out/Release/gen/include/dawn dawn-install/include/ 2>/dev/null || true
 
       - name: Verify installation
         run: |
@@ -175,6 +176,7 @@ jobs:
           # Copy headers
           cp -r dawn/include/webgpu dawn-install/include/ 2>/dev/null || true
           cp -r dawn/include/dawn dawn-install/include/ 2>/dev/null || true
+          cp -r dawn/out/Release/gen/include/dawn dawn-install/include/ 2>/dev/null || true
 
       - name: Verify installation
         run: |
