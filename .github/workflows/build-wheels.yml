@@ -22,19 +22,34 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dawn-install
-          key: dawn-v3-linux-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
+          key: dawn-v4-linux-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
+
+      - name: Check if cache is valid
+        id: check-cache
+        run: |
+          if [ -f "dawn-install/lib/libwebgpu_dawn.so" ]; then
+            echo "valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "valid=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Install dependencies
-        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        if: steps.check-cache.outputs.valid != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libx11-dev libx11-xcb-dev libxcb1-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 
       - name: Build Dawn
-        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        if: steps.check-cache.outputs.valid != 'true'
         run: |
+          rm -rf dawn-install dawn
           chmod +x scripts/build-dawn.sh
           ./scripts/build-dawn.sh dawn-install
+
+      - name: Verify build
+        run: |
+          ls -la dawn-install/lib/
+          test -f dawn-install/lib/libwebgpu_dawn.so
 
       - name: Upload Dawn artifact
         uses: actions/upload-artifact@v4
@@ -54,18 +69,33 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dawn-install
-          key: dawn-v3-macos-arm64-${{ hashFiles('scripts/build-dawn.sh') }}
+          key: dawn-v4-macos-arm64-${{ hashFiles('scripts/build-dawn.sh') }}
+
+      - name: Check if cache is valid
+        id: check-cache
+        run: |
+          if [ -f "dawn-install/lib/libwebgpu_dawn.dylib" ]; then
+            echo "valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "valid=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Install dependencies
-        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        if: steps.check-cache.outputs.valid != 'true'
         run: |
           brew install cmake ninja
 
       - name: Build Dawn
-        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        if: steps.check-cache.outputs.valid != 'true'
         run: |
+          rm -rf dawn-install dawn
           chmod +x scripts/build-dawn.sh
           ./scripts/build-dawn.sh dawn-install
+
+      - name: Verify build
+        run: |
+          ls -la dawn-install/lib/
+          test -f dawn-install/lib/libwebgpu_dawn.dylib
 
       - name: Upload Dawn artifact
         uses: actions/upload-artifact@v4
@@ -85,23 +115,40 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dawn-install
-          key: dawn-v3-windows-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
+          key: dawn-v4-windows-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
+
+      - name: Check if cache is valid
+        id: check-cache
+        shell: bash
+        run: |
+          if [ -f "dawn-install/lib/webgpu_dawn.dll" ]; then
+            echo "valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "valid=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Setup MSVC
-        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        if: steps.check-cache.outputs.valid != 'true'
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install dependencies
-        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        if: steps.check-cache.outputs.valid != 'true'
         run: |
           choco install cmake ninja git -y
 
       - name: Build Dawn
-        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        if: steps.check-cache.outputs.valid != 'true'
         shell: bash
         run: |
+          rm -rf dawn-install dawn
           chmod +x scripts/build-dawn.sh
           ./scripts/build-dawn.sh dawn-install
+
+      - name: Verify build
+        shell: bash
+        run: |
+          ls -la dawn-install/lib/
+          test -f dawn-install/lib/webgpu_dawn.dll
 
       - name: Upload Dawn artifact
         uses: actions/upload-artifact@v4
