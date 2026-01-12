@@ -101,6 +101,10 @@ That's ok. The main goal here is to build a bridge (for community) and learn ML 
 
 You can fund the project to give me more spare time to work on it. My email: `github@maczan.pl`
 
+### Did AI built it?
+
+The project started 26 Oct 2025. Once I made the project to the point where you could compile and run basic ML models on WebGPU, on 10 Jan 2026 I started to generate many missing ops with LLM. In just 2 days, AI boosted the project from compiling and running MLPs to running LLMs ❤️
+
 ### Open a GitHub issue if you have more questions. Thanks and let's build this bridge!
 
 ## Ops support 
