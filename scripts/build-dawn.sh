@@ -49,14 +49,46 @@ cmake --build "$BUILD_DIR" --target webgpu_dawn -j "$NUM_JOBS"
 echo "Installing Dawn to $INSTALL_PREFIX..."
 mkdir -p "$INSTALL_PREFIX/lib" "$INSTALL_PREFIX/include"
 
-# Copy library (handle different platforms)
-if [ -f "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.so" ]; then
-    cp "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.so" "$INSTALL_PREFIX/lib/"
-elif [ -f "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.dylib" ]; then
-    cp "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.dylib" "$INSTALL_PREFIX/lib/"
-elif [ -f "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.dll" ]; then
-    cp "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.dll" "$INSTALL_PREFIX/lib/"
-    cp "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.lib" "$INSTALL_PREFIX/lib/" 2>/dev/null || true
+# Find and copy library (handle different platforms and build configurations)
+echo "Searching for Dawn library..."
+FOUND_LIB=""
+
+# Search for the library in common locations
+for lib_path in \
+    "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.so" \
+    "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.dylib" \
+    "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.dll" \
+    "$BUILD_DIR/libwebgpu_dawn.so" \
+    "$BUILD_DIR/libwebgpu_dawn.dylib" \
+    ; do
+    if [ -f "$lib_path" ]; then
+        echo "Found: $lib_path"
+        FOUND_LIB="$lib_path"
+        cp "$lib_path" "$INSTALL_PREFIX/lib/"
+        break
+    fi
+done
+
+# Also try find command as fallback
+if [ -z "$FOUND_LIB" ]; then
+    echo "Searching with find..."
+    FOUND_LIB=$(find "$BUILD_DIR" -name "libwebgpu_dawn.*" -o -name "webgpu_dawn.dll" 2>/dev/null | head -1)
+    if [ -n "$FOUND_LIB" ]; then
+        echo "Found via find: $FOUND_LIB"
+        cp "$FOUND_LIB" "$INSTALL_PREFIX/lib/"
+    fi
+fi
+
+# Windows: also copy .lib file if present
+if [ -f "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.lib" ]; then
+    cp "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.lib" "$INSTALL_PREFIX/lib/"
+fi
+
+if [ -z "$FOUND_LIB" ]; then
+    echo "ERROR: Could not find Dawn library!"
+    echo "Contents of BUILD_DIR:"
+    find "$BUILD_DIR" -name "*webgpu*" -o -name "*dawn*" 2>/dev/null | head -20
+    exit 1
 fi
 
 # Copy headers
