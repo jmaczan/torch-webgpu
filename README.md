@@ -103,7 +103,7 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 
 ### Did AI built it?
 
-The project started 26 Oct 2025. I was coding things by hand and learning a lot about PyTorch internals and ML compilation in general. Once I made the project to the point where you could compile and run basic ML models on WebGPU, on 10 Jan 2026 I started to generate many missing ops with LLM. In just 2 days, AI boosted the project from compiling and running MLPs to running LLMs ❤️`
+The project started 26 Oct 2025. I was coding things by hand and learning a lot about PyTorch internals and ML compilation in general. Once I made the project to the point where you could compile and run basic ML models on WebGPU, on 10 Jan 2026 I started to generate many missing ops with LLM. In just 2 days, AI boosted the project from compiling and running MLPs to running LLMs ❤️
 
 ### Open a GitHub issue if you have more questions. Thanks and let's build this bridge!
 
