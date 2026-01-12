@@ -332,6 +332,8 @@ jobs:
     name: Build wheels (Windows)
     needs: build-dawn-windows
     runs-on: windows-latest
+    env:
+      DISTUTILS_USE_SDK: "1"
     steps:
       - uses: actions/checkout@v4
 
