@@ -87,9 +87,16 @@ if [ -z "$FOUND_LIB" ]; then
     fi
 fi
 
-# Windows: also copy .lib file if present
+# Windows: also copy .lib file if present (import library for linking)
+FOUND_IMPORT_LIB=""
 if [ -f "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.lib" ]; then
-    cp "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.lib" "$INSTALL_PREFIX/lib/"
+    FOUND_IMPORT_LIB="$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.lib"
+    cp "$FOUND_IMPORT_LIB" "$INSTALL_PREFIX/lib/"
+else
+    FOUND_IMPORT_LIB=$(find "$BUILD_DIR" -name "webgpu_dawn.lib" 2>/dev/null | head -1 || true)
+    if [ -n "$FOUND_IMPORT_LIB" ]; then
+        cp "$FOUND_IMPORT_LIB" "$INSTALL_PREFIX/lib/"
+    fi
 fi
 
 if [ -z "$FOUND_LIB" ]; then
@@ -103,6 +110,7 @@ fi
 cp -r "$DAWN_DIR/include/webgpu" "$INSTALL_PREFIX/include/" 2>/dev/null || true
 cp -r "$DAWN_DIR/include/dawn" "$INSTALL_PREFIX/include/" 2>/dev/null || true
 cp -r "$BUILD_DIR/gen/include/dawn" "$INSTALL_PREFIX/include/" 2>/dev/null || true
+cp -r "$BUILD_DIR/gen/include/webgpu" "$INSTALL_PREFIX/include/" 2>/dev/null || true
 
 echo ""
 echo "Dawn built successfully!"
