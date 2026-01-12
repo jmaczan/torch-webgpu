@@ -4,7 +4,7 @@ from enum import StrEnum, auto
 
 from .compiler_pass import CompilerPass
 from .ir import IRNode
-from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp
+from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp, HighIRArange
 
 
 class LowIROp(StrEnum):
@@ -127,6 +127,7 @@ class LowIROutput(LowIRNode):
 
 
 high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
+    # Existing ops
     HighIROp.CREATE_TENSOR: [LowIROp.CREATE_BUFFER, LowIROp.WRITE_BUFFER],
     HighIROp.MUL: [LowIROp.RUN_SHADER],
     HighIROp.FUSED_ADD_RELU: [LowIROp.RUN_SHADER],
@@ -135,6 +136,73 @@ high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.MM: [LowIROp.RUN_SHADER],
     HighIROp.MOVE_TO: [LowIROp.MOVE_TO],
     HighIROp.OUTPUT: [LowIROp.OUTPUT],
+    # Basic arithmetic
+    HighIROp.SUB: [LowIROp.RUN_SHADER],
+    HighIROp.DIV: [LowIROp.RUN_SHADER],
+    HighIROp.NEG: [LowIROp.RUN_SHADER],
+    # Matrix ops
+    HighIROp.MATMUL: [LowIROp.RUN_SHADER],
+    # Activation functions
+    HighIROp.SILU: [LowIROp.RUN_SHADER],
+    HighIROp.GELU: [LowIROp.RUN_SHADER],
+    HighIROp.TANH: [LowIROp.RUN_SHADER],
+    # Unary math
+    HighIROp.COS: [LowIROp.RUN_SHADER],
+    HighIROp.SIN: [LowIROp.RUN_SHADER],
+    HighIROp.EXP: [LowIROp.RUN_SHADER],
+    HighIROp.SQRT: [LowIROp.RUN_SHADER],
+    HighIROp.RSQRT: [LowIROp.RUN_SHADER],
+    HighIROp.POW: [LowIROp.RUN_SHADER],
+    # Reductions
+    HighIROp.SUM: [LowIROp.RUN_SHADER],
+    HighIROp.MEAN: [LowIROp.RUN_SHADER],
+    HighIROp.MAX: [LowIROp.RUN_SHADER],
+    HighIROp.MIN: [LowIROp.RUN_SHADER],
+    HighIROp.ARGMAX: [LowIROp.RUN_SHADER],
+    HighIROp.CUMSUM: [LowIROp.RUN_SHADER],
+    # Softmax
+    HighIROp.SOFTMAX: [LowIROp.RUN_SHADER],
+    # Normalization
+    HighIROp.LAYER_NORM: [LowIROp.RUN_SHADER],
+    # Linear and embedding
+    HighIROp.LINEAR: [LowIROp.RUN_SHADER],
+    HighIROp.EMBEDDING: [LowIROp.RUN_SHADER],
+    # Shape ops
+    HighIROp.VIEW: [LowIROp.RUN_SHADER],
+    HighIROp.RESHAPE: [LowIROp.RUN_SHADER],
+    HighIROp.UNSQUEEZE: [LowIROp.RUN_SHADER],
+    HighIROp.SQUEEZE: [LowIROp.RUN_SHADER],
+    HighIROp.TRANSPOSE: [LowIROp.RUN_SHADER],
+    HighIROp.PERMUTE: [LowIROp.RUN_SHADER],
+    HighIROp.CONTIGUOUS: [LowIROp.RUN_SHADER],
+    HighIROp.CLONE: [LowIROp.RUN_SHADER],
+    HighIROp.EXPAND: [LowIROp.RUN_SHADER],
+    HighIROp.CAT: [LowIROp.RUN_SHADER],
+    # Tensor creation
+    HighIROp.ARANGE: [LowIROp.CREATE_BUFFER, LowIROp.RUN_SHADER],
+    HighIROp.FULL: [LowIROp.CREATE_BUFFER, LowIROp.RUN_SHADER],
+    HighIROp.ZEROS: [LowIROp.CREATE_BUFFER, LowIROp.RUN_SHADER],
+    HighIROp.ONES: [LowIROp.CREATE_BUFFER, LowIROp.RUN_SHADER],
+    # Indexing
+    HighIROp.GETITEM: [LowIROp.RUN_SHADER],
+    HighIROp.SELECT: [LowIROp.RUN_SHADER],
+    HighIROp.SLICE: [LowIROp.RUN_SHADER],
+    HighIROp.INDEX: [LowIROp.RUN_SHADER],
+    # Comparisons
+    HighIROp.EQ: [LowIROp.RUN_SHADER],
+    HighIROp.NE: [LowIROp.RUN_SHADER],
+    HighIROp.LT: [LowIROp.RUN_SHADER],
+    HighIROp.LE: [LowIROp.RUN_SHADER],
+    HighIROp.GT: [LowIROp.RUN_SHADER],
+    HighIROp.GE: [LowIROp.RUN_SHADER],
+    # Masking
+    HighIROp.WHERE: [LowIROp.RUN_SHADER],
+    HighIROp.MASKED_FILL: [LowIROp.RUN_SHADER],
+    HighIROp.TRIU: [LowIROp.RUN_SHADER],
+    # Dropout
+    HighIROp.DROPOUT: [LowIROp.RUN_SHADER],
+    # Attention
+    HighIROp.SCALED_DOT_PRODUCT_ATTENTION: [LowIROp.RUN_SHADER],
 }
 
 low_ir_op_to_low_ir_node: dict[LowIROp, type[LowIRNode]] = {
