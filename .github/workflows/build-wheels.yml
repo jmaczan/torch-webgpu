@@ -41,6 +41,7 @@ jobs:
           mkdir -p out/Release
           cmake -S . -B out/Release \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dawn-install \
             -DBUILD_SHARED_LIBS=OFF \
             -DDAWN_BUILD_MONOLITHIC_LIBRARY=SHARED \
@@ -86,6 +87,7 @@ jobs:
           cp -r dawn/include/webgpu dawn-install/include/ 2>/dev/null || true
           cp -r dawn/include/dawn dawn-install/include/ 2>/dev/null || true
           cp -r dawn/out/Release/gen/include/dawn dawn-install/include/ 2>/dev/null || true
+          cp -r dawn/out/Release/gen/include/webgpu dawn-install/include/ 2>/dev/null || true
 
       - name: Verify installation
         run: |
@@ -177,6 +179,7 @@ jobs:
           cp -r dawn/include/webgpu dawn-install/include/ 2>/dev/null || true
           cp -r dawn/include/dawn dawn-install/include/ 2>/dev/null || true
           cp -r dawn/out/Release/gen/include/dawn dawn-install/include/ 2>/dev/null || true
+          cp -r dawn/out/Release/gen/include/webgpu dawn-install/include/ 2>/dev/null || true
 
       - name: Verify installation
         run: |
@@ -238,6 +241,7 @@ jobs:
         run: |
           ls -la dawn-install/lib/
           test -f dawn-install/lib/webgpu_dawn.dll
+          test -f dawn-install/lib/webgpu_dawn.lib
 
       - name: Upload Dawn artifact
         uses: actions/upload-artifact@v4
@@ -277,6 +281,7 @@ jobs:
       - name: Build wheel
         env:
           DAWN_PREFIX: ${{ github.workspace }}/dawn-install
+          ARCHFLAGS: "-arch arm64"
         run: |
           pip wheel . --no-deps --no-build-isolation -w dist/
 
