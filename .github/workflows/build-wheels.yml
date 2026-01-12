@@ -17,39 +17,83 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Dawn
-        id: cache-dawn
-        uses: actions/cache@v4
-        with:
-          path: dawn-install
-          key: dawn-v5-linux-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
-
-      - name: Check if cache is valid
-        id: check-cache
+      - name: Show environment
         run: |
-          if [ -f "dawn-install/lib/libwebgpu_dawn.so" ]; then
-            echo "valid=true" >> $GITHUB_OUTPUT
-          else
-            echo "valid=false" >> $GITHUB_OUTPUT
-          fi
+          echo "Linux version:"
+          uname -a
+          cat /etc/os-release
+          echo "Available disk space:"
+          df -h
 
       - name: Install dependencies
-        if: steps.check-cache.outputs.valid != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libx11-dev libx11-xcb-dev libxcb1-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 
-      - name: Build Dawn
-        if: steps.check-cache.outputs.valid != 'true'
+      - name: Clone Dawn
         run: |
-          rm -rf dawn-install dawn
-          chmod +x scripts/build-dawn.sh
-          ./scripts/build-dawn.sh dawn-install
+          git clone --depth 1 https://dawn.googlesource.com/dawn
+          echo "Dawn cloned successfully"
 
-      - name: Verify build
+      - name: Configure Dawn
         run: |
+          cd dawn
+          mkdir -p out/Release
+          cmake -S . -B out/Release \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dawn-install \
+            -DDAWN_FETCH_DEPENDENCIES=ON \
+            -DDAWN_ENABLE_D3D11=OFF \
+            -DDAWN_ENABLE_D3D12=OFF \
+            -DDAWN_ENABLE_NULL=OFF \
+            -DDAWN_ENABLE_DESKTOP_GL=OFF \
+            -DDAWN_ENABLE_OPENGLES=OFF \
+            -DDAWN_BUILD_SAMPLES=OFF \
+            -DTINT_BUILD_TESTS=OFF \
+            -DTINT_BUILD_CMD_TOOLS=OFF
+          echo "CMake configure completed"
+
+      - name: Build Dawn
+        run: |
+          cd dawn
+          cmake --build out/Release --target webgpu_dawn -j$(nproc)
+          echo "Build completed"
+
+      - name: Find and install library
+        run: |
+          echo "=== Searching for library ==="
+          find dawn -name "libwebgpu_dawn*" 2>/dev/null || echo "No library found"
+
+          echo "=== Contents of dawn/out/Release/src/dawn/native ==="
+          ls -la dawn/out/Release/src/dawn/native/ 2>/dev/null || echo "Directory not found"
+
+          mkdir -p dawn-install/lib dawn-install/include
+
+          # Try multiple possible locations
+          if [ -f "dawn/out/Release/src/dawn/native/libwebgpu_dawn.so" ]; then
+            cp dawn/out/Release/src/dawn/native/libwebgpu_dawn.so dawn-install/lib/
+            echo "Copied from src/dawn/native/"
+          elif [ -f "dawn/out/Release/libwebgpu_dawn.so" ]; then
+            cp dawn/out/Release/libwebgpu_dawn.so dawn-install/lib/
+            echo "Copied from out/Release/"
+          else
+            echo "ERROR: Library not found in expected locations"
+            echo "=== Full search of out/Release ==="
+            find dawn/out/Release -name "*.so" -o -name "*.a" 2>/dev/null | head -30
+            exit 1
+          fi
+
+          # Copy headers
+          cp -r dawn/include/webgpu dawn-install/include/ 2>/dev/null || true
+          cp -r dawn/include/dawn dawn-install/include/ 2>/dev/null || true
+
+      - name: Verify installation
+        run: |
+          echo "=== dawn-install contents ==="
+          find dawn-install -type f
+          echo "=== Library check ==="
           ls -la dawn-install/lib/
-          test -f dawn-install/lib/libwebgpu_dawn.so
+          file dawn-install/lib/libwebgpu_dawn.so
 
       - name: Upload Dawn artifact
         uses: actions/upload-artifact@v4
@@ -64,22 +108,83 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Show environment
+        run: |
+          echo "macOS version:"
+          sw_vers
+          echo "Xcode version:"
+          xcodebuild -version
+          echo "Available disk space:"
+          df -h
+
       - name: Install dependencies
         run: |
           brew install cmake ninja
 
+      - name: Clone Dawn
+        run: |
+          git clone --depth 1 https://dawn.googlesource.com/dawn
+          echo "Dawn cloned successfully"
+
+      - name: Configure Dawn
+        run: |
+          cd dawn
+          mkdir -p out/Release
+          cmake -S . -B out/Release \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dawn-install \
+            -DDAWN_FETCH_DEPENDENCIES=ON \
+            -DDAWN_ENABLE_D3D11=OFF \
+            -DDAWN_ENABLE_D3D12=OFF \
+            -DDAWN_ENABLE_NULL=OFF \
+            -DDAWN_ENABLE_DESKTOP_GL=OFF \
+            -DDAWN_ENABLE_OPENGLES=OFF \
+            -DDAWN_BUILD_SAMPLES=OFF \
+            -DTINT_BUILD_TESTS=OFF \
+            -DTINT_BUILD_CMD_TOOLS=OFF
+          echo "CMake configure completed"
+
       - name: Build Dawn
         run: |
-          rm -rf dawn-install dawn
-          chmod +x scripts/build-dawn.sh
-          ./scripts/build-dawn.sh dawn-install
+          cd dawn
+          cmake --build out/Release --target webgpu_dawn -j$(sysctl -n hw.ncpu)
+          echo "Build completed"
 
-      - name: Verify build
+      - name: Find and install library
         run: |
-          echo "=== Contents of dawn-install ==="
-          find dawn-install -type f 2>/dev/null | head -50 || echo "dawn-install not found"
-          echo "=== Checking for library ==="
-          ls -la dawn-install/lib/ || echo "lib directory not found"
+          echo "=== Searching for library ==="
+          find dawn -name "libwebgpu_dawn*" -o -name "webgpu_dawn*" 2>/dev/null || echo "No library found with find"
+
+          echo "=== Contents of dawn/out/Release/src/dawn/native ==="
+          ls -la dawn/out/Release/src/dawn/native/ 2>/dev/null || echo "Directory not found"
+
+          mkdir -p dawn-install/lib dawn-install/include
+
+          # Try multiple possible locations
+          if [ -f "dawn/out/Release/src/dawn/native/libwebgpu_dawn.dylib" ]; then
+            cp dawn/out/Release/src/dawn/native/libwebgpu_dawn.dylib dawn-install/lib/
+            echo "Copied from src/dawn/native/"
+          elif [ -f "dawn/out/Release/libwebgpu_dawn.dylib" ]; then
+            cp dawn/out/Release/libwebgpu_dawn.dylib dawn-install/lib/
+            echo "Copied from out/Release/"
+          else
+            echo "ERROR: Library not found in expected locations"
+            echo "=== Full search of out/Release ==="
+            find dawn/out/Release -name "*.dylib" -o -name "*.so" -o -name "*.a" 2>/dev/null | head -30
+            exit 1
+          fi
+
+          # Copy headers
+          cp -r dawn/include/webgpu dawn-install/include/ 2>/dev/null || true
+          cp -r dawn/include/dawn dawn-install/include/ 2>/dev/null || true
+
+      - name: Verify installation
+        run: |
+          echo "=== dawn-install contents ==="
+          find dawn-install -type f
+          echo "=== Library check ==="
+          ls -la dawn-install/lib/
+          file dawn-install/lib/libwebgpu_dawn.dylib
 
       - name: Upload Dawn artifact
         uses: actions/upload-artifact@v4
