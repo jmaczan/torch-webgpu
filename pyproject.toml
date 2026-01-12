@@ -25,8 +25,13 @@ dependencies = [
     "numpy",
 ]
 
+[project.optional-dependencies]
+docs = ["mkdocs", "mkdocs-material"]
+dev = ["pytest", "mkdocs", "mkdocs-material"]
+
 [project.urls]
 Homepage = "https://github.com/jmaczan/torch-webgpu"
+Documentation = "https://jmaczan.github.io/torch-webgpu"
 Repository = "https://github.com/jmaczan/torch-webgpu"
 Issues = "https://github.com/jmaczan/torch-webgpu/issues"
 

@@ -1,0 +1,71 @@
+site_name: torch-webgpu
+site_url: https://jmaczan.github.io/torch-webgpu
+site_description: WebGPU backend for PyTorch
+site_author: Jędrzej Maczan
+repo_url: https://github.com/jmaczan/torch-webgpu
+repo_name: jmaczan/torch-webgpu
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - Guide:
+    - Using device="webgpu": guide/device.md
+    - Using torch.compile: guide/compile.md
+    - Supported Ops: guide/ops.md
+  - Examples:
+    - Run Qwen LLM: examples/qwen.md
+  - Development:
+    - Contributing: development/contributing.md
+    - Building from Source: development/building.md
+    - Running Tests: development/testing.md
+  - API Reference: api.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/jmaczan/torch-webgpu
