@@ -334,6 +334,7 @@ jobs:
     runs-on: windows-latest
     env:
       DISTUTILS_USE_SDK: "1"
+      USE_NINJA: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -359,7 +360,7 @@ jobs:
         env:
           DAWN_PREFIX: ${{ github.workspace }}/dawn-install
         run: |
-          pip wheel . --no-deps --no-build-isolation -w dist/
+          pip wheel -v . --no-deps --no-build-isolation -w dist/
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
