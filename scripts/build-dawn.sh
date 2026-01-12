@@ -5,8 +5,14 @@
 
 set -e
 
-INSTALL_PREFIX="${1:-$PWD/dawn-install}"
-DAWN_DIR="${DAWN_DIR:-$PWD/dawn}"
+ROOT_DIR="$PWD"
+INSTALL_PREFIX="${1:-$ROOT_DIR/dawn-install}"
+DAWN_DIR="${DAWN_DIR:-$ROOT_DIR/dawn}"
+
+# Normalize install prefix to an absolute path so relative args work after cd.
+if [[ "$INSTALL_PREFIX" != /* ]]; then
+    INSTALL_PREFIX="$ROOT_DIR/$INSTALL_PREFIX"
+fi
 NUM_JOBS="${NUM_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
 echo "Building Dawn..."
