@@ -1,39 +1,54 @@
 # torch-webgpu
 Experimental WebGPU backend for PyTorch
 
-Not even 0.0.1 release yet! I make the repository public, so you give me support and I can get some dopamine out of it (building alone, in private, after day job, without a positive feedback - it is quite difficult, at least to me!)
+12.01.2026 reached 0.0.1!
 
-**Goals**:
+**Now supported:**:
 1. Run PyTorch on WebGPU `device="webgpu"`
 2. Compile PyTorch code for WebGPU - `@torch.compile(m, backend=webgpu)`
-3. High performance without platform specific (CUDA, MPS, ROCm) kernels. Five ingredients are enough to get there - PyTorch, Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
+
+**Next steps:**
+1. Compiler optimizations
+2. High performance without platform specific (CUDA, MPS, ROCm) kernels. Five ingredients are enough to get there - PyTorch, Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
 
 <p align="center">
-<img src="webgpu.png" height="200" width="200">
+<img src="webgpu.png" height="100" width="100">
 </p>
 <span>WebGPU logo by <a href="https://www.w3.org/"><abbr title="World Wide Web Consortium">W3C</abbr></a></span>
 
 ## Coolest thing you can do with torch-webgpu now
-**Compile and run: allocate tensors on WebGPU device, compute add+relu on WebGPU (fused during compilation to a single op) and move data between CPU and WebGPU!**
+**Compile and run a real LLM on WebGPU: Qwen/Qwen2.5-0.5B-Instruct with `@torch.compile(backend=webgpu_backend)`!**
 
 ```py
-@torch.compile(backend=webgpu_backend)
-def fn():
-    a = torch.tensor([-1.5, 2.7, 1.0, 2.0], device="webgpu")
-    b = torch.tensor([-1.0, 0.9, 1.1, -2.1], device="webgpu")
-    result = a + b
-    result = torch.relu(result)
-    result = result.to("cpu")
-    return result
-result = fn()
-expected = torch.tensor([0, 3.6, 2.1, 0], device="cpu")
-assert torch.allclose(result, expected)
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from torch_webgpu.compiler.webgpu_compiler import webgpu_backend
+
+model = AutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen2.5-0.5B-Instruct", torch_dtype=torch.float32
+)
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+model.eval()
+
+compiled_model = torch.compile(model, backend=webgpu_backend)
+
+with torch.no_grad():
+    inputs = tokenizer("Hello, how are you?", return_tensors="pt")
+    input_ids = inputs["input_ids"]
+    generated_ids = input_ids.clone()
+    outputs = compiled_model(input_ids)
+    for _ in range(10):
+        outputs = compiled_model(generated_ids)
+        next_token = outputs.logits[0, -1].argmax().unsqueeze(0).unsqueeze(0)
+        generated_ids = torch.cat([generated_ids, next_token], dim=1)
+    print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
 ```
 
-This is a TL;DR showcase of where we currently are with torch-webgpu. It will get regularly updated when new features land
+Run tests: `pytest tests/test_qwen_compile.py -v`
 
 ## Installation
-Only for developers and curious *very* early adopters
+
+**Installation will be radically simplfied soon!**
 
 1. Clone this repo
 
@@ -82,138 +97,8 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 
 ### Open a GitHub issue if you have more questions. Thanks and let's build this bridge!
 
-## ATen Ops
-
-### Core
-
-- [x] empty.memory_format
-- [x] empty_strided
-- [x] as_strided
-- [x] copy_
-- [x] _copy_from
-- [x] to.device
-- [ ] empty_like
-- [ ] zeros_like
-- [ ] ones_like
-- [ ] arange
-- [ ] full
-- [ ] rand
-- [ ] randn
-- [ ] clone
-- [ ] to.dtype
-- [ ] to
-- [ ] quantize_per_tensor
-- [ ] dequantize
-
-### Arithmetic and activation functions
-
-f32 only for now!
-
-- [x] add.Tensor
-- [x] gelu
-- [x] silu
-- [x] relu
-- [x] masked_select
-- [x] mul.out
-- [ ] add.Scalar
-- [ ] add
-- [ ] sub.Tensor
-- [ ] sub
-- [ ] mul.Tensor
-- [ ] mul
-- [ ] div.Tensor
-- [ ] div
-- [ ] neg
-- [ ] pow.Tensor_Scalar
-- [ ] pow
-- [ ] sqrt
-- [ ] rsqrt
-- [ ] abs
-- [ ] exp
-- [ ] log
-- [ ] tanh
-- [ ] sigmoid
-- [ ] clamp_min
-- [ ] clamp
-- [ ] round
-- [ ] floor
-- [ ] ceil
-- [ ] minimum
-- [ ] maximum
-- [ ] where.self
-- [ ] where
-- [ ] masked_fill
-
-### Comparisons
-
-- [x] bitwise_and.Tensor
-- [x] eq.Tensor
-- [x] ne.Scalar
-- [ ] ne.Tensor
-- [ ] lt.Tensor
-- [ ] le.Tensor
-- [ ] gt.Tensor
-- [ ] ge.Tensor
-
-### Stats
-
-- [ ] sum.dim_IntList
-- [ ] sum
-- [ ] mean.dim
-- [ ] mean
-- [ ] amax
-- [ ] amin
-- [ ] argmax
-- [ ] argmin
-- [ ] var_mean
-- [ ] topk
-
-### Tensor shapes, view, etc
-
-- [x] view
-- [x] resize
-- [x] reshape
-- [ ] flatten
-- [ ] permute
-- [ ] transpose.int
-- [ ] transpose
-- [ ] contiguous
-- [ ] unsqueeze
-- [ ] squeeze
-- [ ] cat
-- [ ] stack
-- [ ] slice.Tensor
-- [ ] slice
-- [ ] select
-- [ ] narrow
-- [ ] expand
-- [ ] broadcast_to
-- [ ] index_select
-
-### Linalg and attn
-
-- [ ] addmm
-- [ ] mm
-- [ ] bmm
-- [ ] matmul
-- [ ] scaled_dot_product_attention
-- [ ] _log_softmax
-- [ ] softmax.int
-- [ ] softmax
-- [ ] layer_norm
-- [ ] native_layer_norm
-- [ ] rms_norm
-- [ ] batch_norm
-- [ ] group_norm
-- [ ] embedding
-
-### Convolutions
-
-- [ ] conv2d
-- [ ] conv2d_backward
-- [ ] adaptive_avg_pool2d
-- [ ] max_pool2d
-- [ ] interpolate
+## Ops support 
+Most of the important ops are implemented. If any is missing, feel free to open a PR or an issue. Thanks!
 
 ## Device / to
 
@@ -225,11 +110,9 @@ f32 only for now!
 
 ## Rough edges
 
-This list helps me pick up what to work on next, aside of adding new ops
-
+- performance wasn't a priority yet
 - only float32 supported
 - `wgpu::Queue.Submit()` handled synchronously
-- not enough unit tests ([a standarized testing out-of-tree backends is still in progress as of Dec 2025](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270), I hope to [involve torch-webgpu into this effort](https://dev-discuss.pytorch.org/t/testing-in-privateuse1-for-out-of-tree-pytorch-backends/3270/6))
 - some ops might fallback to CPU
 
 ## Resources
