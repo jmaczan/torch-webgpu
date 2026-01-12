@@ -269,13 +269,14 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          pip install build wheel torch numpy
+          pip install build wheel numpy
+          pip install --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple torch
 
       - name: Build wheel
         env:
           DAWN_PREFIX: ${{ github.workspace }}/dawn-install
         run: |
-          pip wheel . --no-deps -w dist/
+          pip wheel . --no-deps --no-build-isolation -w dist/
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
@@ -310,7 +311,7 @@ jobs:
         env:
           DAWN_PREFIX: ${{ github.workspace }}/dawn-install
         run: |
-          pip wheel . --no-deps -w dist/
+          pip wheel . --no-deps --no-build-isolation -w dist/
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
@@ -348,7 +349,7 @@ jobs:
         env:
           DAWN_PREFIX: ${{ github.workspace }}/dawn-install
         run: |
-          pip wheel . --no-deps -w dist/
+          pip wheel . --no-deps --no-build-isolation -w dist/
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
