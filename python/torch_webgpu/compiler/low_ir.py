@@ -108,16 +108,36 @@ class LowIRMoveTo(LowIRNode):
         self, high_ir_node: HighIRNode, value_id: Any = None, inputs: List[Any] = []
     ):
         super().__init__(high_ir_node, value_id=value_id, inputs=inputs)
-        # TODO: make this condition more reliable
-        if len(high_ir_node.fx_node.args) and isinstance(
-            high_ir_node.fx_node.args[1], str
-        ):
-            self.to_device = high_ir_node.fx_node.args[1]
-        else:
+        # Extract device from args or kwargs
+        fx_args = high_ir_node.fx_node.args
+        fx_kwargs = high_ir_node.fx_node.kwargs
+
+        # Try to extract device from args[1] or kwargs['device']
+        device_arg = None
+        if len(fx_args) >= 2:
+            device_arg = fx_args[1]
+        elif 'device' in fx_kwargs:
+            device_arg = fx_kwargs['device']
+
+        if device_arg is not None:
+            if isinstance(device_arg, str):
+                self.to_device = device_arg
+            elif isinstance(device_arg, torch.device):
+                self.to_device = str(device_arg)
+            elif hasattr(device_arg, 'type'):  # torch.device-like
+                self.to_device = device_arg.type
+
+        # If still no device, try to infer from example_value metadata
+        if self.to_device is None and "example_value" in high_ir_node.fx_node.meta:
+            example = high_ir_node.fx_node.meta["example_value"]
+            if hasattr(example, 'device'):
+                self.to_device = str(example.device)
+
+        if self.to_device is None:
             raise Exception(
                 "Can't build LowIRMoveTo, because I don't know where the tensor should be moved to.",
                 f"Debug context: high_ir_node={high_ir_node}, ",
-                f"value_id={value_id}, inputs={inputs}",
+                f"value_id={value_id}, inputs={inputs}, args={fx_args}, kwargs={fx_kwargs}",
             )
 
 
@@ -167,6 +187,19 @@ high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.ARGMAX: [LowIROp.RUN_SHADER],
     HighIROp.CUMSUM: [LowIROp.RUN_SHADER],
     HighIROp.REPEAT_INTERLEAVE: [LowIROp.RUN_SHADER],
+    HighIROp.SET_GRAD_ENABLED: [],  # No-op for inference (returns None)
+    # vmap batch operations
+    HighIROp.ADD_BATCH_DIM: [LowIROp.RUN_SHADER],
+    HighIROp.REMOVE_BATCH_DIM: [LowIROp.RUN_SHADER],
+    HighIROp.VMAP_INCREMENT_NESTING: [LowIROp.RUN_SHADER],
+    HighIROp.VMAP_DECREMENT_NESTING: [LowIROp.RUN_SHADER],
+    # Internal PyTorch ops (return None)
+    HighIROp.LAZY_LOAD_DECOMPOSITIONS: [LowIROp.RUN_SHADER],
+    HighIROp.ENTER_AUTOCAST: [LowIROp.RUN_SHADER],
+    HighIROp.EXIT_AUTOCAST: [LowIROp.RUN_SHADER],
+    HighIROp.LOG_API_USAGE: [LowIROp.RUN_SHADER],
+    # Scalar extraction
+    HighIROp.ITEM: [LowIROp.RUN_SHADER],  # Extract scalar from tensor
     # Softmax
     HighIROp.SOFTMAX: [LowIROp.RUN_SHADER],
     # Normalization

@@ -65,7 +65,7 @@ SHADER_TO_FUNC = {
     "tanh": torch.tanh,
     "cat": torch.cat,
     "view": lambda x, *args: x.view(*args),
-    "reshape": torch.reshape,
+    "reshape": lambda x, *shape: x.reshape(*shape) if len(shape) > 1 else x.reshape(shape[0]),
     "transpose": torch.transpose,
     "permute": lambda x, *args: x.permute(*args),
     "unsqueeze": torch.unsqueeze,
@@ -80,6 +80,7 @@ SHADER_TO_FUNC = {
     "gt": torch.gt,
     "ge": torch.ge,
     "where": torch.where,
+    "getitem": lambda x, idx: x[idx],  # indexing/slicing
     "fused_add_relu": lambda a, b: torch.relu(torch.add(a, b)),
     "cast": lambda x, dtype: x.to(dtype) if dtype else x,  # Perform dtype cast
     "scaled_dot_product_attention": F.scaled_dot_product_attention,
@@ -90,30 +91,54 @@ SHADER_TO_FUNC = {
     "int": lambda x: x.int(),      # cast to int32
     "long": lambda x: x.long(),    # cast to int64
     "bool": lambda x: x.bool(),    # cast to bool
+    # Scalar extraction
+    "item": lambda x: x.item(),    # extract scalar from single-element tensor
+    # vmap batch dimension operations (use actual PyTorch implementations)
+    "add_batch_dim": lambda *args, **kwargs: torch._functorch.predispatch._add_batch_dim(*args, **kwargs),
+    "remove_batch_dim": lambda *args, **kwargs: torch._functorch.predispatch._remove_batch_dim(*args, **kwargs),
+    "vmap_increment_nesting": lambda *args, **kwargs: torch._functorch.predispatch._vmap_increment_nesting(*args, **kwargs),
+    "vmap_decrement_nesting": lambda *args, **kwargs: torch._functorch.predispatch._vmap_decrement_nesting(*args, **kwargs),
+    # Other internal ops
+    "lazy_load_decompositions": lambda *args, **kwargs: None,  # Just load decompositions, return nothing
+    "enter_autocast": lambda *args, **kwargs: None,  # Autocast context enter
+    "exit_autocast": lambda *args, **kwargs: None,  # Autocast context exit
+    "log_api_usage": lambda *args, **kwargs: None,  # API logging, no-op
 }
 
 
 DEBUG_LOWERING = False  # Set to True to debug shape issues
 
+
+def _resolve_arg(arg, runtime: Runtime):
+    """Recursively resolve FX Node arguments to actual tensor values."""
+    if hasattr(arg, 'name'):
+        # This is an FX Node, get its value from runtime
+        if arg.name in runtime:
+            return runtime[arg.name]
+        # If not in runtime, might be a placeholder that wasn't used
+        return arg
+    elif isinstance(arg, (int, float, bool, type(None), torch.dtype)):
+        return arg
+    elif isinstance(arg, tuple):
+        return tuple(_resolve_arg(a, runtime) for a in arg)
+    elif isinstance(arg, list):
+        return [_resolve_arg(a, runtime) for a in arg]
+    elif isinstance(arg, slice):
+        # Resolve any nodes inside the slice
+        start = _resolve_arg(arg.start, runtime) if arg.start is not None else None
+        stop = _resolve_arg(arg.stop, runtime) if arg.stop is not None else None
+        step = _resolve_arg(arg.step, runtime) if arg.step is not None else None
+        return slice(start, stop, step)
+    else:
+        return arg
+
+
 def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
     # Build args in the same order as the original FX node args
     # by replacing tensor placeholders with actual tensors from runtime
     fx_args = node.high_ir_node.fx_node.args
-    input_names = {inp.name for inp in node.inputs}
 
-    all_args = []
-    for arg in fx_args:
-        if hasattr(arg, 'name') and arg.name in input_names:
-            # This is a tensor input, get from runtime
-            all_args.append(runtime[arg.name])
-        elif isinstance(arg, (int, float, bool, type(None))):
-            all_args.append(arg)
-        elif isinstance(arg, torch.dtype):
-            all_args.append(arg)
-        elif isinstance(arg, (tuple, list)):
-            # Handle tuple/list args (e.g., normalized_shape for layer_norm)
-            all_args.append(arg)
-        # Skip other complex args
+    all_args = [_resolve_arg(arg, runtime) for arg in fx_args]
 
     if DEBUG_LOWERING:
         print(f"[DEBUG] run_shader: {node.shader_name}")
@@ -123,8 +148,9 @@ def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
             else:
                 print(f"  Arg {i}: {type(a).__name__} = {a}")
 
-    # Get kwargs
+    # Get kwargs and resolve any Node objects
     fx_kwargs = node.high_ir_node.fx_node.kwargs
+    resolved_kwargs = {k: _resolve_arg(v, runtime) for k, v in fx_kwargs.items()}
 
     # shader_name can be an enum (with .value) or a plain string
     shader_name = node.shader_name.value if hasattr(node.shader_name, 'value') else node.shader_name
@@ -132,11 +158,11 @@ def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
     # Look up the function
     if shader_name in SHADER_TO_FUNC:
         func = SHADER_TO_FUNC[shader_name]
-        out = func(*all_args, **fx_kwargs)
+        out = func(*all_args, **resolved_kwargs)
     elif hasattr(torch.ops.webgpu, shader_name):
-        out = getattr(torch.ops.webgpu, shader_name)(*all_args, **fx_kwargs)
+        out = getattr(torch.ops.webgpu, shader_name)(*all_args, **resolved_kwargs)
     elif hasattr(torch, shader_name):
-        out = getattr(torch, shader_name)(*all_args, **fx_kwargs)
+        out = getattr(torch, shader_name)(*all_args, **resolved_kwargs)
     else:
         raise Exception(
             f"I don't know where to put a relevant op for this shader: {node.shader_name}. Node: {node}"
