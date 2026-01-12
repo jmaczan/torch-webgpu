@@ -93,7 +93,11 @@ class LowIRRunShader(LowIRNode):
         self, high_ir_node: HighIRNode, value_id: Any = None, inputs: List[Any] = []
     ):
         super().__init__(high_ir_node, value_id=value_id, inputs=inputs)
-        self.shader_name = high_ir_node.ir_op
+        # For CAST ops, use cast_method (float, half, int, etc.) as shader name
+        if hasattr(high_ir_node, 'cast_method') and high_ir_node.cast_method:
+            self.shader_name = high_ir_node.cast_method
+        else:
+            self.shader_name = high_ir_node.ir_op
 
 
 class LowIRMoveTo(LowIRNode):
@@ -129,6 +133,8 @@ class LowIROutput(LowIRNode):
 high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     # Existing ops
     HighIROp.CREATE_TENSOR: [LowIROp.CREATE_BUFFER, LowIROp.WRITE_BUFFER],
+    HighIROp.PLACEHOLDER: [],  # Placeholders are just references to input tensors
+    HighIROp.GETATTR: [],  # Getattr is just reference to module attributes
     HighIROp.MUL: [LowIROp.RUN_SHADER],
     HighIROp.FUSED_ADD_RELU: [LowIROp.RUN_SHADER],
     HighIROp.RELU: [LowIROp.RUN_SHADER],
@@ -160,6 +166,7 @@ high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.MIN: [LowIROp.RUN_SHADER],
     HighIROp.ARGMAX: [LowIROp.RUN_SHADER],
     HighIROp.CUMSUM: [LowIROp.RUN_SHADER],
+    HighIROp.REPEAT_INTERLEAVE: [LowIROp.RUN_SHADER],
     # Softmax
     HighIROp.SOFTMAX: [LowIROp.RUN_SHADER],
     # Normalization
@@ -203,6 +210,8 @@ high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.DROPOUT: [LowIROp.RUN_SHADER],
     # Attention
     HighIROp.SCALED_DOT_PRODUCT_ATTENTION: [LowIROp.RUN_SHADER],
+    # Casting
+    HighIROp.CAST: [LowIROp.RUN_SHADER],
 }
 
 low_ir_op_to_low_ir_node: dict[LowIROp, type[LowIRNode]] = {
@@ -218,9 +227,12 @@ low_ir_compiler_passes: list[CompilerPass[LowIRNode]] = []  # TODO
 
 def get_low_ir_node(high_ir_op: HighIROp, high_ir_node: HighIRNode):
     low_ir_ops = high_ir_op_to_low_ir_op.get(high_ir_op)
-    if not low_ir_ops or len(low_ir_ops) == 0:
-        print(f"Didn't find a Low IR Op for High IR Op: {high_ir_op}")
+    if low_ir_ops is None:
+        print(f"Didn't find a Low IR Op mapping for High IR Op: {high_ir_op}")
         return None
+    # Empty list is valid - means this op produces no low ir nodes (e.g., placeholder)
+    if len(low_ir_ops) == 0:
+        return []
     low_ir_nodes = []
     for op in low_ir_ops:
         ir_node_type = low_ir_op_to_low_ir_node.get(op)
@@ -238,14 +250,14 @@ def high_ir_to_low_ir(high_ir_graph: List[HighIRNode]) -> List[LowIRNode]:
     ir_graph: list[LowIRNode] = []
     for i, node in enumerate(high_ir_graph):
         ir_nodes = get_low_ir_node(high_ir_op=node.ir_op, high_ir_node=node)
-        if ir_nodes:
-            for node in ir_nodes:
-                ir_graph.append(node)
-        else:
+        if ir_nodes is None:
             print(
-                f"Unsupported FX op: {node.ir_op} (node: {node}). ir_graph: {ir_graph}"
+                f"Unsupported High IR op: {node.ir_op} (node: {node}). ir_graph: {ir_graph}"
             )
-            raise Exception(f"Unsupported FX op: {node.ir_op} for node: {node}")
+            raise Exception(f"Unsupported High IR op: {node.ir_op} for node: {node}")
+        # ir_nodes can be empty list for ops like PLACEHOLDER that don't produce low ir nodes
+        for n in ir_nodes:
+            ir_graph.append(n)
     return ir_graph
 
 

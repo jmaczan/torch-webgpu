@@ -8,6 +8,8 @@ from .ir import IRNode
 
 class HighIROp(StrEnum):
     CREATE_TENSOR = auto()
+    PLACEHOLDER = auto()  # Input tensors and model parameters
+    GETATTR = auto()  # Attribute access
     ADD = auto()
     RELU = auto()
     FUSED_ADD_RELU = auto()
@@ -68,6 +70,8 @@ class HighIROp(StrEnum):
     SELECT = auto()
     INDEX = auto()
     CUMSUM = auto()
+    CAST = auto()  # dtype casting with .to(dtype)
+    REPEAT_INTERLEAVE = auto()  # For GQA attention
 
 
 class HighIRNode(IRNode):
@@ -121,6 +125,33 @@ class HighIRCreateTensor(HighIRNode):
         if len(fx_node.args) == 1 and isinstance(fx_node.args[0], list):
             self.constant_data = fx_node.args[0]
         self.size = fx_node.meta["example_value"].size()
+
+
+class HighIRPlaceholder(HighIRNode):
+    """Represents input tensors and model parameters passed to the graph."""
+    ir_op = HighIROp.PLACEHOLDER
+    shape = None
+    dtype = None
+    device = None
+
+    def __init__(
+        self,
+        fx_node: torch.fx.Node,
+        value_id: Any = None,
+        inputs: List[Any] = [],
+    ):
+        super().__init__(fx_node=fx_node, value_id=value_id, inputs=inputs)
+        if "example_value" in fx_node.meta:
+            example = fx_node.meta["example_value"]
+            if hasattr(example, 'shape'):
+                self.shape = example.shape
+                self.dtype = example.dtype
+                self.device = example.device
+
+
+class HighIRGetattr(HighIRNode):
+    """Represents attribute access on a module."""
+    ir_op = HighIROp.GETATTR
 
 
 class HighIRAdd(HighIRNode):
@@ -359,6 +390,25 @@ class HighIRCumsum(HighIRNode):
     ir_op = HighIROp.CUMSUM
 
 
+class HighIRRepeatInterleave(HighIRNode):
+    ir_op = HighIROp.REPEAT_INTERLEAVE
+
+
+class HighIRCast(HighIRNode):
+    ir_op = HighIROp.CAST
+    cast_method = None  # Original cast method: "float", "half", "int", "long", "bool", or "to"
+
+    def __init__(
+        self,
+        fx_node: torch.fx.Node,
+        value_id: Any = None,
+        inputs: List[Any] = [],
+        cast_method: str = None,
+    ):
+        super().__init__(fx_node, value_id, inputs)
+        self.cast_method = cast_method
+
+
 import operator
 import torch.nn.functional as F
 
@@ -420,6 +470,8 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     "argmax": HighIROp.ARGMAX,
     torch.cumsum: HighIROp.CUMSUM,
     "cumsum": HighIROp.CUMSUM,
+    "repeat_interleave": HighIROp.REPEAT_INTERLEAVE,
+    torch.repeat_interleave: HighIROp.REPEAT_INTERLEAVE,
     # Softmax
     torch.softmax: HighIROp.SOFTMAX,
     F.softmax: HighIROp.SOFTMAX,
@@ -478,6 +530,12 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     F.dropout: HighIROp.DROPOUT,
     # Attention
     F.scaled_dot_product_attention: HighIROp.SCALED_DOT_PRODUCT_ATTENTION,
+    # Dtype casting methods
+    "float": HighIROp.CAST,  # x.float() -> cast to float32
+    "half": HighIROp.CAST,   # x.half() -> cast to float16
+    "int": HighIROp.CAST,    # x.int() -> cast to int32
+    "long": HighIROp.CAST,   # x.long() -> cast to int64
+    "bool": HighIROp.CAST,   # x.bool() -> cast to bool
     # Control flow
     "to": HighIROp.MOVE_TO,
     "output": HighIROp.OUTPUT,
@@ -486,6 +544,8 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
 high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     # Existing ops
     HighIROp.CREATE_TENSOR: HighIRCreateTensor,
+    HighIROp.PLACEHOLDER: HighIRPlaceholder,
+    HighIROp.GETATTR: HighIRGetattr,
     HighIROp.ADD: HighIRAdd,
     HighIROp.RELU: HighIRRelu,
     HighIROp.MOVE_TO: HighIRMoveTo,
@@ -517,6 +577,7 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.MIN: HighIRMin,
     HighIROp.ARGMAX: HighIRArgmax,
     HighIROp.CUMSUM: HighIRCumsum,
+    HighIROp.REPEAT_INTERLEAVE: HighIRRepeatInterleave,
     # Softmax
     HighIROp.SOFTMAX: HighIRSoftmax,
     # Normalization
@@ -560,6 +621,8 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.DROPOUT: HighIRDropout,
     # Attention
     HighIROp.SCALED_DOT_PRODUCT_ATTENTION: HighIRScaledDotProductAttention,
+    # Casting
+    HighIROp.CAST: HighIRCast,
 }
 
 high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = [
@@ -592,20 +655,66 @@ def get_high_ir_node(fx_op, fx_node: torch.fx.Node) -> Optional[HighIRNode]:
 def fx_to_high_ir(gm: torch.fx.GraphModule) -> list[HighIRNode]:
     ir_graph: list[HighIRNode] = []
     for i, node in enumerate(gm.graph.nodes):
-        ir_node = get_high_ir_node(fx_op=node.target, fx_node=node)
-        if not ir_node:
-            source_fn_stack = node.meta.get("source_fn_stack")
-            if source_fn_stack and len(source_fn_stack) > 0:
-                source_fn_stack = source_fn_stack[0]
+        ir_node = None
+
+        # Handle FX opcodes first
+        if node.op == "placeholder":
+            # Input tensors and model parameters
+            ir_node = HighIRPlaceholder(
+                fx_node=node, value_id=node.name, inputs=list(node.all_input_nodes)
+            )
+        elif node.op == "get_attr":
+            # Accessing module attributes
+            ir_node = HighIRGetattr(
+                fx_node=node, value_id=node.name, inputs=list(node.all_input_nodes)
+            )
+        elif node.op == "output":
+            # Return value
+            ir_node = HighIROutput(
+                fx_node=node, value_id=node.name, inputs=list(node.all_input_nodes)
+            )
+        elif node.op in ("call_function", "call_method"):
+            # Special handling for "to" method - can be device transfer or dtype cast
+            if node.target == "to" and len(node.args) >= 2:
+                target_arg = node.args[1]
+                if isinstance(target_arg, torch.dtype):
+                    # Dtype casting with explicit dtype
+                    ir_node = HighIRCast(
+                        fx_node=node, value_id=node.name, inputs=list(node.all_input_nodes),
+                        cast_method="cast"  # explicit .to(dtype) uses "cast"
+                    )
+                else:
+                    # Device transfer
+                    ir_node = HighIRMoveTo(
+                        fx_node=node, value_id=node.name, inputs=list(node.all_input_nodes)
+                    )
+            elif node.target in ("float", "half", "int", "long", "bool"):
+                # Dtype casting methods (e.g., x.float(), x.half())
+                ir_node = HighIRCast(
+                    fx_node=node, value_id=node.name, inputs=list(node.all_input_nodes),
+                    cast_method=node.target  # preserve original method name
+                )
+            else:
+                # Function or method calls - look up by target
+                ir_node = get_high_ir_node(fx_op=node.target, fx_node=node)
+            if not ir_node:
+                # Try source_fn_stack as fallback
+                source_fn_stack = node.meta.get("source_fn_stack")
                 if source_fn_stack and len(source_fn_stack) > 0:
-                    node_key = source_fn_stack[0]
-                    if node_key:
-                        ir_node = get_high_ir_node(fx_op=node_key, fx_node=node)
+                    source_fn_stack = source_fn_stack[0]
+                    if source_fn_stack and len(source_fn_stack) > 0:
+                        node_key = source_fn_stack[0]
+                        if node_key:
+                            ir_node = get_high_ir_node(fx_op=node_key, fx_node=node)
+        elif node.op == "call_module":
+            # Submodule calls - typically decomposed before reaching here
+            raise Exception(f"call_module not supported: {node.target}")
+
         if ir_node:
             ir_graph.append(ir_node)
         else:
-            print(f"Unsupported FX op: {node.target}. ir_graph: {ir_graph}")
-            raise Exception(f"Unsupported FX op: {node.target}")
+            print(f"Unsupported FX op: {node.op} / {node.target}. ir_graph: {ir_graph}")
+            raise Exception(f"Unsupported FX op: {node.op} / {node.target}")
     return ir_graph
 
 
