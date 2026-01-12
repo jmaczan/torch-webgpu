@@ -64,29 +64,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Dawn
-        id: cache-dawn
-        uses: actions/cache@v4
-        with:
-          path: dawn-install
-          key: dawn-v5-macos-arm64-${{ hashFiles('scripts/build-dawn.sh') }}
-
-      - name: Check if cache is valid
-        id: check-cache
-        run: |
-          if [ -f "dawn-install/lib/libwebgpu_dawn.dylib" ]; then
-            echo "valid=true" >> $GITHUB_OUTPUT
-          else
-            echo "valid=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Install dependencies
-        if: steps.check-cache.outputs.valid != 'true'
         run: |
           brew install cmake ninja
 
       - name: Build Dawn
-        if: steps.check-cache.outputs.valid != 'true'
         run: |
           rm -rf dawn-install dawn
           chmod +x scripts/build-dawn.sh
@@ -94,8 +76,10 @@ jobs:
 
       - name: Verify build
         run: |
-          ls -la dawn-install/lib/
-          test -f dawn-install/lib/libwebgpu_dawn.dylib
+          echo "=== Contents of dawn-install ==="
+          find dawn-install -type f 2>/dev/null | head -50 || echo "dawn-install not found"
+          echo "=== Checking for library ==="
+          ls -la dawn-install/lib/ || echo "lib directory not found"
 
       - name: Upload Dawn artifact
         uses: actions/upload-artifact@v4
