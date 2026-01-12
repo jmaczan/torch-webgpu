@@ -345,6 +345,61 @@ fn main(
             auto result_cpu = at::mean(cpu_tensor, dim.value(), keepdim, dtype);
             return result_cpu.to(self.device());
         }
+
+        // Cumulative sum - CPU fallback for now
+        at::Tensor cumsum_impl(const at::Tensor &self, int64_t dim, c10::optional<at::ScalarType> dtype)
+        {
+            auto cpu_tensor = self.to(at::kCPU);
+            at::Tensor result_cpu;
+            if (dtype.has_value())
+            {
+                result_cpu = at::cumsum(cpu_tensor, dim, dtype.value());
+            }
+            else
+            {
+                result_cpu = at::cumsum(cpu_tensor, dim);
+            }
+            return result_cpu.to(self.device());
+        }
+
+        at::Tensor &cumsum_out_impl(const at::Tensor &self, int64_t dim, c10::optional<at::ScalarType> dtype, at::Tensor &out)
+        {
+            auto result = cumsum_impl(self, dim, dtype);
+            out.copy_(result);
+            return out;
+        }
+
+        // Max over all elements - CPU fallback
+        at::Tensor max_impl(const at::Tensor &self)
+        {
+            auto cpu_tensor = self.to(at::kCPU);
+            auto result = at::max(cpu_tensor);
+            return result.to(self.device());
+        }
+
+        // Max over a dimension - CPU fallback
+        std::tuple<at::Tensor, at::Tensor> max_dim_impl(const at::Tensor &self, int64_t dim, bool keepdim)
+        {
+            auto cpu_tensor = self.to(at::kCPU);
+            auto [values, indices] = at::max(cpu_tensor, dim, keepdim);
+            return std::make_tuple(values.to(self.device()), indices.to(self.device()));
+        }
+
+        // Min over all elements - CPU fallback
+        at::Tensor min_impl(const at::Tensor &self)
+        {
+            auto cpu_tensor = self.to(at::kCPU);
+            auto result = at::min(cpu_tensor);
+            return result.to(self.device());
+        }
+
+        // Min over a dimension - CPU fallback
+        std::tuple<at::Tensor, at::Tensor> min_dim_impl(const at::Tensor &self, int64_t dim, bool keepdim)
+        {
+            auto cpu_tensor = self.to(at::kCPU);
+            auto [values, indices] = at::min(cpu_tensor, dim, keepdim);
+            return std::make_tuple(values.to(self.device()), indices.to(self.device()));
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -353,5 +408,11 @@ fn main(
         m.impl("sum", TORCH_FN(ops::sum));
         m.impl("sum.dim_IntList", TORCH_FN(ops::sum_dim));
         m.impl("mean.dim", TORCH_FN(ops::mean_dim));
+        m.impl("cumsum", TORCH_FN(ops::cumsum_impl));
+        m.impl("cumsum.out", TORCH_FN(ops::cumsum_out_impl));
+        m.impl("max", TORCH_FN(ops::max_impl));
+        m.impl("max.dim", TORCH_FN(ops::max_dim_impl));
+        m.impl("min", TORCH_FN(ops::min_impl));
+        m.impl("min.dim", TORCH_FN(ops::min_dim_impl));
     }
 }

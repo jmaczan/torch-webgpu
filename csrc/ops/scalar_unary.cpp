@@ -22,14 +22,15 @@ namespace torch_webgpu
 
             const std::string scalar_unary_shader_template = R"wgsl(
 const MAX_DIMS: u32 = 8u;
+const WORKGROUP_SIZE: u32 = 64u;
 
 struct Params {
     length: u32,
     ndim: u32,
     scalar_val: f32,
+    dispatch_x: u32,
     out_offset: u32,
     self_offset: u32,
-    _pad: u32,
     _pad2: u32,
     _pad3: u32,
 
@@ -49,7 +50,8 @@ var<uniform> params: Params;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
+    // Support 2D dispatch for large tensors (workgroups > 65535)
+    let i = gid.x + gid.y * params.dispatch_x * WORKGROUP_SIZE;
     if (i >= params.length) { return; }
 
     var remaining = i;
@@ -86,7 +88,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             switch (op)
             {
             case ScalarUnaryOp::Pow:
-                op_impl = "pow(selfBuffer[idx_self], params.scalar_val)";
+                // WGSL pow(x, y) returns NaN for negative x, so we handle sign separately
+                // For integer exponents with negative base: result = pow(abs(x), y) * sign_factor
+                // For odd integers: sign_factor = sign(x), for even: sign_factor = 1.0
+                op_impl = "pow(abs(selfBuffer[idx_self]), params.scalar_val) * select(1.0, select(1.0, -1.0, selfBuffer[idx_self] < 0.0), abs(params.scalar_val - round(params.scalar_val)) < 0.0001 && (i32(round(params.scalar_val)) & 1) == 1)";
                 break;
             default:
                 TORCH_CHECK(false, "Unsupported scalar unary op, can't produce a WGSL shader");

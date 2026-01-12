@@ -58,7 +58,7 @@ def test_qwen_forward():
 
 @pytest.mark.skip(reason="Qwen model requires additional ops not yet implemented (KV cache, advanced reductions)")
 def test_qwen_generate():
-    """Test text generation with Qwen model on WebGPU."""
+    """Test text generation with Qwen model on WebGPU using manual generation loop."""
 
     print("Loading Qwen2.5-0.5B-Instruct model...")
     model_name = "Qwen/Qwen2.5-0.5B-Instruct"
@@ -82,17 +82,30 @@ def test_qwen_generate():
     print(f"Prompt: '{prompt}'")
     print("Generating...")
 
-    # Generate
+    # Manual generation loop (avoids transformers' fancy indexing that causes issues)
+    max_new_tokens = 30
+    generated_ids = input_ids.clone()
+
     with torch.no_grad():
-        output_ids = model.generate(
-            input_ids,
-            max_new_tokens=30,
-            do_sample=False,
-            pad_token_id=tokenizer.pad_token_id,
-        )
+        for _ in range(max_new_tokens):
+            # Forward pass
+            outputs = model(input_ids=generated_ids)
+
+            # Get logits for the last token
+            next_token_logits = outputs.logits[:, -1, :]
+
+            # Greedy selection
+            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+
+            # Concatenate with existing sequence
+            generated_ids = torch.cat([generated_ids, next_token], dim=1)
+
+            # Check for EOS token
+            if next_token.item() == tokenizer.eos_token_id:
+                break
 
     # Decode
-    output_ids = output_ids.to("cpu")
+    output_ids = generated_ids.to("cpu")
     generated_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
     print(f"Generated: '{generated_text}'")
 

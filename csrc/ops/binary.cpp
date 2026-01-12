@@ -22,12 +22,13 @@ namespace torch_webgpu
 
             const std::string binary_shader_template = R"wgsl(
 const MAX_DIMS: u32 = 8u;
+const WORKGROUP_SIZE: u32 = 64u;
 
 struct Params {
     length: u32,
     ndim: u32,
     alpha: f32,
-    _pad: u32,
+    dispatch_x: u32,
 
     out_offset: u32,
     self_offset: u32,
@@ -54,7 +55,8 @@ var<uniform> params: Params;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
+    // Support 2D dispatch for large tensors (workgroups > 65535)
+    let i = gid.x + gid.y * params.dispatch_x * WORKGROUP_SIZE;
     if (i >= params.length) { return; }
 
     var remaining = i;

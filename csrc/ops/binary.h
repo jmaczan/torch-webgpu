@@ -105,6 +105,7 @@ namespace torch_webgpu
             auto other_offset = other.storage_offset();
 
             constexpr uint32_t MAX_DIMS = 8;
+            constexpr uint32_t MAX_WORKGROUPS_PER_DIM = 65535;
             TORCH_CHECK(ndim <= MAX_DIMS);
 
             struct Params
@@ -112,7 +113,7 @@ namespace torch_webgpu
                 uint32_t length;
                 uint32_t ndim;
                 float alpha;
-                uint32_t _pad; // allegedly, it's a padding we need for webgpu
+                uint32_t dispatch_x; // Number of workgroups in X dimension for 2D dispatch
 
                 uint32_t out_offset;
                 uint32_t self_offset;
@@ -125,11 +126,16 @@ namespace torch_webgpu
                 uint32_t shape[MAX_DIMS];
             };
 
+            const uint32_t workgroup_size = 64;
+            uint32_t num_workgroups = (static_cast<uint32_t>(length) + workgroup_size - 1) / workgroup_size;
+            uint32_t dispatch_x = std::min(num_workgroups, MAX_WORKGROUPS_PER_DIM);
+            uint32_t dispatch_y = (num_workgroups + MAX_WORKGROUPS_PER_DIM - 1) / MAX_WORKGROUPS_PER_DIM;
+
             Params params{};
             params.length = static_cast<uint32_t>(iter.numel());
             params.ndim = ndim;
             params.alpha = alpha.to<float>();
-            params._pad = 0;
+            params.dispatch_x = dispatch_x;
 
             params.out_offset = static_cast<uint32_t>(out_offset);
             params.self_offset = static_cast<uint32_t>(self_offset);
@@ -206,10 +212,8 @@ namespace torch_webgpu
             pass_encoder.SetPipeline(kernel.pipeline);
             pass_encoder.SetBindGroup(0, bind_group);
 
-            const uint32_t workgroup_size = 64;
-            uint32_t num_workgroups = (length + workgroup_size - 1) / workgroup_size;
-
-            pass_encoder.DispatchWorkgroups(num_workgroups);
+            // Use 2D dispatch for large tensors to stay within WebGPU workgroup limits
+            pass_encoder.DispatchWorkgroups(dispatch_x, dispatch_y, 1);
             pass_encoder.End();
 
             wgpu::CommandBuffer command_buffer = encoder.Finish();

@@ -30,12 +30,34 @@ namespace torch_webgpu
             TORCH_CHECK(value.device().type() == c10::DeviceType::PrivateUse1);
             TORCH_CHECK(dropout_p == 0.0, "sdpa: dropout not supported on WebGPU yet");
 
+            // Handle GQA (Grouped Query Attention) - expand key/value heads to match query heads
+            // Qwen uses 14 query heads and 2 key-value heads
+            auto num_heads_q = query.size(1);
+            auto num_heads_kv = key.size(1);
+            at::Tensor k = key;
+            at::Tensor v = value;
+
+            if (num_heads_q != num_heads_kv)
+            {
+                TORCH_CHECK(num_heads_q % num_heads_kv == 0,
+                            "sdpa: query heads must be divisible by key/value heads for GQA");
+                auto n_rep = num_heads_q / num_heads_kv;
+                auto batch = key.size(0);
+                auto seq_len = key.size(2);
+                auto head_dim_size = key.size(3);
+
+                // Expand key: [batch, kv_heads, seq, dim] -> [batch, kv_heads, n_rep, seq, dim] -> [batch, q_heads, seq, dim]
+                // Note: expand creates non-contiguous tensor, need contiguous() before reshape
+                k = key.unsqueeze(2).expand({batch, num_heads_kv, n_rep, seq_len, head_dim_size}).contiguous().reshape({batch, num_heads_q, seq_len, head_dim_size});
+                v = value.unsqueeze(2).expand({batch, num_heads_kv, n_rep, seq_len, head_dim_size}).contiguous().reshape({batch, num_heads_q, seq_len, head_dim_size});
+            }
+
             // Compute attention scale
             double head_dim = static_cast<double>(query.size(-1));
             float attn_scale_f = static_cast<float>(scale.value_or(1.0 / std::sqrt(head_dim)));
 
             // Q @ K^T -> [batch, heads, seq_len_q, seq_len_k]
-            auto key_t = key.transpose(-2, -1);
+            auto key_t = k.transpose(-2, -1);
             auto attn_weights = at::matmul(query, key_t);
 
             // Scale with matching dtype
@@ -46,7 +68,7 @@ namespace torch_webgpu
             if (is_causal)
             {
                 auto seq_len_q = query.size(-2);
-                auto seq_len_k = key.size(-2);
+                auto seq_len_k = k.size(-2);
 
                 // Create causal mask on CPU and move to device
                 auto mask = at::ones({seq_len_q, seq_len_k}, at::TensorOptions().dtype(at::kFloat));
@@ -86,7 +108,7 @@ namespace torch_webgpu
             attn_weights = at::softmax(attn_weights, -1, c10::nullopt);
 
             // Attention weights @ V -> [batch, heads, seq_len_q, head_dim]
-            auto output = at::matmul(attn_weights, value);
+            auto output = at::matmul(attn_weights, v);
 
             return output;
         }

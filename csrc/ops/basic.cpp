@@ -619,6 +619,151 @@ namespace torch_webgpu
             auto cpu_tensor = self.to(at::kCPU);
             return cpu_tensor.item();
         }
+
+        // masked_fill_ - in-place fill where mask is true
+        at::Tensor &masked_fill_scalar(at::Tensor &self, const at::Tensor &mask, const at::Scalar &value)
+        {
+            // CPU fallback for now
+            auto self_cpu = self.to(at::kCPU);
+            auto mask_cpu = mask.to(at::kCPU);
+            self_cpu.masked_fill_(mask_cpu, value);
+            self.copy_(self_cpu);
+            return self;
+        }
+
+        at::Tensor &masked_fill_tensor(at::Tensor &self, const at::Tensor &mask, const at::Tensor &value)
+        {
+            // CPU fallback for now
+            auto self_cpu = self.to(at::kCPU);
+            auto mask_cpu = mask.to(at::kCPU);
+            auto value_cpu = value.to(at::kCPU);
+            self_cpu.masked_fill_(mask_cpu, value_cpu);
+            self.copy_(self_cpu);
+            return self;
+        }
+
+        // gather - gather values along an axis
+        at::Tensor gather_impl(const at::Tensor &self, int64_t dim, const at::Tensor &index, bool sparse_grad)
+        {
+            // CPU fallback for now
+            auto self_cpu = self.to(at::kCPU);
+            auto index_cpu = index.to(at::kCPU);
+            auto result = at::gather(self_cpu, dim, index_cpu, sparse_grad);
+            return result.to(self.device());
+        }
+
+        at::Tensor &gather_out_impl(const at::Tensor &self, int64_t dim, const at::Tensor &index, bool sparse_grad, at::Tensor &out)
+        {
+            auto result = gather_impl(self, dim, index, sparse_grad);
+            out.copy_(result);
+            return out;
+        }
+
+        // where - select elements based on condition
+        at::Tensor where_self(const at::Tensor &condition, const at::Tensor &self, const at::Tensor &other)
+        {
+            // CPU fallback for now
+            auto condition_cpu = condition.to(at::kCPU);
+            auto self_cpu = self.to(at::kCPU);
+            auto other_cpu = other.to(at::kCPU);
+            auto result = at::where(condition_cpu, self_cpu, other_cpu);
+            return result.to(self.device());
+        }
+
+        at::Tensor &where_self_out(const at::Tensor &condition, const at::Tensor &self, const at::Tensor &other, at::Tensor &out)
+        {
+            auto result = where_self(condition, self, other);
+            out.copy_(result);
+            return out;
+        }
+
+        // scatter - scatter values into tensor at indices
+        at::Tensor scatter_src(const at::Tensor &self, int64_t dim, const at::Tensor &index, const at::Tensor &src)
+        {
+            // CPU fallback for now
+            auto self_cpu = self.to(at::kCPU);
+            auto index_cpu = index.to(at::kCPU);
+            auto src_cpu = src.to(at::kCPU);
+            auto result = self_cpu.scatter(dim, index_cpu, src_cpu);
+            return result.to(self.device());
+        }
+
+        at::Tensor &scatter_src_out(const at::Tensor &self, int64_t dim, const at::Tensor &index, const at::Tensor &src, at::Tensor &out)
+        {
+            auto result = scatter_src(self, dim, index, src);
+            out.copy_(result);
+            return out;
+        }
+
+        // argmax - find index of maximum value
+        at::Tensor argmax_impl(const at::Tensor &self, c10::optional<int64_t> dim, bool keepdim)
+        {
+            // CPU fallback for now
+            auto self_cpu = self.to(at::kCPU);
+            at::Tensor result;
+            if (dim.has_value())
+            {
+                result = at::argmax(self_cpu, dim.value(), keepdim);
+            }
+            else
+            {
+                result = at::argmax(self_cpu);
+            }
+            return result.to(self.device());
+        }
+
+        at::Tensor &argmax_out_impl(const at::Tensor &self, c10::optional<int64_t> dim, bool keepdim, at::Tensor &out)
+        {
+            auto result = argmax_impl(self, dim, keepdim);
+            out.copy_(result);
+            return out;
+        }
+
+        // index.Tensor - advanced indexing with list of optional tensors
+        at::Tensor index_tensor(const at::Tensor &self, const c10::List<c10::optional<at::Tensor>> &indices)
+        {
+            // CPU fallback for now
+            auto self_cpu = self.to(at::kCPU);
+
+            // Convert indices to CPU
+            c10::List<c10::optional<at::Tensor>> indices_cpu;
+            for (size_t i = 0; i < indices.size(); ++i) {
+                c10::optional<at::Tensor> idx = indices.get(i);
+                if (idx.has_value()) {
+                    indices_cpu.push_back(idx->to(at::kCPU));
+                } else {
+                    indices_cpu.push_back(c10::nullopt);
+                }
+            }
+
+            auto result = at::index(self_cpu, indices_cpu);
+            // Move result to WebGPU
+            return result.to(c10::DeviceType::PrivateUse1);
+        }
+
+        at::Tensor &index_tensor_out(const at::Tensor &self, const c10::List<c10::optional<at::Tensor>> &indices, at::Tensor &out)
+        {
+            auto result = index_tensor(self, indices);
+            out.copy_(result);
+            return out;
+        }
+
+        // index_select - select along a dimension using index tensor
+        at::Tensor index_select_impl(const at::Tensor &self, int64_t dim, const at::Tensor &index)
+        {
+            // CPU fallback for now
+            auto self_cpu = self.to(at::kCPU);
+            auto index_cpu = index.to(at::kCPU);
+            auto result = at::index_select(self_cpu, dim, index_cpu);
+            return result.to(c10::DeviceType::PrivateUse1);
+        }
+
+        at::Tensor &index_select_out_impl(const at::Tensor &self, int64_t dim, const at::Tensor &index, at::Tensor &out)
+        {
+            auto result = index_select_impl(self, dim, index);
+            out.copy_(result);
+            return out;
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -641,6 +786,20 @@ namespace torch_webgpu
         m.impl("select.int", TORCH_FN(ops::select));
         m.impl("t", TORCH_FN(ops::t));
         m.impl("_local_scalar_dense", TORCH_FN(ops::_local_scalar_dense));
+        m.impl("masked_fill_.Scalar", TORCH_FN(ops::masked_fill_scalar));
+        m.impl("masked_fill_.Tensor", TORCH_FN(ops::masked_fill_tensor));
+        m.impl("gather", TORCH_FN(ops::gather_impl));
+        m.impl("gather.out", TORCH_FN(ops::gather_out_impl));
+        m.impl("where.self", TORCH_FN(ops::where_self));
+        m.impl("where.self_out", TORCH_FN(ops::where_self_out));
+        m.impl("scatter.src", TORCH_FN(ops::scatter_src));
+        m.impl("scatter.src_out", TORCH_FN(ops::scatter_src_out));
+        m.impl("argmax", TORCH_FN(ops::argmax_impl));
+        m.impl("argmax.out", TORCH_FN(ops::argmax_out_impl));
+        m.impl("index.Tensor", TORCH_FN(ops::index_tensor));
+        m.impl("index.Tensor_out", TORCH_FN(ops::index_tensor_out));
+        m.impl("index_select", TORCH_FN(ops::index_select_impl));
+        m.impl("index_select.out", TORCH_FN(ops::index_select_out_impl));
     }
 
     TORCH_LIBRARY_IMPL(aten, AutogradPrivateUse1, m)

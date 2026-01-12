@@ -221,22 +221,24 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             {
                 TORCH_CHECK(self.device().type() == c10::DeviceType::PrivateUse1);
                 TORCH_CHECK(other.device().type() == c10::DeviceType::PrivateUse1);
-                TORCH_CHECK(self.scalar_type() == c10::ScalarType::Float);
-                TORCH_CHECK(other.scalar_type() == c10::ScalarType::Float);
+
+                // Convert to float32 if needed for the shader
+                at::Tensor self_f = self.scalar_type() == c10::ScalarType::Float ? self : self.to(c10::ScalarType::Float);
+                at::Tensor other_f = other.scalar_type() == c10::ScalarType::Float ? other : other.to(c10::ScalarType::Float);
 
                 // Broadcast shapes
-                auto out_shape = at::infer_size(self.sizes(), other.sizes());
+                auto out_shape = at::infer_size(self_f.sizes(), other_f.sizes());
                 at::Tensor out = at::empty(out_shape, self.options().dtype(at::kBool));
 
                 if (out.numel() == 0)
                     return out;
 
                 // Expand tensors to output shape
-                auto self_expanded = self.expand(out_shape).contiguous();
-                auto other_expanded = other.expand(out_shape).contiguous();
+                auto self_expanded = self_f.expand(out_shape).contiguous();
+                auto other_expanded = other_f.expand(out_shape).contiguous();
 
                 // Create float output tensor for shader
-                at::Tensor out_float = at::empty(out_shape, self.options());
+                at::Tensor out_float = at::empty(out_shape, self_f.options());
 
                 CompareKernel &kernel = get_compare_kernel(Op);
 
@@ -357,8 +359,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             at::Tensor compare_tensor_scalar(const at::Tensor &self, const at::Scalar &other)
             {
                 // Create a scalar tensor and use tensor-tensor comparison
-                at::Tensor other_tensor = at::full({}, other, self.options());
-                return compare_tensor_tensor<Op>(self, other_tensor);
+                at::Tensor other_tensor = at::full({}, other.toFloat(), self.options().dtype(at::kFloat));
+                at::Tensor self_f = self.scalar_type() == c10::ScalarType::Float ? self : self.to(c10::ScalarType::Float);
+                return compare_tensor_tensor<Op>(self_f, other_tensor);
             }
         }
 
@@ -432,10 +435,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             return result.to(self.device());
         }
 
-        at::Tensor &all_out(const at::Tensor &self, at::Tensor &out)
+        at::Tensor &all_out(const at::Tensor &self, int64_t dim, bool keepdim, at::Tensor &out)
         {
-            auto result = torch_webgpu::ops::all(self);
-            out.copy_(result);
+            // CPU fallback with dim support
+            auto cpu_tensor = self.to(at::kCPU);
+            auto cpu_out = out.to(at::kCPU);
+            at::all_out(cpu_out, cpu_tensor, dim, keepdim);
+            out.copy_(cpu_out);
             return out;
         }
 
@@ -447,9 +453,77 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             return result.to(self.device());
         }
 
-        at::Tensor &any_out(const at::Tensor &self, at::Tensor &out)
+        at::Tensor &any_out(const at::Tensor &self, int64_t dim, bool keepdim, at::Tensor &out)
         {
-            auto result = torch_webgpu::ops::any(self);
+            // CPU fallback with dim support
+            auto cpu_tensor = self.to(at::kCPU);
+            auto cpu_out = out.to(at::kCPU);
+            at::any_out(cpu_out, cpu_tensor, dim, keepdim);
+            out.copy_(cpu_out);
+            return out;
+        }
+
+        // isin - check if elements of first tensor are in second tensor
+        at::Tensor isin_tensor_tensor(const at::Tensor &elements, const at::Tensor &test_elements, bool assume_unique, bool invert)
+        {
+            // For small tensors (like token IDs), use CPU fallback
+            auto elements_cpu = elements.to(at::kCPU);
+            auto test_elements_cpu = test_elements.to(at::kCPU);
+            auto result = at::isin(elements_cpu, test_elements_cpu, assume_unique, invert);
+            return result.to(elements.device());
+        }
+
+        at::Tensor &isin_tensor_tensor_out(const at::Tensor &elements, const at::Tensor &test_elements, bool assume_unique, bool invert, at::Tensor &out)
+        {
+            auto result = isin_tensor_tensor(elements, test_elements, assume_unique, invert);
+            out.copy_(result);
+            return out;
+        }
+
+        // bitwise_not - used for boolean tensor negation (~)
+        at::Tensor bitwise_not_impl(const at::Tensor &self)
+        {
+            // For small tensors (like boolean masks), use CPU fallback
+            auto self_cpu = self.to(at::kCPU);
+            auto result = at::bitwise_not(self_cpu);
+            return result.to(self.device());
+        }
+
+        at::Tensor &bitwise_not_out_impl(const at::Tensor &self, at::Tensor &out)
+        {
+            auto result = bitwise_not_impl(self);
+            out.copy_(result);
+            return out;
+        }
+
+        // bitwise_and - used for boolean tensor AND (&)
+        at::Tensor bitwise_and_tensor(const at::Tensor &self, const at::Tensor &other)
+        {
+            auto self_cpu = self.to(at::kCPU);
+            auto other_cpu = other.to(at::kCPU);
+            auto result = at::bitwise_and(self_cpu, other_cpu);
+            return result.to(self.device());
+        }
+
+        at::Tensor &bitwise_and_tensor_out(const at::Tensor &self, const at::Tensor &other, at::Tensor &out)
+        {
+            auto result = bitwise_and_tensor(self, other);
+            out.copy_(result);
+            return out;
+        }
+
+        // bitwise_or - used for boolean tensor OR (|)
+        at::Tensor bitwise_or_tensor(const at::Tensor &self, const at::Tensor &other)
+        {
+            auto self_cpu = self.to(at::kCPU);
+            auto other_cpu = other.to(at::kCPU);
+            auto result = at::bitwise_or(self_cpu, other_cpu);
+            return result.to(self.device());
+        }
+
+        at::Tensor &bitwise_or_tensor_out(const at::Tensor &self, const at::Tensor &other, at::Tensor &out)
+        {
+            auto result = bitwise_or_tensor(self, other);
             out.copy_(result);
             return out;
         }
@@ -470,8 +544,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         m.impl("ge.Tensor", TORCH_FN(ops::ge_tensor));
         m.impl("ge.Scalar", TORCH_FN(ops::ge_scalar));
         m.impl("all", TORCH_FN(ops::all));
-        m.impl("all.all_out", TORCH_FN(ops::all_out));
+        m.impl("all.out", TORCH_FN(ops::all_out));
         m.impl("any", TORCH_FN(ops::any));
-        m.impl("any.all_out", TORCH_FN(ops::any_out));
+        m.impl("any.out", TORCH_FN(ops::any_out));
+        m.impl("isin.Tensor_Tensor", TORCH_FN(ops::isin_tensor_tensor));
+        m.impl("isin.Tensor_Tensor_out", TORCH_FN(ops::isin_tensor_tensor_out));
+        m.impl("bitwise_not", TORCH_FN(ops::bitwise_not_impl));
+        m.impl("bitwise_not.out", TORCH_FN(ops::bitwise_not_out_impl));
+        m.impl("bitwise_and.Tensor", TORCH_FN(ops::bitwise_and_tensor));
+        m.impl("bitwise_and.Tensor_out", TORCH_FN(ops::bitwise_and_tensor_out));
+        m.impl("bitwise_or.Tensor", TORCH_FN(ops::bitwise_or_tensor));
+        m.impl("bitwise_or.Tensor_out", TORCH_FN(ops::bitwise_or_tensor_out));
     }
 }

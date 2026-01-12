@@ -11,6 +11,8 @@ namespace torch_webgpu
         namespace
         {
             const std::string embedding_shader = R"wgsl(
+const WORKGROUP_SIZE: u32 = 64u;
+
 struct Params {
     num_indices: u32,
     embedding_dim: u32,
@@ -19,7 +21,7 @@ struct Params {
     out_offset: u32,
     weight_stride0: u32,
     weight_stride1: u32,
-    _pad: u32,
+    dispatch_x: u32,
 };
 
 @group(0) @binding(0)
@@ -36,7 +38,8 @@ var<uniform> params: Params;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
+    // Support 2D dispatch for large tensors (workgroups > 65535)
+    let i = gid.x + gid.y * params.dispatch_x * WORKGROUP_SIZE;
     let total_elements = params.num_indices * params.embedding_dim;
     if (i >= total_elements) { return; }
 
@@ -181,6 +184,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             wgpu::Buffer indices_buffer = indices_allocation->buffer;
             wgpu::Buffer out_buffer = out_allocation->buffer;
 
+            constexpr uint32_t MAX_WORKGROUPS_PER_DIM = 65535;
+
             struct Params
             {
                 uint32_t num_indices;
@@ -190,8 +195,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 uint32_t out_offset;
                 uint32_t weight_stride0;
                 uint32_t weight_stride1;
-                uint32_t _pad;
+                uint32_t dispatch_x;
             };
+
+            const uint32_t workgroup_size = 64;
+            uint32_t total_elements_val = static_cast<uint32_t>(num_indices * embedding_dim);
+            uint32_t num_workgroups = (total_elements_val + workgroup_size - 1) / workgroup_size;
+            uint32_t dispatch_x = std::min(num_workgroups, MAX_WORKGROUPS_PER_DIM);
+            uint32_t dispatch_y = (num_workgroups + MAX_WORKGROUPS_PER_DIM - 1) / MAX_WORKGROUPS_PER_DIM;
 
             Params params{};
             params.num_indices = static_cast<uint32_t>(num_indices);
@@ -201,7 +212,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             params.out_offset = static_cast<uint32_t>(out.storage_offset());
             params.weight_stride0 = static_cast<uint32_t>(weight.stride(0));
             params.weight_stride1 = static_cast<uint32_t>(weight.stride(1));
-            params._pad = 0;
+            params.dispatch_x = dispatch_x;
 
             core::WebGPUContext &ctx = core::getWebGPUContext();
 
@@ -247,11 +258,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             pass_encoder.SetPipeline(kernel.pipeline);
             pass_encoder.SetBindGroup(0, bind_group);
 
-            const uint32_t workgroup_size = 64;
-            uint32_t total_elements = params.num_indices * params.embedding_dim;
-            uint32_t num_workgroups = (total_elements + workgroup_size - 1) / workgroup_size;
-
-            pass_encoder.DispatchWorkgroups(num_workgroups);
+            // Use 2D dispatch for large tensors to stay within WebGPU workgroup limits
+            pass_encoder.DispatchWorkgroups(dispatch_x, dispatch_y, 1);
             pass_encoder.End();
 
             wgpu::CommandBuffer command_buffer = encoder.Finish();

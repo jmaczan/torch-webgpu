@@ -350,6 +350,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             c10::optional<at::Device> device,
             c10::optional<bool> pin_memory)
         {
+            auto actual_dtype = dtype.value_or(at::ScalarType::Float);
+
+            // For non-float dtypes, use CPU fallback and move to WebGPU
+            if (actual_dtype != at::ScalarType::Float) {
+                auto cpu_result = at::zeros(size, at::TensorOptions().dtype(actual_dtype).device(at::kCPU));
+                return cpu_result.to(c10::DeviceType::PrivateUse1);
+            }
+
             auto allocator = core::getWebGPUCachingAllocator();
             constexpr c10::DispatchKeySet privateuse1_ks(c10::DispatchKey::PrivateUse1);
             at::Tensor out = at::detail::empty_generic(size, allocator, privateuse1_ks, at::ScalarType::Float, c10::nullopt);
@@ -363,6 +371,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             c10::optional<at::Device> device,
             c10::optional<bool> pin_memory)
         {
+            auto actual_dtype = dtype.value_or(at::ScalarType::Float);
+
+            // For non-float dtypes, use CPU fallback and move to WebGPU
+            if (actual_dtype != at::ScalarType::Float) {
+                auto cpu_result = at::ones(size, at::TensorOptions().dtype(actual_dtype).device(at::kCPU));
+                return cpu_result.to(c10::DeviceType::PrivateUse1);
+            }
+
             auto allocator = core::getWebGPUCachingAllocator();
             constexpr c10::DispatchKeySet privateuse1_ks(c10::DispatchKey::PrivateUse1);
             at::Tensor out = at::detail::empty_generic(size, allocator, privateuse1_ks, at::ScalarType::Float, c10::nullopt);
@@ -377,6 +393,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             c10::optional<at::Device> device,
             c10::optional<bool> pin_memory)
         {
+            auto actual_dtype = dtype.value_or(at::ScalarType::Float);
+
+            // For non-float dtypes, use CPU fallback and move to WebGPU
+            if (actual_dtype != at::ScalarType::Float) {
+                auto cpu_result = at::full(size, fill_value, at::TensorOptions().dtype(actual_dtype).device(at::kCPU));
+                return cpu_result.to(c10::DeviceType::PrivateUse1);
+            }
+
             auto allocator = core::getWebGPUCachingAllocator();
             constexpr c10::DispatchKeySet privateuse1_ks(c10::DispatchKey::PrivateUse1);
             at::Tensor out = at::detail::empty_generic(size, allocator, privateuse1_ks, at::ScalarType::Float, c10::nullopt);

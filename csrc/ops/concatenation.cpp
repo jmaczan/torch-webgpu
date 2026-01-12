@@ -12,10 +12,13 @@ namespace torch_webgpu
         // Cat - concatenate tensors along a dimension
         at::Tensor cat(const at::ITensorListRef &tensors, int64_t dim)
         {
+            // Filter out empty tensors (numel == 0) to match PyTorch behavior
             std::vector<at::Tensor> tensor_list;
             for (const auto &t : tensors)
             {
-                tensor_list.push_back(t);
+                if (t.numel() > 0) {
+                    tensor_list.push_back(t);
+                }
             }
 
             TORCH_CHECK(!tensor_list.empty(), "cat: cannot concatenate empty tensor list");
