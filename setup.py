@@ -128,7 +128,7 @@ setup(
     name="torch-webgpu",
     version="0.0.1",
     description="WebGPU backend for PyTorch",
-    long_description=open("README.md").read(),
+    long_description=Path("README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
     author="Jedrzej Maczan",
     author_email="jedrzejpawel@maczan.pl",
