@@ -22,7 +22,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dawn-install
-          key: dawn-linux-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
+          key: dawn-v2-linux-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
 
       - name: Install dependencies
         if: steps.cache-dawn.outputs.cache-hit != 'true'
@@ -54,7 +54,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dawn-install
-          key: dawn-macos-arm64-${{ hashFiles('scripts/build-dawn.sh') }}
+          key: dawn-v2-macos-arm64-${{ hashFiles('scripts/build-dawn.sh') }}
 
       - name: Install dependencies
         if: steps.cache-dawn.outputs.cache-hit != 'true'
@@ -85,7 +85,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dawn-install
-          key: dawn-windows-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
+          key: dawn-v2-windows-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
 
       - name: Setup MSVC
         if: steps.cache-dawn.outputs.cache-hit != 'true'

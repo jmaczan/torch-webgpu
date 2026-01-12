@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build Google Dawn WebGPU runtime for torch-webgpu
-# This script downloads and builds Dawn from source
+# This script downloads and builds Dawn from source using CMake
 # Usage: ./scripts/build-dawn.sh [install_prefix]
 
 set -e
@@ -22,24 +22,12 @@ fi
 
 cd "$DAWN_DIR"
 
-# Update depot_tools if needed
-if [ ! -d "third_party/depot_tools" ]; then
-    echo "Fetching depot_tools..."
-    git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git third_party/depot_tools
-fi
-export PATH="$DAWN_DIR/third_party/depot_tools:$PATH"
-
-# Sync dependencies
-echo "Syncing dependencies (this may take a while)..."
-cp scripts/standalone.gclient .gclient
-gclient sync --no-history
-
 # Create build directory
 BUILD_DIR="$DAWN_DIR/out/Release"
 mkdir -p "$BUILD_DIR"
 
-# Generate build files
-echo "Generating build files..."
+# Generate build files with automatic dependency fetching
+echo "Configuring CMake (dependencies will be fetched automatically)..."
 cmake -S . -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
@@ -61,14 +49,14 @@ cmake --build "$BUILD_DIR" --target webgpu_dawn -j "$NUM_JOBS"
 echo "Installing Dawn to $INSTALL_PREFIX..."
 mkdir -p "$INSTALL_PREFIX/lib" "$INSTALL_PREFIX/include"
 
-# Copy library
+# Copy library (handle different platforms)
 if [ -f "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.so" ]; then
     cp "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.so" "$INSTALL_PREFIX/lib/"
 elif [ -f "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.dylib" ]; then
     cp "$BUILD_DIR/src/dawn/native/libwebgpu_dawn.dylib" "$INSTALL_PREFIX/lib/"
 elif [ -f "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.dll" ]; then
     cp "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.dll" "$INSTALL_PREFIX/lib/"
-    cp "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.lib" "$INSTALL_PREFIX/lib/"
+    cp "$BUILD_DIR/src/dawn/native/Release/webgpu_dawn.lib" "$INSTALL_PREFIX/lib/" 2>/dev/null || true
 fi
 
 # Copy headers
@@ -76,5 +64,8 @@ cp -r "$DAWN_DIR/include/webgpu" "$INSTALL_PREFIX/include/" 2>/dev/null || true
 cp -r "$DAWN_DIR/include/dawn" "$INSTALL_PREFIX/include/" 2>/dev/null || true
 cp -r "$BUILD_DIR/gen/include/dawn" "$INSTALL_PREFIX/include/" 2>/dev/null || true
 
+echo ""
 echo "Dawn built successfully!"
-echo "Set DAWN_PREFIX=$INSTALL_PREFIX to build torch-webgpu"
+echo "Library installed to: $INSTALL_PREFIX/lib/"
+echo "Headers installed to: $INSTALL_PREFIX/include/"
+ls -la "$INSTALL_PREFIX/lib/"
