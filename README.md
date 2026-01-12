@@ -1,15 +1,20 @@
 # torch-webgpu
-Experimental WebGPU backend for PyTorch
+Experimental WebGPU backend for PyTorch, which can compile and run LLMs on WebGPU!
 
-12.01.2026 reached 0.0.1!
+12.01.2026 torch-webgpu reached 0.0.1
 
-**Now supported:**:
+## Why?
+WebGPU promises to run everywhere - on every hardware and becomes well supported in web browser. This project is a bridge between PyTorch world and WebGPU world
+
+**Now supported:**
 1. Run PyTorch on WebGPU `device="webgpu"`
 2. Compile PyTorch code for WebGPU - `@torch.compile(m, backend=webgpu)`
+3. Many standard PyTorch operations are supported
 
 **Next steps:**
 1. Compiler optimizations
 2. High performance without platform specific (CUDA, MPS, ROCm) kernels. Five ingredients are enough to get there - PyTorch, Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
+3. Implement missing ops
 
 <p align="center">
 <img src="webgpu.png" height="100" width="100">
@@ -17,6 +22,7 @@ Experimental WebGPU backend for PyTorch
 <span>WebGPU logo by <a href="https://www.w3.org/"><abbr title="World Wide Web Consortium">W3C</abbr></a></span>
 
 ## Coolest thing you can do with torch-webgpu now
+
 **Compile and run a real LLM on WebGPU: Qwen/Qwen2.5-0.5B-Instruct with `@torch.compile(backend=webgpu_backend)`!**
 
 ```py
@@ -44,7 +50,7 @@ with torch.no_grad():
     print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
 ```
 
-Run tests: `pytest tests/test_qwen_compile.py -v`
+Run tests: `pytest tests/test_qwen_compile.py -s`
 
 ## Installation
 
