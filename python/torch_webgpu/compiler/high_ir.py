@@ -72,6 +72,18 @@ class HighIROp(StrEnum):
     CUMSUM = auto()
     CAST = auto()  # dtype casting with .to(dtype)
     REPEAT_INTERLEAVE = auto()  # For GQA attention
+    SET_GRAD_ENABLED = auto()  # torch.no_grad() context
+    ITEM = auto()  # tensor.item() - extract scalar value
+    # vmap batch operations
+    ADD_BATCH_DIM = auto()
+    REMOVE_BATCH_DIM = auto()
+    VMAP_INCREMENT_NESTING = auto()
+    VMAP_DECREMENT_NESTING = auto()
+    # Other internal ops
+    LAZY_LOAD_DECOMPOSITIONS = auto()
+    ENTER_AUTOCAST = auto()
+    EXIT_AUTOCAST = auto()
+    LOG_API_USAGE = auto()
 
 
 class HighIRNode(IRNode):
@@ -304,18 +316,106 @@ class HighIRExpand(HighIRNode):
 
 class HighIRArange(HighIRNode):
     ir_op = HighIROp.ARANGE
+    shape = None
+    stride = None
+    dtype = None
+    device = None
+    numel = None
+    size = None
+
+    def __init__(
+        self,
+        fx_node: torch.fx.Node,
+        value_id: Any = None,
+        inputs: List[Any] = [],
+    ):
+        super().__init__(fx_node=fx_node, value_id=value_id, inputs=inputs)
+        if "example_value" in fx_node.meta:
+            example = fx_node.meta["example_value"]
+            self.shape = example.shape
+            self.dtype = example.dtype
+            self.device = example.device
+            self.numel = example.numel()
+            self.stride = example.stride()
+            self.size = example.size()
 
 
 class HighIRFull(HighIRNode):
     ir_op = HighIROp.FULL
+    shape = None
+    stride = None
+    dtype = None
+    device = None
+    numel = None
+    size = None
+
+    def __init__(
+        self,
+        fx_node: torch.fx.Node,
+        value_id: Any = None,
+        inputs: List[Any] = [],
+    ):
+        super().__init__(fx_node=fx_node, value_id=value_id, inputs=inputs)
+        if "example_value" in fx_node.meta:
+            example = fx_node.meta["example_value"]
+            self.shape = example.shape
+            self.dtype = example.dtype
+            self.device = example.device
+            self.numel = example.numel()
+            self.stride = example.stride()
+            self.size = example.size()
 
 
 class HighIRZeros(HighIRNode):
     ir_op = HighIROp.ZEROS
+    shape = None
+    stride = None
+    dtype = None
+    device = None
+    numel = None
+    size = None
+
+    def __init__(
+        self,
+        fx_node: torch.fx.Node,
+        value_id: Any = None,
+        inputs: List[Any] = [],
+    ):
+        super().__init__(fx_node=fx_node, value_id=value_id, inputs=inputs)
+        if "example_value" in fx_node.meta:
+            example = fx_node.meta["example_value"]
+            self.shape = example.shape
+            self.dtype = example.dtype
+            self.device = example.device
+            self.numel = example.numel()
+            self.stride = example.stride()
+            self.size = example.size()
 
 
 class HighIROnes(HighIRNode):
     ir_op = HighIROp.ONES
+    shape = None
+    stride = None
+    dtype = None
+    device = None
+    numel = None
+    size = None
+
+    def __init__(
+        self,
+        fx_node: torch.fx.Node,
+        value_id: Any = None,
+        inputs: List[Any] = [],
+    ):
+        super().__init__(fx_node=fx_node, value_id=value_id, inputs=inputs)
+        if "example_value" in fx_node.meta:
+            example = fx_node.meta["example_value"]
+            self.shape = example.shape
+            self.dtype = example.dtype
+            self.device = example.device
+            self.numel = example.numel()
+            self.stride = example.stride()
+            self.size = example.size()
 
 
 class HighIRWhere(HighIRNode):
@@ -394,6 +494,10 @@ class HighIRRepeatInterleave(HighIRNode):
     ir_op = HighIROp.REPEAT_INTERLEAVE
 
 
+class HighIRSetGradEnabled(HighIRNode):
+    ir_op = HighIROp.SET_GRAD_ENABLED
+
+
 class HighIRCast(HighIRNode):
     ir_op = HighIROp.CAST
     cast_method = None  # Original cast method: "float", "half", "int", "long", "bool", or "to"
@@ -409,8 +513,53 @@ class HighIRCast(HighIRNode):
         self.cast_method = cast_method
 
 
+class HighIRItem(HighIRNode):
+    """tensor.item() - extract a single scalar value from a tensor."""
+    ir_op = HighIROp.ITEM
+
+
+class HighIRAddBatchDim(HighIRNode):
+    ir_op = HighIROp.ADD_BATCH_DIM
+
+
+class HighIRRemoveBatchDim(HighIRNode):
+    ir_op = HighIROp.REMOVE_BATCH_DIM
+
+
+class HighIRVmapIncrementNesting(HighIRNode):
+    ir_op = HighIROp.VMAP_INCREMENT_NESTING
+
+
+class HighIRVmapDecrementNesting(HighIRNode):
+    ir_op = HighIROp.VMAP_DECREMENT_NESTING
+
+
+class HighIRLazyLoadDecompositions(HighIRNode):
+    ir_op = HighIROp.LAZY_LOAD_DECOMPOSITIONS
+
+
+class HighIREnterAutocast(HighIRNode):
+    ir_op = HighIROp.ENTER_AUTOCAST
+
+
+class HighIRExitAutocast(HighIRNode):
+    ir_op = HighIROp.EXIT_AUTOCAST
+
+
+class HighIRLogApiUsage(HighIRNode):
+    ir_op = HighIROp.LOG_API_USAGE
+
+
 import operator
 import torch.nn.functional as F
+from torch._functorch.predispatch import (
+    lazy_load_decompositions,
+    _vmap_increment_nesting,
+    _vmap_decrement_nesting,
+    _add_batch_dim,
+    _remove_batch_dim,
+)
+from torch.amp.autocast_mode import _enter_autocast, _exit_autocast
 
 fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     # Tensor creation
@@ -423,6 +572,7 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     "add": HighIROp.ADD,
     torch.add: HighIROp.ADD,
     operator.add: HighIROp.ADD,
+    operator.iadd: HighIROp.ADD,  # In-place add (+=) treated as regular add
     "sub": HighIROp.SUB,
     torch.sub: HighIROp.SUB,
     operator.sub: HighIROp.SUB,
@@ -450,7 +600,9 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     "tanh": HighIROp.TANH,
     # Unary math
     torch.cos: HighIROp.COS,
+    "cos": HighIROp.COS,
     torch.sin: HighIROp.SIN,
+    "sin": HighIROp.SIN,
     torch.exp: HighIROp.EXP,
     torch.sqrt: HighIROp.SQRT,
     torch.rsqrt: HighIROp.RSQRT,
@@ -472,6 +624,18 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     "cumsum": HighIROp.CUMSUM,
     "repeat_interleave": HighIROp.REPEAT_INTERLEAVE,
     torch.repeat_interleave: HighIROp.REPEAT_INTERLEAVE,
+    # Gradient control (no-op for inference)
+    torch._C._set_grad_enabled: HighIROp.SET_GRAD_ENABLED,
+    # vmap batch operations
+    _add_batch_dim: HighIROp.ADD_BATCH_DIM,
+    _remove_batch_dim: HighIROp.REMOVE_BATCH_DIM,
+    _vmap_increment_nesting: HighIROp.VMAP_INCREMENT_NESTING,
+    _vmap_decrement_nesting: HighIROp.VMAP_DECREMENT_NESTING,
+    # Internal PyTorch ops
+    lazy_load_decompositions: HighIROp.LAZY_LOAD_DECOMPOSITIONS,
+    _enter_autocast: HighIROp.ENTER_AUTOCAST,
+    _exit_autocast: HighIROp.EXIT_AUTOCAST,
+    torch._C._log_api_usage_once: HighIROp.LOG_API_USAGE,
     # Softmax
     torch.softmax: HighIROp.SOFTMAX,
     F.softmax: HighIROp.SOFTMAX,
@@ -536,6 +700,8 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     "int": HighIROp.CAST,    # x.int() -> cast to int32
     "long": HighIROp.CAST,   # x.long() -> cast to int64
     "bool": HighIROp.CAST,   # x.bool() -> cast to bool
+    # Scalar extraction
+    "item": HighIROp.ITEM,   # x.item() -> extract scalar from single-element tensor
     # Control flow
     "to": HighIROp.MOVE_TO,
     "output": HighIROp.OUTPUT,
@@ -578,6 +744,7 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.ARGMAX: HighIRArgmax,
     HighIROp.CUMSUM: HighIRCumsum,
     HighIROp.REPEAT_INTERLEAVE: HighIRRepeatInterleave,
+    HighIROp.SET_GRAD_ENABLED: HighIRSetGradEnabled,
     # Softmax
     HighIROp.SOFTMAX: HighIRSoftmax,
     # Normalization
@@ -623,6 +790,18 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.SCALED_DOT_PRODUCT_ATTENTION: HighIRScaledDotProductAttention,
     # Casting
     HighIROp.CAST: HighIRCast,
+    # Scalar extraction
+    HighIROp.ITEM: HighIRItem,
+    # vmap batch operations
+    HighIROp.ADD_BATCH_DIM: HighIRAddBatchDim,
+    HighIROp.REMOVE_BATCH_DIM: HighIRRemoveBatchDim,
+    HighIROp.VMAP_INCREMENT_NESTING: HighIRVmapIncrementNesting,
+    HighIROp.VMAP_DECREMENT_NESTING: HighIRVmapDecrementNesting,
+    # Internal PyTorch ops
+    HighIROp.LAZY_LOAD_DECOMPOSITIONS: HighIRLazyLoadDecompositions,
+    HighIROp.ENTER_AUTOCAST: HighIREnterAutocast,
+    HighIROp.EXIT_AUTOCAST: HighIRExitAutocast,
+    HighIROp.LOG_API_USAGE: HighIRLogApiUsage,
 }
 
 high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = [
