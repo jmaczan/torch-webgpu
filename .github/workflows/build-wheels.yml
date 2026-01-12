@@ -317,6 +317,7 @@ jobs:
       - name: Build wheel
         env:
           DAWN_PREFIX: ${{ github.workspace }}/dawn-install
+          DISTUTILS_USE_SDK: "1"
         run: |
           pip wheel . --no-deps --no-build-isolation -w dist/
 
