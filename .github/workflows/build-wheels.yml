@@ -42,6 +42,7 @@ jobs:
           cmake -S . -B out/Release \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dawn-install \
+            -DBUILD_SHARED_LIBS=ON \
             -DDAWN_FETCH_DEPENDENCIES=ON \
             -DDAWN_ENABLE_D3D11=OFF \
             -DDAWN_ENABLE_D3D12=OFF \
@@ -69,17 +70,14 @@ jobs:
 
           mkdir -p dawn-install/lib dawn-install/include
 
-          # Try multiple possible locations
+          # Copy the shared library (.so on Linux)
           if [ -f "dawn/out/Release/src/dawn/native/libwebgpu_dawn.so" ]; then
             cp dawn/out/Release/src/dawn/native/libwebgpu_dawn.so dawn-install/lib/
-            echo "Copied from src/dawn/native/"
-          elif [ -f "dawn/out/Release/libwebgpu_dawn.so" ]; then
-            cp dawn/out/Release/libwebgpu_dawn.so dawn-install/lib/
-            echo "Copied from out/Release/"
+            echo "Copied .so from src/dawn/native/"
           else
-            echo "ERROR: Library not found in expected locations"
-            echo "=== Full search of out/Release ==="
-            find dawn/out/Release -name "*.so" -o -name "*.a" 2>/dev/null | head -30
+            echo "ERROR: libwebgpu_dawn.so not found"
+            echo "=== All libraries in out/Release ==="
+            find dawn/out/Release -name "libwebgpu_dawn*" 2>/dev/null
             exit 1
           fi
 
@@ -133,6 +131,7 @@ jobs:
           cmake -S . -B out/Release \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dawn-install \
+            -DBUILD_SHARED_LIBS=ON \
             -DDAWN_FETCH_DEPENDENCIES=ON \
             -DDAWN_ENABLE_D3D11=OFF \
             -DDAWN_ENABLE_D3D12=OFF \
@@ -153,24 +152,21 @@ jobs:
       - name: Find and install library
         run: |
           echo "=== Searching for library ==="
-          find dawn -name "libwebgpu_dawn*" -o -name "webgpu_dawn*" 2>/dev/null || echo "No library found with find"
+          find dawn -name "libwebgpu_dawn*" 2>/dev/null || echo "No library found"
 
           echo "=== Contents of dawn/out/Release/src/dawn/native ==="
           ls -la dawn/out/Release/src/dawn/native/ 2>/dev/null || echo "Directory not found"
 
           mkdir -p dawn-install/lib dawn-install/include
 
-          # Try multiple possible locations
+          # Copy the shared library (dylib on macOS)
           if [ -f "dawn/out/Release/src/dawn/native/libwebgpu_dawn.dylib" ]; then
             cp dawn/out/Release/src/dawn/native/libwebgpu_dawn.dylib dawn-install/lib/
-            echo "Copied from src/dawn/native/"
-          elif [ -f "dawn/out/Release/libwebgpu_dawn.dylib" ]; then
-            cp dawn/out/Release/libwebgpu_dawn.dylib dawn-install/lib/
-            echo "Copied from out/Release/"
+            echo "Copied dylib from src/dawn/native/"
           else
-            echo "ERROR: Library not found in expected locations"
-            echo "=== Full search of out/Release ==="
-            find dawn/out/Release -name "*.dylib" -o -name "*.so" -o -name "*.a" 2>/dev/null | head -30
+            echo "ERROR: libwebgpu_dawn.dylib not found"
+            echo "=== All libraries in out/Release ==="
+            find dawn/out/Release -name "libwebgpu_dawn*" 2>/dev/null
             exit 1
           fi
 

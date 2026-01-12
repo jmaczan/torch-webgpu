@@ -31,6 +31,7 @@ echo "Configuring CMake (dependencies will be fetched automatically)..."
 cmake -S . -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+    -DBUILD_SHARED_LIBS=ON \
     -DDAWN_FETCH_DEPENDENCIES=ON \
     -DDAWN_ENABLE_D3D11=OFF \
     -DDAWN_ENABLE_D3D12=OFF \
