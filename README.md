@@ -3,9 +3,6 @@ Experimental WebGPU backend for PyTorch, which can compile and run LLMs on WebGP
 
 12.01.2026 torch-webgpu reached 0.0.1
 
-## Why?
-WebGPU promises to run everywhere - on every hardware and becomes well supported in web browser. This project is a bridge between PyTorch world and WebGPU world
-
 **Now supported:**
 1. Run PyTorch on WebGPU `device="webgpu"`
 2. Compile PyTorch code for WebGPU - `@torch.compile(m, backend=webgpu)`
@@ -54,15 +51,21 @@ Run tests: `pytest tests/test_qwen_compile.py -s`
 
 ## Installation
 
-**Installation will be radically simplfied soon!**
+```bash
+pip install torch-webgpu
+```
+
+**Supported platforms:**
+
+- Linux (x86_64)
+- macOS (arm64)
+- Windows (x86_64)
+
+### From source (for development)
 
 1. Clone this repo
-
-2. Install `google/dawn`
-
-Guide: https://github.com/google/dawn/blob/main/docs/quickstart-cmake.md. Set `DAWN_PREFIX=` to `dawn/install/Release` based on there is your `dawn` repo, like `DAWN_PREFIX=/home/user/dawn/install/Release`
-
-3. In this repo, run `./build.sh`
+2. Build Dawn: `./scripts/build-dawn.sh` (or set `DAWN_PREFIX` to your Dawn installation)
+3. Build: `./build.sh`
 
 ## Use
 In Python:
@@ -72,6 +75,12 @@ In Python:
 And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real webgpu!
 
 ## FAQ
+
+### Why?
+WebGPU promises to run everywhere - on every hardware and becomes well supported in web browser. This project is a bridge between PyTorch world and WebGPU world
+
+### There is "web" in "WebGPU", so does it mean that I can run PyTorch in a browser now?
+This is a step towards running PyTorch in a browser. The next step is to run PyTorch inside a browser. I am [actively researching](https://github.com/brython-dev/brython/issues/2656) how to do it - if this topic excites you too, contact me on [Twitter](https://x.com/jedmaczan) or open an Issue in this GitHub repo
 
 ### How serious are you about this project? Is it a research or PoC in mind or are you going to make it production quality?
 
@@ -103,7 +112,7 @@ You can fund the project to give me more spare time to work on it. My email: `gi
 
 ### Did AI built it?
 
-The project started 26 Oct 2025. I was coding things by hand and learning a lot about PyTorch internals and ML compilation in general. Once I made the project to the point where you could compile and run basic ML models on WebGPU, on 10 Jan 2026 I started to generate many missing ops with LLM. In just 2 days, AI boosted the project from compiling and running MLPs to running LLMs ❤️
+The project started 26 Oct 2025. I have been coding it by hand and learning a lot about PyTorch internals and ML compilation in general. Once I made the project to the point where you could compile and run MLP on WebGPU, on 10 Jan 2026 I started to generate many missing ops using AI agents. In just 2 days, AI boosted the project from compiling and running MLPs to compiling and running LLMs ❤️
 
 ### Open a GitHub issue if you have more questions. Thanks and let's build this bridge!
 
@@ -160,6 +169,15 @@ Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/
 
 0. Remember to rebuild your code before testing - `./build.sh`
 1. `pytest tests` to run all tests. `pytest tests/ops/test_cos.py` to run a chosen test file, like here we test cosinus
+
+## Releasing (for maintainers)
+
+1. Update version in `pyproject.toml`
+2. Create and push a git tag: `git tag v0.0.2 && git push origin v0.0.2`
+3. Create a GitHub Release from the tag
+4. The `publish.yml` workflow will automatically build wheels and publish to PyPI
+
+For testing: Use "Actions" > "Publish to PyPI" > "Run workflow" > select "testpypi"
 
 ## Cite
 
