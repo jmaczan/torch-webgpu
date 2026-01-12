@@ -1,0 +1,270 @@
+name: Build Wheels
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-dawn-linux:
+    name: Build Dawn (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Dawn
+        id: cache-dawn
+        uses: actions/cache@v4
+        with:
+          path: dawn-install
+          key: dawn-linux-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
+
+      - name: Install dependencies
+        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+
+      - name: Build Dawn
+        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        run: |
+          chmod +x scripts/build-dawn.sh
+          ./scripts/build-dawn.sh dawn-install
+
+      - name: Upload Dawn artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dawn-linux-x86_64
+          path: dawn-install
+          retention-days: 7
+
+  build-dawn-macos:
+    name: Build Dawn (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Dawn
+        id: cache-dawn
+        uses: actions/cache@v4
+        with:
+          path: dawn-install
+          key: dawn-macos-arm64-${{ hashFiles('scripts/build-dawn.sh') }}
+
+      - name: Install dependencies
+        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        run: |
+          brew install cmake ninja
+
+      - name: Build Dawn
+        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        run: |
+          chmod +x scripts/build-dawn.sh
+          ./scripts/build-dawn.sh dawn-install
+
+      - name: Upload Dawn artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dawn-macos-arm64
+          path: dawn-install
+          retention-days: 7
+
+  build-dawn-windows:
+    name: Build Dawn (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Dawn
+        id: cache-dawn
+        uses: actions/cache@v4
+        with:
+          path: dawn-install
+          key: dawn-windows-x86_64-${{ hashFiles('scripts/build-dawn.sh') }}
+
+      - name: Setup MSVC
+        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install dependencies
+        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        run: |
+          choco install cmake ninja git -y
+
+      - name: Build Dawn
+        if: steps.cache-dawn.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          chmod +x scripts/build-dawn.sh
+          ./scripts/build-dawn.sh dawn-install
+
+      - name: Upload Dawn artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dawn-windows-x86_64
+          path: dawn-install
+          retention-days: 7
+
+  build-wheels-linux:
+    name: Build wheels (Linux)
+    needs: build-dawn-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Dawn
+        uses: actions/download-artifact@v4
+        with:
+          name: dawn-linux-x86_64
+          path: dawn-install
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install patchelf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf
+
+      - name: Install build dependencies
+        run: |
+          pip install build wheel torch numpy
+
+      - name: Build wheel
+        env:
+          DAWN_PREFIX: ${{ github.workspace }}/dawn-install
+        run: |
+          pip wheel . --no-deps -w dist/
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist/*.whl
+          retention-days: 30
+
+  build-wheels-macos:
+    name: Build wheels (macOS)
+    needs: build-dawn-macos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Dawn
+        uses: actions/download-artifact@v4
+        with:
+          name: dawn-macos-arm64
+          path: dawn-install
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: |
+          pip install build wheel torch numpy
+
+      - name: Build wheel
+        env:
+          DAWN_PREFIX: ${{ github.workspace }}/dawn-install
+        run: |
+          pip wheel . --no-deps -w dist/
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-macos-arm64
+          path: dist/*.whl
+          retention-days: 30
+
+  build-wheels-windows:
+    name: Build wheels (Windows)
+    needs: build-dawn-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Dawn
+        uses: actions/download-artifact@v4
+        with:
+          name: dawn-windows-x86_64
+          path: dawn-install
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install build dependencies
+        run: |
+          pip install build wheel torch numpy
+
+      - name: Build wheel
+        env:
+          DAWN_PREFIX: ${{ github.workspace }}/dawn-install
+        run: |
+          pip wheel . --no-deps -w dist/
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-windows-x86_64
+          path: dist/*.whl
+          retention-days: 30
+
+  test-wheels:
+    name: Test wheels
+    needs: [build-wheels-linux, build-wheels-macos, build-wheels-windows]
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: wheel-linux-x86_64
+          - os: macos-latest
+            artifact: wheel-macos-arm64
+          - os: windows-latest
+            artifact: wheel-windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+
+      - name: Install wheel
+        run: |
+          pip install torch numpy
+          pip install dist/*.whl
+
+      - name: Test import
+        run: |
+          python -c "import torch_webgpu; print('torch_webgpu imported successfully')"
+
+      - name: Run basic test
+        run: |
+          python -c "
+          import torch
+          import torch_webgpu
+          x = torch.tensor([1.0, 2.0, 3.0], device='webgpu')
+          y = x * 2
+          print(f'Result: {y}')
+          print('Basic test passed!')
+          "

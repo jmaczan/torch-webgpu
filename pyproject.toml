@@ -1,21 +1,37 @@
 [project]
 name = "torch-webgpu"
 version = "0.0.1"
-description = " WebGPU backend for PyTorch"
+description = "PyTorch compiler and WebGPU runtime"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 authors = [
     { name = "Jędrzej Maczan", email = "jedrzejpawel@maczan.pl" },
 ]
+license = { text = "MIT" }
+keywords = ["pytorch", "webgpu", "deep-learning", "machine-learning", "gpu", "torch"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
-    "python-dotenv",
-    "torch==2.9.0",
-    "torchvision==0.24",
-    "numpy"
+    "torch>=2.0.0",
+    "numpy",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jmaczan/torch-webgpu"
+Repository = "https://github.com/jmaczan/torch-webgpu"
+Issues = "https://github.com/jmaczan/torch-webgpu/issues"
+
 [build-system]
-requires = ["setuptools", "wheel", "torch"]
+requires = ["setuptools", "wheel", "torch", "numpy"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
