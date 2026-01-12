@@ -16,14 +16,101 @@ namespace torch_webgpu
             at::Tensor &self, at::Tensor const &src, bool non_blocking = false)
         {
             // TODO: take non_blocking into consideration
+
+            // Handle zero-element tensors - nothing to copy
+            if (self.numel() == 0 || src.numel() == 0) {
+                return self;
+            }
+
             if (src.device().is_privateuseone() && self.device().is_cpu())
             {
                 TORCH_CHECK(src.dtype() == self.dtype());
                 TORCH_CHECK(src.numel() == self.numel());
                 TORCH_CHECK(self.is_contiguous());
 
-                // Make source contiguous if needed (on WebGPU)
-                at::Tensor src_contig = src.is_contiguous() ? src : src.contiguous();
+                // For non-contiguous tensors, we need to read the entire storage and then
+                // extract elements using stride information on CPU. This avoids recursion
+                // that would happen if we called src.contiguous() here.
+                if (!src.is_contiguous()) {
+                    // Calculate storage range we need to read
+                    int64_t min_offset = src.storage_offset();
+                    int64_t max_offset = src.storage_offset();
+                    auto sizes = src.sizes();
+                    auto strides = src.strides();
+                    for (int64_t d = 0; d < src.dim(); ++d) {
+                        if (sizes[d] > 0) {
+                            if (strides[d] > 0) {
+                                max_offset += strides[d] * (sizes[d] - 1);
+                            } else {
+                                min_offset += strides[d] * (sizes[d] - 1);
+                            }
+                        }
+                    }
+                    int64_t storage_elements_needed = max_offset - min_offset + 1;
+
+                    // Read the relevant portion of storage to CPU
+                    auto element_size = at::elementSize(src.scalar_type());
+                    auto src_data = static_cast<core::WebGPUAllocation *>(src.storage().data_ptr().get());
+
+                    uint64_t read_nbytes = static_cast<uint64_t>(storage_elements_needed) * element_size;
+                    uint64_t buffer_offset = static_cast<uint64_t>(min_offset) * element_size;
+
+                    // WebGPU requires sizes to be a multiple of 4
+                    constexpr uint64_t WGPU_BUFFER_ALIGNMENT = 4;
+                    uint64_t aligned_size = ((read_nbytes + WGPU_BUFFER_ALIGNMENT - 1) / WGPU_BUFFER_ALIGNMENT) * WGPU_BUFFER_ALIGNMENT;
+
+                    core::WebGPUContext &ctx = core::getWebGPUContext();
+                    wgpu::BufferDescriptor buffer_desc;
+                    buffer_desc.label = "WebGPU temp buffer for non-contiguous read";
+                    buffer_desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
+                    buffer_desc.size = aligned_size;
+                    buffer_desc.mappedAtCreation = false;
+
+                    wgpu::Buffer tmp = ctx.getDevice().CreateBuffer(&buffer_desc);
+
+                    wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
+                    encoder.CopyBufferToBuffer(src_data->buffer, buffer_offset, tmp, 0, aligned_size);
+                    wgpu::CommandBuffer command = encoder.Finish();
+
+                    ctx.getQueue().Submit(1, &command);
+
+                    auto noop = [](wgpu::MapAsyncStatus, wgpu::StringView) {};
+                    wgpu::Future map_async_future = tmp.MapAsync(wgpu::MapMode::Read, 0, aligned_size, wgpu::CallbackMode::WaitAnyOnly, noop);
+                    ctx.getInstance().WaitAny(map_async_future, UINT64_MAX);
+
+                    const char *mapped = static_cast<const char *>(tmp.GetConstMappedRange(0, aligned_size));
+
+                    // Now extract elements using stride information
+                    char *self_ptr = static_cast<char *>(self.data_ptr());
+                    int64_t numel = src.numel();
+                    int64_t ndim = src.dim();
+
+                    // Iterate through all elements and copy using stride info
+                    std::vector<int64_t> indices(ndim, 0);
+                    for (int64_t i = 0; i < numel; ++i) {
+                        // Calculate source offset for current indices
+                        int64_t src_offset = src.storage_offset() - min_offset;  // Relative to our buffer
+                        for (int64_t d = 0; d < ndim; ++d) {
+                            src_offset += indices[d] * strides[d];
+                        }
+
+                        // Copy element
+                        std::memcpy(self_ptr + i * element_size, mapped + src_offset * element_size, element_size);
+
+                        // Increment indices (like counting in a mixed-radix number system)
+                        for (int64_t d = ndim - 1; d >= 0; --d) {
+                            indices[d]++;
+                            if (indices[d] < sizes[d]) break;
+                            indices[d] = 0;
+                        }
+                    }
+
+                    tmp.Unmap();
+                    return self;
+                }
+
+                // Contiguous path - simpler
+                at::Tensor src_contig = src;
 
                 auto src_size = src_contig.numel() * at::elementSize(src_contig.dtype().toScalarType());
                 auto self_size = self.numel() * at::elementSize(self.dtype().toScalarType());
@@ -83,6 +170,11 @@ namespace torch_webgpu
             at::Tensor &self, at::Tensor const &src, bool non_blocking = false)
         {
             // TODO: take non_blocking into consideration
+
+            // Handle zero-element tensors - nothing to copy
+            if (self.numel() == 0 || src.numel() == 0) {
+                return self;
+            }
 
             if (src.device().is_cpu() && self.device().is_privateuseone())
             {
@@ -157,6 +249,16 @@ namespace torch_webgpu
                 }
                 else
                 {
+                    // For non-float types, use CPU fallback since our copy kernel only supports float32
+                    if (src.scalar_type() != at::kFloat) {
+                        TORCH_CHECK(self.is_contiguous(),
+                            "Non-contiguous copy for non-float WebGPU tensors not yet supported");
+                        // Copy src to CPU, make contiguous, then copy back to WebGPU self
+                        auto src_cpu_contig = src.to(at::kCPU).contiguous();
+                        // Use the contiguous CPU->WebGPU copy path
+                        return torch_webgpu::ops::copy_(self, src_cpu_contig, non_blocking);
+                    }
+
                     at::TensorIteratorConfig config;
                     config.set_check_mem_overlap(true);
                     config.add_output(self);
@@ -212,6 +314,12 @@ namespace torch_webgpu
             bool copy = false,
             std::optional<c10::MemoryFormat> memory_format = std::nullopt)
         {
+            // Handle zero-element tensors - just return an empty tensor on target device
+            if (self.numel() == 0) {
+                auto mem_fmt = memory_format.value_or(c10::MemoryFormat::Contiguous);
+                return at::empty(self.sizes(), self.options().device(device).dtype(dtype).memory_format(mem_fmt));
+            }
+
             // Handle dtype conversion by first converting on source device, then moving
             at::Tensor src = self;
             if (dtype != self.scalar_type()) {
@@ -269,6 +377,12 @@ namespace torch_webgpu
             bool copy = false,
             std::optional<c10::MemoryFormat> memory_format = std::nullopt)
         {
+            // Handle zero-element tensors - just return an empty tensor on target device
+            if (self.numel() == 0) {
+                auto mem_fmt = memory_format.value_or(c10::MemoryFormat::Contiguous);
+                return at::empty(self.sizes(), self.options().device(device).dtype(dtype).memory_format(mem_fmt));
+            }
+
             // Handle CPU → WebGPU
             if (self.device().is_cpu() && device.is_privateuseone()) {
                 // Use self's dtype, ignoring the passed dtype parameter
