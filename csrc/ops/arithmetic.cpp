@@ -10,6 +10,7 @@
 #include <fstream>
 #include <filesystem>
 #include <sstream>
+#include <optional>
 
 namespace torch_webgpu
 {
@@ -42,16 +43,21 @@ namespace torch_webgpu
             run_binary_kernel<BinaryOp::Div>(iter);
         }
 
-        void mm_kernel_webgpu(const at::Tensor &self, const at::Tensor &mat2, at::Tensor &out)
+        // Cached MM kernel structure
+        struct MMKernel {
+            wgpu::BindGroupLayout bind_group_layout;
+            wgpu::ComputePipeline pipeline;
+        };
+
+        MMKernel& get_mm_kernel()
         {
-            // TODO: big perf improvement will be to cache many of reusable parts
-            // like shader_module, bind_group_layout, pipeline_layout, pipeline
-            TORCH_CHECK(self.device().type() == c10::DeviceType::PrivateUse1);
-            TORCH_CHECK(mat2.device().type() == c10::DeviceType::PrivateUse1);
-            TORCH_CHECK(out.device().type() == c10::DeviceType::PrivateUse1);
-            TORCH_CHECK(self.scalar_type() == c10::ScalarType::Float);
-            TORCH_CHECK(mat2.scalar_type() == c10::ScalarType::Float);
-            TORCH_CHECK(out.scalar_type() == c10::ScalarType::Float);
+            static std::optional<MMKernel> cached_kernel;
+            if (cached_kernel.has_value())
+            {
+                return cached_kernel.value();
+            }
+
+            // Load shader
             static std::string mm_shader;
             if (mm_shader.empty())
             {
@@ -119,7 +125,22 @@ namespace torch_webgpu
             pipeline_descriptor.compute.entryPoint = wgpu::StringView{"main", 4};
 
             wgpu::ComputePipeline pipeline = ctx.getDevice().CreateComputePipeline(&pipeline_descriptor);
-            BinaryKernel kernel{bind_group_layout, pipeline};
+            cached_kernel.emplace(MMKernel{bind_group_layout, pipeline});
+            return cached_kernel.value();
+        }
+
+        void mm_kernel_webgpu(const at::Tensor &self, const at::Tensor &mat2, at::Tensor &out)
+        {
+            TORCH_CHECK(self.device().type() == c10::DeviceType::PrivateUse1);
+            TORCH_CHECK(mat2.device().type() == c10::DeviceType::PrivateUse1);
+            TORCH_CHECK(out.device().type() == c10::DeviceType::PrivateUse1);
+            TORCH_CHECK(self.scalar_type() == c10::ScalarType::Float);
+            TORCH_CHECK(mat2.scalar_type() == c10::ScalarType::Float);
+            TORCH_CHECK(out.scalar_type() == c10::ScalarType::Float);
+
+            // Get cached kernel (shader + pipeline only compiled once)
+            MMKernel& kernel = get_mm_kernel();
+            core::WebGPUContext &ctx = core::getWebGPUContext();
 
             auto self_strides = self.strides();
             auto mat2_strides = mat2.strides();
