@@ -2,6 +2,14 @@
 
 PyTorch compiler and WebGPU runtime, capable of running LLMs like [LLama 3.2 3B](examples/llama-3.2-3b.py) 
 
+## Use
+In Python:
+
+`from torch_webgpu import webgpu_backend`
+
+And now you can use `@torch.compile(backend=webgpu_backend)`, `device="webgpu"`, `to="webgpu"` to run and compile PyTorch on a real WebGPU!
+
+
 ## Installation
 
 ```bash
@@ -17,13 +25,6 @@ https://torch-webgpu.maczan.pl
 - Linux (x86_64)
 - macOS (Apple Silicon)
 - Windows (x86_64)
-
-## Use
-In Python:
-
-`from torch_webgpu import webgpu_backend`
-
-And now you can use `@torch.compile(backend=webgpu_backend)`, `device="webgpu"`, `to="webgpu"` to run and compile PyTorch on a real WebGPU!
 
 ## FAQ
 
