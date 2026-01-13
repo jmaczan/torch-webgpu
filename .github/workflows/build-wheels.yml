@@ -397,15 +397,18 @@ jobs:
           path: dist/
 
       - name: Install wheel
+        shell: bash
         run: |
           pip install torch numpy
           pip install dist/*.whl
 
       - name: Test import
+        shell: bash
         run: |
           python -c "import torch_webgpu; print('torch_webgpu imported successfully')"
 
       - name: Run basic test
+        shell: bash
         run: |
           python -c "
           import torch
