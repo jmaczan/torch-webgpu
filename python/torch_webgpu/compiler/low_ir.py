@@ -4,7 +4,7 @@ from enum import StrEnum, auto
 
 from .compiler_pass import CompilerPass
 from .ir import IRNode
-from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp, HighIRArange
+from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp
 
 
 class LowIROp(StrEnum):

@@ -1,5 +1,4 @@
 """Tests for High IR op mappings and node creation."""
-import pytest
 import torch
 import torch.nn.functional as F
 import operator

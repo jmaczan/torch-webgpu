@@ -4,7 +4,6 @@ import platform
 import shutil
 from pathlib import Path
 from setuptools import setup, find_packages
-from setuptools.command.build_ext import build_ext as _build_ext
 from torch.utils.cpp_extension import CppExtension, BuildExtension
 
 # Try to load .env for local development
@@ -128,7 +127,7 @@ system = platform.system()
 
 if system == "Linux":
     extra_compile_args = ["-std=c++17", "-O2"]
-    extra_link_args = [f"-Wl,-rpath,$ORIGIN/libs"]
+    extra_link_args = ["-Wl,-rpath,$ORIGIN/libs"]
 elif system == "Darwin":
     extra_compile_args = ["-std=c++17", "-O2"]
     extra_link_args = ["-Wl,-rpath,@loader_path/libs"]

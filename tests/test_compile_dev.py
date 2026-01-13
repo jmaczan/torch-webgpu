@@ -1,5 +1,4 @@
 import torch
-import torch_webgpu
 from torch_webgpu import webgpu_backend
 
 

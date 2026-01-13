@@ -1,5 +1,4 @@
 import torch
-import torch_webgpu
 
 
 if __name__ == "__main__":

@@ -11,7 +11,6 @@ import pytest
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-import torch_webgpu
 from torch_webgpu.compiler.webgpu_compiler import webgpu_backend
 
 

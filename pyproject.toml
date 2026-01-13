@@ -27,7 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 docs = ["mkdocs", "mkdocs-material"]
-dev = ["pytest", "mkdocs", "mkdocs-material"]
+dev = ["pytest", "mkdocs", "mkdocs-material", "ruff"]
 
 [project.urls]
 Homepage = "https://github.com/jmaczan/torch-webgpu"
