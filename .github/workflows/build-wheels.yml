@@ -275,15 +275,23 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          pip install build wheel numpy
+          pip install build wheel numpy auditwheel
           pip install --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple torch
 
       - name: Build wheel
         env:
           DAWN_PREFIX: ${{ github.workspace }}/dawn-install
-          ARCHFLAGS: "-arch arm64"
         run: |
-          pip wheel . --no-deps --no-build-isolation -w dist/
+          pip wheel . --no-deps --no-build-isolation -w dist_raw/
+
+      - name: Repair wheel with auditwheel
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/dawn-install/lib
+        run: |
+          mkdir -p dist
+          auditwheel repair dist_raw/*.whl -w dist/ --plat manylinux_2_34_x86_64
+          echo "=== Repaired wheel ==="
+          ls -la dist/
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
