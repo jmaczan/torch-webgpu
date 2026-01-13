@@ -4,7 +4,7 @@ from enum import StrEnum, auto
 
 from .compiler_pass import CompilerPass
 from .ir import IRNode
-from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp, HighIRArange, HighIRFull, HighIRZeros, HighIROnes
+from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp
 from .logger import debug
 
 
