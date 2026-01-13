@@ -41,7 +41,6 @@ jobs:
           mkdir -p out/Release
           cmake -S . -B out/Release \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dawn-install \
             -DBUILD_SHARED_LIBS=OFF \
             -DDAWN_BUILD_MONOLITHIC_LIBRARY=SHARED \
@@ -296,9 +295,34 @@ jobs:
           auditwheel show dist_raw/*.whl
           echo "=== Repairing wheel ==="
           mkdir -p dist
-          auditwheel repair dist_raw/*.whl -w dist/ --plat manylinux_2_35_x86_64
+          # Exclude PyTorch libraries - they're provided by user's PyTorch installation
+          auditwheel repair dist_raw/*.whl -w dist/ --plat manylinux_2_35_x86_64 \
+            --exclude libc10.so \
+            --exclude libtorch.so \
+            --exclude libtorch_cpu.so \
+            --exclude libtorch_python.so
           echo "=== Repaired wheel ==="
           ls -la dist/
+
+      - name: Verify wheel contents
+        run: |
+          echo "=== Checking wheel contents ==="
+          cd dist
+          unzip -l *.whl
+          # Verify Dawn library is included
+          if unzip -l *.whl | grep -q "libwebgpu_dawn"; then
+            echo "Dawn library found in wheel"
+          else
+            echo "ERROR: Dawn library NOT found in wheel!"
+            exit 1
+          fi
+          # Verify the extension module is included
+          if unzip -l *.whl | grep -q "_C.*\.so"; then
+            echo "Extension module found in wheel"
+          else
+            echo "ERROR: Extension module NOT found in wheel!"
+            exit 1
+          fi
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
@@ -335,6 +359,26 @@ jobs:
           DISTUTILS_USE_SDK: "1"
         run: |
           pip wheel . --no-deps --no-build-isolation -w dist/
+
+      - name: Verify wheel contents
+        run: |
+          echo "=== Checking wheel contents ==="
+          cd dist
+          unzip -l *.whl
+          # Verify Dawn library is included
+          if unzip -l *.whl | grep -q "libwebgpu_dawn"; then
+            echo "Dawn library found in wheel"
+          else
+            echo "ERROR: Dawn library NOT found in wheel!"
+            exit 1
+          fi
+          # Verify the extension module is included
+          if unzip -l *.whl | grep -q "_C.*\.so"; then
+            echo "Extension module found in wheel"
+          else
+            echo "ERROR: Extension module NOT found in wheel!"
+            exit 1
+          fi
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
@@ -377,6 +421,27 @@ jobs:
         run: |
           pip wheel -v . --no-deps --no-build-isolation -w dist/
 
+      - name: Verify wheel contents
+        shell: bash
+        run: |
+          echo "=== Checking wheel contents ==="
+          cd dist
+          unzip -l *.whl
+          # Verify Dawn library is included
+          if unzip -l *.whl | grep -q "webgpu_dawn"; then
+            echo "Dawn library found in wheel"
+          else
+            echo "ERROR: Dawn library NOT found in wheel!"
+            exit 1
+          fi
+          # Verify the extension module is included
+          if unzip -l *.whl | grep -q "_C.*\.pyd"; then
+            echo "Extension module found in wheel"
+          else
+            echo "ERROR: Extension module NOT found in wheel!"
+            exit 1
+          fi
+
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
@@ -388,6 +453,7 @@ jobs:
     name: Test wheels
     needs: [build-wheels-linux, build-wheels-macos, build-wheels-windows]
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-22.04
