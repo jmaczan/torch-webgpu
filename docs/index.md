@@ -64,16 +64,6 @@ with torch.no_grad():
     print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
 ```
 
-## Current Status
-
-torch-webgpu is at version **0.0.1** - very early but functional
-
-- ✅ Basic tensor operations
-- ✅ torch.compile backend
-- ✅ LLM inference (examples: Qwen 0.5B, Llama 3.2 3B)
-- 🚧 Performance optimizations
-- 🚧 More op coverage
-
 ## Get Started
 
 Ready to try it? Head to the [Installation](getting-started/installation.md) guide.
