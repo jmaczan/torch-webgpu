@@ -487,15 +487,30 @@ namespace torch_webgpu
         // Tensor division with device handling
         at::Tensor div_tensor(const at::Tensor &self, const at::Tensor &other)
         {
-            at::Tensor self_gpu = self.device().is_privateuseone()
-                                      ? self
-                                      : ensure_webgpu_tensor(self, other);
-            at::Tensor other_gpu = other.device().is_privateuseone()
-                                       ? other
-                                       : ensure_webgpu_tensor(other, self);
+            // Track original dtype for conversion back using type promotion rules
+            at::ScalarType orig_dtype = at::result_type(self, other);
+            bool needs_conversion = (orig_dtype != at::kFloat);
+
+            // Always convert to float for shader
+            at::Tensor self_work = self.scalar_type() != at::kFloat ? self.to(at::kFloat) : self;
+            at::Tensor other_work = other.scalar_type() != at::kFloat ? other.to(at::kFloat) : other;
+
+            at::Tensor self_gpu = self_work.device().is_privateuseone()
+                                      ? self_work
+                                      : ensure_webgpu_tensor(self_work, other_work);
+            at::Tensor other_gpu = other_work.device().is_privateuseone()
+                                       ? other_work
+                                       : ensure_webgpu_tensor(other_work, self_work);
             auto output_shape = at::infer_size(self_gpu.sizes(), other_gpu.sizes());
             auto out = at::empty(output_shape, self_gpu.options());
-            return div_out_webgpu(self_gpu, other_gpu, out);
+            auto result = div_out_webgpu(self_gpu, other_gpu, out);
+
+            // Convert back if original was not float
+            if (needs_conversion)
+            {
+                return result.to(orig_dtype);
+            }
+            return result;
         }
 
         // Tensor subtraction with device handling
