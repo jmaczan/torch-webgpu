@@ -77,8 +77,3 @@ version = {1.0.0},
 year = {2025}
 }
 ```
-
-
-## Credits
-
-[Jędrzej Maczan, 2025 - ∞](https://jedrzej.maczan.pl/)
