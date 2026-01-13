@@ -2,13 +2,19 @@
 
 PyTorch compiler and WebGPU runtime, capable of running LLM inference
 
-## What is torch-webgpu?
+## Use
 
-torch-webgpu is an experimental WebGPU backend for PyTorch that allows you to:
+In Python:
 
-- **Run PyTorch on WebGPU** using `device="webgpu"`
-- **Compile PyTorch models** with `@torch.compile(backend="webgpu")`
-- **Run LLMs on WebGPU** - models like Llama 3.2B or Qwen 2.5 0.5B works today!
+`from torch_webgpu import webgpu_backend`
+
+And now you can use `@torch.compile(backend=webgpu_backend)`, `device="webgpu"`, `to="webgpu"` to run and compile PyTorch on a real WebGPU!
+
+## Installation
+
+```bash
+pip install torch-webgpu
+```
 
 ## Why WebGPU?
 
@@ -19,7 +25,7 @@ WebGPU is a modern graphics and compute API that:
 - Provides a unified API across different GPU vendors
 - I believe is the future of portable GPU computing
 
-## Quick Example
+## Example: Tensor on WebGPU
 
 ```python
 import torch
@@ -31,18 +37,31 @@ y = x * 2
 print(y)  # tensor([2., 4., 6.], device='webgpu')
 ```
 
-## Compile an LLM
+## Example: Compile and run an LLM
 
 ```python
-import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
 from torch_webgpu.compiler.webgpu_compiler import webgpu_backend
 
-model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+model = AutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen2.5-0.5B-Instruct", torch_dtype=torch.float32
+)
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+model.eval()
+
 compiled_model = torch.compile(model, backend=webgpu_backend)
 
-# Run inference on WebGPU!
-outputs = compiled_model(input_ids)
+with torch.no_grad():
+    inputs = tokenizer("Hello, how are you?", return_tensors="pt")
+    input_ids = inputs["input_ids"]
+    generated_ids = input_ids.clone()
+    outputs = compiled_model(input_ids)
+    for _ in range(10):
+        outputs = compiled_model(generated_ids)
+        next_token = outputs.logits[0, -1].argmax().unsqueeze(0).unsqueeze(0)
+        generated_ids = torch.cat([generated_ids, next_token], dim=1)
+    print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
 ```
 
 ## Current Status
