@@ -13,7 +13,7 @@ on:
 jobs:
   build-dawn-linux:
     name: Build Dawn (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -253,7 +253,7 @@ jobs:
   build-wheels-linux:
     name: Build wheels (Linux)
     needs: build-dawn-linux
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -288,8 +288,15 @@ jobs:
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/dawn-install/lib
         run: |
+          echo "=== Dawn library ==="
+          ls -la ${{ github.workspace }}/dawn-install/lib/
+          echo "=== Wheel before repair ==="
+          ls -la dist_raw/
+          echo "=== auditwheel show ==="
+          auditwheel show dist_raw/*.whl
+          echo "=== Repairing wheel ==="
           mkdir -p dist
-          auditwheel repair dist_raw/*.whl -w dist/ --plat manylinux_2_34_x86_64
+          auditwheel repair dist_raw/*.whl -w dist/ --plat manylinux_2_35_x86_64
           echo "=== Repaired wheel ==="
           ls -la dist/
 
@@ -383,7 +390,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             artifact: wheel-linux-x86_64
           - os: macos-latest
             artifact: wheel-macos-arm64

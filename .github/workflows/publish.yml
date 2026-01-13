@@ -22,7 +22,7 @@ jobs:
   publish-testpypi:
     name: Publish to TestPyPI
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to == 'testpypi'
     environment: testpypi
     permissions:
@@ -43,7 +43,7 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to == 'pypi')
     environment: pypi
     permissions:
