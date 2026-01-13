@@ -9,9 +9,9 @@ namespace torch_webgpu
         WebGPUContext::WebGPUContext()
         {
             static const auto k_timed_wait_any = wgpu::InstanceFeatureName::TimedWaitAny;
-            wgpu::InstanceDescriptor instance_descriptor{
-                .requiredFeatureCount = 1,
-                .requiredFeatures = &k_timed_wait_any};
+            wgpu::InstanceDescriptor instance_descriptor{};
+            instance_descriptor.requiredFeatureCount = 1;
+            instance_descriptor.requiredFeatures = &k_timed_wait_any;
             instance = wgpu::CreateInstance(&instance_descriptor);
 
             wgpu::RequestAdapterOptions adapter_options{};
