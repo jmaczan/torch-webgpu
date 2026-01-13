@@ -2,6 +2,7 @@ import torch
 from torch._dynamo import register_backend
 from typing import Callable, List
 
+from .logger import debug, debug_enabled
 from .lowering import lowering
 from .high_ir import (
     fx_to_high_ir,
@@ -25,12 +26,14 @@ def webgpu_backend(
     gm: torch.fx.GraphModule,
     example_inputs: List[torch.Tensor],
 ) -> Callable:
-    print("\nFX graph (input):")
-    gm.graph.print_tabular()
+    if debug_enabled():
+        debug("FX graph (input):")
+        gm.graph.print_tabular()
 
     high_ir = fx_to_high_ir(gm)
-    print("\nHigh IR graph:")
-    high_ir_print_tabular(high_ir)
+    if debug_enabled():
+        debug("High IR graph:")
+        high_ir_print_tabular(high_ir)
 
     # Extract placeholder names for later binding
     placeholder_names = [
@@ -42,12 +45,14 @@ def webgpu_backend(
         ir_op_to_ir_node=high_ir_op_to_high_ir_node,
         passes=high_ir_compiler_passes,
     )
-    print("\nHigh IR graph (after compilation):")
-    high_ir_print_tabular(high_ir)
+    if debug_enabled():
+        debug("High IR graph (after compilation):")
+        high_ir_print_tabular(high_ir)
 
     low_ir: List[LowIRNode] = high_ir_to_low_ir(high_ir)
-    print("\nLow IR graph:")
-    low_ir_print_tabular(low_ir)
+    if debug_enabled():
+        debug("Low IR graph:")
+        low_ir_print_tabular(low_ir)
 
     low_ir: List[LowIRNode] = run_compiler_passes(
         input_ir_graph=low_ir,

@@ -9,6 +9,7 @@ from .low_ir import (
     LowIRRunShader,
     LowIRWriteBuffer,
 )
+from .logger import debug, debug_enabled
 import torch
 
 Runtime = dict
@@ -111,7 +112,6 @@ SHADER_TO_FUNC = {
 }
 
 
-DEBUG_LOWERING = False  # Set to True to debug shape issues
 
 
 def _resolve_arg(arg, runtime: Runtime):
@@ -145,13 +145,13 @@ def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
 
     all_args = [_resolve_arg(arg, runtime) for arg in fx_args]
 
-    if DEBUG_LOWERING:
-        print(f"[DEBUG] run_shader: {node.shader_name}")
+    if debug_enabled():
+        debug(f"run_shader: {node.shader_name}")
         for i, a in enumerate(all_args):
             if hasattr(a, 'shape'):
-                print(f"  Arg {i}: tensor shape={a.shape}")
+                debug(f"  Arg {i}: tensor shape={a.shape}")
             else:
-                print(f"  Arg {i}: {type(a).__name__} = {a}")
+                debug(f"  Arg {i}: {type(a).__name__} = {a}")
 
     # Get kwargs and resolve any Node objects
     fx_kwargs = node.high_ir_node.fx_node.kwargs
@@ -172,8 +172,8 @@ def run_shader(node: LowIRRunShader, runtime: Runtime) -> torch.Tensor:
         raise Exception(
             f"I don't know where to put a relevant op for this shader: {node.shader_name}. Node: {node}"
         )
-    if DEBUG_LOWERING:
-        print(f"  Output: shape={out.shape if hasattr(out, 'shape') else 'N/A'}")
+    if debug_enabled():
+        debug(f"  Output: shape={out.shape if hasattr(out, 'shape') else 'N/A'}")
     runtime[node.value_id] = out
     return out
 
@@ -191,10 +191,10 @@ def output(node: LowIROutput, runtime: Runtime):
     # torch.compile expects a tuple of outputs (matching FX GraphModule format)
     # The output format is (tensor1, tensor2, ...) wrapped in a tuple
     results = tuple(runtime[inp.name] for inp in node.inputs)
-    if DEBUG_LOWERING:
-        print(f"[DEBUG] output: returning tuple with {len(results)} tensor(s)")
+    if debug_enabled():
+        debug(f"output: returning tuple with {len(results)} tensor(s)")
         for i, t in enumerate(results):
-            print(f"  [{i}] shape={t.shape if hasattr(t, 'shape') else 'N/A'}")
+            debug(f"  [{i}] shape={t.shape if hasattr(t, 'shape') else 'N/A'}")
     return results
 
 
@@ -215,7 +215,7 @@ def lowering(nodes: List[LowIRNode], placeholder_names: List[str] = None) -> Cal
         if webgpu_op is not None:
             calls.append(partial(webgpu_op, node))
         else:
-            print(f"WebGPU op is none for LowIROp: {node.ir_op}")
+            debug(f"WebGPU op is none for LowIROp: {node.ir_op}")
 
     placeholder_names = placeholder_names or []
 
@@ -224,15 +224,15 @@ def lowering(nodes: List[LowIRNode], placeholder_names: List[str] = None) -> Cal
         runtime: Runtime = {}
         for name, value in zip(placeholder_names, args):
             runtime[name] = value
-            if DEBUG_LOWERING:
-                print(f"[DEBUG] Placeholder '{name}': shape={value.shape if hasattr(value, 'shape') else 'N/A'}")
+            if debug_enabled():
+                debug(f"Placeholder '{name}': shape={value.shape if hasattr(value, 'shape') else 'N/A'}")
 
         # Execute all ops
         output = None
         for call in calls:
             output = call(runtime)
-        if DEBUG_LOWERING:
-            print(f"[DEBUG] program returns: type={type(output)}, shape={output.shape if hasattr(output, 'shape') else 'N/A'}")
+        if debug_enabled():
+            debug(f"program returns: type={type(output)}, shape={output.shape if hasattr(output, 'shape') else 'N/A'}")
         return output
 
     return program
