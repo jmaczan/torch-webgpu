@@ -5,7 +5,7 @@ Test script to run Qwen/Qwen2.5-0.5B-Instruct on WebGPU backend.
 import pytest
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
+from torch_webgpu import webgpu_backend
 
 @pytest.mark.skip(
     reason="Qwen model requires additional ops not yet implemented (KV cache, advanced reductions)"
