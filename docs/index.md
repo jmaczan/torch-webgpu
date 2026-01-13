@@ -1,6 +1,13 @@
 # torch-webgpu
 
-PyTorch compiler and WebGPU runtime, capable of running LLM inference
+**PyTorch compiler and WebGPU runtime, capable of running LLM inference**
+
+![PyPI status](https://img.shields.io/pypi/status/torch-webgpu)
+![License](https://img.shields.io/pypi/l/torch-webgpu)
+![Python versions](https://img.shields.io/pypi/pyversions/torch-webgpu)
+![PyPI version](https://img.shields.io/pypi/v/torch-webgpu)
+![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)
+
 
 ## Use
 
