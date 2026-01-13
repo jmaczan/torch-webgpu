@@ -1,5 +1,4 @@
 """Tests for Low IR op mappings."""
-import pytest
 
 from torch_webgpu.compiler.high_ir import HighIROp
 from torch_webgpu.compiler.low_ir import (

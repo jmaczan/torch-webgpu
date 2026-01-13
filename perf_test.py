@@ -1,6 +1,5 @@
 """Test WebGPU buffer creation overhead."""
 import torch
-import torch_webgpu
 import time
 
 device = torch.device("webgpu")

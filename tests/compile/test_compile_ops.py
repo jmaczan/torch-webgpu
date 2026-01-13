@@ -1,7 +1,6 @@
 """Tests for torch.compile with webgpu backend on individual ops."""
 import pytest
 import torch
-import torch_webgpu
 from torch_webgpu import webgpu_backend
 
 

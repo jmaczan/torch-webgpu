@@ -4,7 +4,6 @@ Test script to run Qwen/Qwen2.5-0.5B-Instruct on WebGPU backend.
 
 import pytest
 import torch
-import torch_webgpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 

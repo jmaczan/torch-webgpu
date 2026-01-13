@@ -1,4 +1,4 @@
-from typing import Any, Callable, List
+from typing import Callable, List
 from functools import partial
 from .low_ir import (
     LowIRCreateBuffer,
@@ -9,7 +9,6 @@ from .low_ir import (
     LowIRRunShader,
     LowIRWriteBuffer,
 )
-import torch_webgpu
 import torch
 
 Runtime = dict
