@@ -74,6 +74,12 @@ class HighIROp(StrEnum):
     REPEAT_INTERLEAVE = auto()  # For GQA attention
     SET_GRAD_ENABLED = auto()  # torch.no_grad() context
     ITEM = auto()  # tensor.item() - extract scalar value
+    # MoE (Mixture of Experts) ops
+    TOPK = auto()  # top-k selection for expert routing
+    SCATTER = auto()  # scatter values to indices
+    SCATTER_ADD = auto()  # scatter with addition
+    GATHER = auto()  # gather values from indices
+    ANY = auto()  # any reduction (for masks)
     # vmap batch operations
     ADD_BATCH_DIM = auto()
     REMOVE_BATCH_DIM = auto()
@@ -518,6 +524,31 @@ class HighIRItem(HighIRNode):
     ir_op = HighIROp.ITEM
 
 
+class HighIRTopk(HighIRNode):
+    """torch.topk - returns top k values and indices."""
+    ir_op = HighIROp.TOPK
+
+
+class HighIRScatter(HighIRNode):
+    """torch.scatter - scatter values to indices."""
+    ir_op = HighIROp.SCATTER
+
+
+class HighIRScatterAdd(HighIRNode):
+    """torch.scatter_add - scatter with addition."""
+    ir_op = HighIROp.SCATTER_ADD
+
+
+class HighIRGather(HighIRNode):
+    """torch.gather - gather values from indices."""
+    ir_op = HighIROp.GATHER
+
+
+class HighIRAny(HighIRNode):
+    """torch.any - any reduction."""
+    ir_op = HighIROp.ANY
+
+
 class HighIRAddBatchDim(HighIRNode):
     ir_op = HighIROp.ADD_BATCH_DIM
 
@@ -624,6 +655,17 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     "cumsum": HighIROp.CUMSUM,
     "repeat_interleave": HighIROp.REPEAT_INTERLEAVE,
     torch.repeat_interleave: HighIROp.REPEAT_INTERLEAVE,
+    # MoE ops
+    torch.topk: HighIROp.TOPK,
+    "topk": HighIROp.TOPK,
+    torch.scatter: HighIROp.SCATTER,
+    "scatter": HighIROp.SCATTER,
+    torch.scatter_add: HighIROp.SCATTER_ADD,
+    "scatter_add": HighIROp.SCATTER_ADD,
+    torch.gather: HighIROp.GATHER,
+    "gather": HighIROp.GATHER,
+    torch.any: HighIROp.ANY,
+    "any": HighIROp.ANY,
     # Gradient control (no-op for inference)
     torch._C._set_grad_enabled: HighIROp.SET_GRAD_ENABLED,
     # vmap batch operations
@@ -792,6 +834,12 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.CAST: HighIRCast,
     # Scalar extraction
     HighIROp.ITEM: HighIRItem,
+    # MoE ops
+    HighIROp.TOPK: HighIRTopk,
+    HighIROp.SCATTER: HighIRScatter,
+    HighIROp.SCATTER_ADD: HighIRScatterAdd,
+    HighIROp.GATHER: HighIRGather,
+    HighIROp.ANY: HighIRAny,
     # vmap batch operations
     HighIROp.ADD_BATCH_DIM: HighIRAddBatchDim,
     HighIROp.REMOVE_BATCH_DIM: HighIRRemoveBatchDim,

@@ -102,6 +102,12 @@ SHADER_TO_FUNC = {
     "enter_autocast": lambda *args, **kwargs: None,  # Autocast context enter
     "exit_autocast": lambda *args, **kwargs: None,  # Autocast context exit
     "log_api_usage": lambda *args, **kwargs: None,  # API logging, no-op
+    # MoE ops
+    "topk": torch.topk,
+    "scatter": lambda x, dim, idx, src: x.scatter(dim, idx, src),
+    "scatter_add": lambda x, dim, idx, src: x.scatter_add(dim, idx, src),
+    "gather": torch.gather,
+    "any": torch.any,
 }
 
 

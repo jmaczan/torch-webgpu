@@ -4,7 +4,7 @@ from enum import StrEnum, auto
 
 from .compiler_pass import CompilerPass
 from .ir import IRNode
-from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp
+from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp, HighIRArange, HighIRFull, HighIRZeros, HighIROnes
 
 
 class LowIROp(StrEnum):
@@ -245,6 +245,12 @@ high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.SCALED_DOT_PRODUCT_ATTENTION: [LowIROp.RUN_SHADER],
     # Casting
     HighIROp.CAST: [LowIROp.RUN_SHADER],
+    # MoE ops
+    HighIROp.TOPK: [LowIROp.RUN_SHADER],
+    HighIROp.SCATTER: [LowIROp.RUN_SHADER],
+    HighIROp.SCATTER_ADD: [LowIROp.RUN_SHADER],
+    HighIROp.GATHER: [LowIROp.RUN_SHADER],
+    HighIROp.ANY: [LowIROp.RUN_SHADER],
 }
 
 low_ir_op_to_low_ir_node: dict[LowIROp, type[LowIRNode]] = {
