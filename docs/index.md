@@ -1,10 +1,6 @@
 # torch-webgpu
 
-Compile and run PyTorch models on WebGPU
-
-<p align="center">
-<img src="https://raw.githubusercontent.com/jmaczan/torch-webgpu/main/webgpu.png" height="100" width="100">
-</p>
+PyTorch compiler and WebGPU runtime, capable of running LLM inference
 
 ## What is torch-webgpu?
 
@@ -12,16 +8,16 @@ torch-webgpu is an experimental WebGPU backend for PyTorch that allows you to:
 
 - **Run PyTorch on WebGPU** using `device="webgpu"`
 - **Compile PyTorch models** with `@torch.compile(backend="webgpu")`
-- **Run LLMs on WebGPU** - Qwen 0.5B works today!
+- **Run LLMs on WebGPU** - models like Llama 3.2B or Qwen 2.5 0.5B works today!
 
 ## Why WebGPU?
 
 WebGPU is a modern graphics and compute API that:
 
-- Runs everywhere - Windows, macOS, Linux
+- Runs almost everywhere - Windows, macOS, Linux
 - Works in all major browsers (Chrome, Firefox, Safari, Edge)
 - Provides a unified API across different GPU vendors
-- Is the future of portable GPU computing
+- I believe is the future of portable GPU computing
 
 ## Quick Example
 
@@ -51,11 +47,11 @@ outputs = compiled_model(input_ids)
 
 ## Current Status
 
-torch-webgpu is at version **0.0.1** - experimental but functional.
+torch-webgpu is at version **0.0.1** - very early but functional
 
 - ✅ Basic tensor operations
 - ✅ torch.compile backend
-- ✅ LLM inference (Qwen 0.5B)
+- ✅ LLM inference (examples: Qwen 0.5B, Llama 3.2 3B)
 - 🚧 Performance optimizations
 - 🚧 More op coverage
 
