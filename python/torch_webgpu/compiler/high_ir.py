@@ -4,6 +4,7 @@ from enum import StrEnum, auto
 
 from .compiler_pass import CompilerPass, Transform, Pattern
 from .ir import IRNode
+from .logger import debug, debug_enabled
 
 
 class HighIROp(StrEnum):
@@ -940,21 +941,21 @@ def fx_to_high_ir(gm: torch.fx.GraphModule) -> list[HighIRNode]:
         if ir_node:
             ir_graph.append(ir_node)
         else:
-            print(f"Unsupported FX op: {node.op} / {node.target}. ir_graph: {ir_graph}")
+            debug(f"Unsupported FX op: {node.op} / {node.target}. ir_graph: {ir_graph}")
             raise Exception(f"Unsupported FX op: {node.op} / {node.target}")
     return ir_graph
 
 
 def high_ir_print_tabular(nodes: List[HighIRNode]) -> None:
     if nodes is None or len(nodes) == 0:
-        print("IR Nodes list is empty")
+        debug("IR Nodes list is empty")
         return None
 
     # took most of the code from PyTorch torch/fx/graph.py
     try:
         from tabulate import tabulate
     except ImportError:
-        print(
+        debug(
             "`print_tabular` relies on the library `tabulate`, "
             "which could not be found on this machine. Run `pip "
             "install tabulate` to install the library."
@@ -971,7 +972,7 @@ def high_ir_print_tabular(nodes: List[HighIRNode]) -> None:
         ]
         for n in nodes
     ]
-    print(
+    debug(
         tabulate(
             node_specs,
             headers=[

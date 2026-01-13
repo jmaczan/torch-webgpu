@@ -5,6 +5,7 @@
 from typing import Any, Generic, List, Mapping, TypeVar, Type, Optional
 
 from .ir import IRNode
+from .logger import debug
 
 T_IRNode = TypeVar("T_IRNode", bound="IRNode")
 
@@ -151,7 +152,7 @@ def run_compiler_passes(
     passes: list[CompilerPass],
 ) -> List[T_IRNode]:
     if not passes:
-        print(
+        debug(
             "No compiler passes provided to run_compiler_passes. Skipping this optimization step"
         )
         return input_ir_graph

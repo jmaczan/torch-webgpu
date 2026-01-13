@@ -5,6 +5,7 @@ from enum import StrEnum, auto
 from .compiler_pass import CompilerPass
 from .ir import IRNode
 from .high_ir import HighIRCreateTensor, HighIRNode, HighIROp, HighIRArange, HighIRFull, HighIRZeros, HighIROnes
+from .logger import debug
 
 
 class LowIROp(StrEnum):
@@ -267,7 +268,7 @@ low_ir_compiler_passes: list[CompilerPass[LowIRNode]] = []  # TODO
 def get_low_ir_node(high_ir_op: HighIROp, high_ir_node: HighIRNode):
     low_ir_ops = high_ir_op_to_low_ir_op.get(high_ir_op)
     if low_ir_ops is None:
-        print(f"Didn't find a Low IR Op mapping for High IR Op: {high_ir_op}")
+        debug(f"Didn't find a Low IR Op mapping for High IR Op: {high_ir_op}")
         return None
     # Empty list is valid - means this op produces no low ir nodes (e.g., placeholder)
     if len(low_ir_ops) == 0:
@@ -281,7 +282,7 @@ def get_low_ir_node(high_ir_op: HighIROp, high_ir_node: HighIRNode):
             )
             low_ir_nodes.append(ir_node)
         else:
-            print(f"Didn't find a Low IR Node for Low IR Op: {op}")
+            debug(f"Didn't find a Low IR Node for Low IR Op: {op}")
     return low_ir_nodes
 
 
@@ -290,7 +291,7 @@ def high_ir_to_low_ir(high_ir_graph: List[HighIRNode]) -> List[LowIRNode]:
     for i, node in enumerate(high_ir_graph):
         ir_nodes = get_low_ir_node(high_ir_op=node.ir_op, high_ir_node=node)
         if ir_nodes is None:
-            print(
+            debug(
                 f"Unsupported High IR op: {node.ir_op} (node: {node}). ir_graph: {ir_graph}"
             )
             raise Exception(f"Unsupported High IR op: {node.ir_op} for node: {node}")
@@ -302,14 +303,14 @@ def high_ir_to_low_ir(high_ir_graph: List[HighIRNode]) -> List[LowIRNode]:
 
 def low_ir_print_tabular(nodes: List[LowIRNode]) -> None:
     if nodes is None or len(nodes) == 0:
-        print("IR Nodes list is empty")
+        debug("IR Nodes list is empty")
         return None
 
     # took most of the code from PyTorch torch/fx/graph.py
     try:
         from tabulate import tabulate
     except ImportError:
-        print(
+        debug(
             "`print_tabular` relies on the library `tabulate`, "
             "which could not be found on this machine. Run `pip "
             "install tabulate` to install the library."
@@ -317,7 +318,7 @@ def low_ir_print_tabular(nodes: List[LowIRNode]) -> None:
         raise
 
     node_specs = [[n.ir_op, n.high_ir_node, n.value_id, n.inputs] for n in nodes]
-    print(
+    debug(
         tabulate(
             node_specs,
             headers=[
