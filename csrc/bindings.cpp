@@ -31,12 +31,16 @@ namespace torch_webgpu
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     {
-        // cpu fallbacks
-        m.impl("abs", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
-        m.impl("ne.Scalar_out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
-        m.impl("ne.Scalar", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+        // cpu fallbacks for ops not natively implemented
         m.impl("masked_select", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
-        m.impl("zero_", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+        // Required for tensor printing/formatting
+        m.impl("ceil", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+        m.impl("ceil.out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+        m.impl("floor", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+        m.impl("floor.out", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+        m.impl("isfinite", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+        m.impl("isinf", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
+        m.impl("isnan", torch::CppFunction::makeFromBoxedFunction<&webgpu_cpu_fallback_boxed>());
     }
 }
 
