@@ -409,8 +409,9 @@ jobs:
 
       - name: Run basic test
         shell: bash
-        # Skip GPU test on Windows CI - no GPU/Vulkan available on GitHub runners
-        if: matrix.os != 'windows-latest'
+        # Skip GPU test on Windows/Linux CI - no GPU/Vulkan available on GitHub runners
+        # Only macOS has Metal available
+        if: matrix.os == 'macos-latest'
         run: |
           python -c "
           import torch
