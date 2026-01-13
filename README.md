@@ -1,53 +1,6 @@
 # torch-webgpu
-Experimental WebGPU backend for PyTorch, which can compile and run LLMs on WebGPU!
 
-12.01.2026 torch-webgpu reached 0.0.1
-
-**Now supported:**
-1. Run PyTorch on WebGPU `device="webgpu"`
-2. Compile PyTorch code for WebGPU - `@torch.compile(m, backend=webgpu)`
-3. Many standard PyTorch operations are supported
-
-**Next steps:**
-1. Compiler optimizations
-2. High performance without platform specific (CUDA, MPS, ROCm) kernels. Five ingredients are enough to get there - PyTorch, Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
-3. Implement missing ops
-
-<p align="center">
-<img src="webgpu.png" height="100" width="100">
-</p>
-<span>WebGPU logo by <a href="https://www.w3.org/"><abbr title="World Wide Web Consortium">W3C</abbr></a></span>
-
-## Coolest thing you can do with torch-webgpu now
-
-**Compile and run a real LLM on WebGPU: Qwen/Qwen2.5-0.5B-Instruct with `@torch.compile(backend=webgpu_backend)`!**
-
-```py
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from torch_webgpu.compiler.webgpu_compiler import webgpu_backend
-
-model = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen2.5-0.5B-Instruct", torch_dtype=torch.float32
-)
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
-model.eval()
-
-compiled_model = torch.compile(model, backend=webgpu_backend)
-
-with torch.no_grad():
-    inputs = tokenizer("Hello, how are you?", return_tensors="pt")
-    input_ids = inputs["input_ids"]
-    generated_ids = input_ids.clone()
-    outputs = compiled_model(input_ids)
-    for _ in range(10):
-        outputs = compiled_model(generated_ids)
-        next_token = outputs.logits[0, -1].argmax().unsqueeze(0).unsqueeze(0)
-        generated_ids = torch.cat([generated_ids, next_token], dim=1)
-    print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
-```
-
-Run tests: `pytest tests/test_qwen_compile.py -s`
+PyTorch compiler and WebGPU runtime, capable of running LLMs like [LLama 3.2 3B](examples/llama-3.2-3b.py) 
 
 ## Installation
 
@@ -55,31 +8,31 @@ Run tests: `pytest tests/test_qwen_compile.py -s`
 pip install torch-webgpu
 ```
 
-**Supported platforms:**
+## Documentation
+
+https://torch-webgpu.maczan.pl
+
+## Supported platforms
 
 - Linux (x86_64)
-- macOS (arm64)
+- macOS (Apple Silicon)
 - Windows (x86_64)
-
-### From source (for development)
-
-1. Clone this repo
-2. Build Dawn: `./scripts/build-dawn.sh` (or set `DAWN_PREFIX` to your Dawn installation)
-3. Build: `./build.sh`
 
 ## Use
 In Python:
 
-`import torch_webgpu`
+`from torch_webgpu import webgpu_backend`
 
-And now you can use `device="webgpu"` and `to="webgpu"` to run pytorch on a real webgpu!
+And now you can use `@torch.compile(backend=webgpu_backend)`, `device="webgpu"`, `to="webgpu"` to run and compile PyTorch on a real WebGPU!
 
 ## FAQ
 
 ### Why?
-WebGPU promises to run everywhere - on every hardware and becomes well supported in web browser. This project is a bridge between PyTorch world and WebGPU world
+
+WebGPU promises to run everywhere - on almost every hardware - and becomes well supported in web browser. This project is a bridge between PyTorch world and WebGPU world
 
 ### There is "web" in "WebGPU", so does it mean that I can run PyTorch in a browser now?
+
 This is a step towards running PyTorch in a browser. The next step is to run PyTorch inside a browser. I am [actively researching](https://github.com/brython-dev/brython/issues/2656) how to do it - if this topic excites you too, contact me on [Twitter](https://x.com/jedmaczan) or open an Issue in this GitHub repo
 
 ### How serious are you about this project? Is it a research or PoC in mind or are you going to make it production quality?
@@ -117,7 +70,7 @@ The project started 26 Oct 2025. I have been coding it by hand and learning a lo
 ### Open a GitHub issue if you have more questions. Thanks and let's build this bridge!
 
 ## Ops support 
-Most of the important ops are implemented. If any is missing, feel free to open a PR or an issue. Thanks!
+Many of important ops are implemented. If any is missing, feel free to open a PR or an issue. Thanks!
 
 ## Device / to
 
@@ -127,12 +80,15 @@ Most of the important ops are implemented. If any is missing, feel free to open 
 - [ ] Intel Gaudi <-> WebGPU
 - [ ] XLA <-> WebGPU
 
-## Rough edges
+## TODOs
 
 - performance wasn't a priority yet
 - only float32 supported
 - `wgpu::Queue.Submit()` handled synchronously
-- some ops might fallback to CPU
+- some ops fallback to CPU
+- add more compiler optimizations
+- get high performance without platform specific (CUDA, MPS, ROCm) kernels. Five ingredients should be enough to get there - PyTorch, Python, C++, WGSL shaders and WebGPU runtime. Currently, `torch-webpgu` uses Google Dawn
+- implement missing ops
 
 ## Resources
 
@@ -146,6 +102,12 @@ Most of the important ops are implemented. If any is missing, feel free to open 
 Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/webgpu-torch), which is a neat PyTorch reimplementation in TypeScript targeting WebGPU
 
 ## Dev resources
+
+### Build from source (only for development)
+
+1. Clone this repo
+2. Build Dawn: `./scripts/build-dawn.sh` (or set `DAWN_PREFIX` to your Dawn installation)
+3. Build: `./build.sh`
 
 ### C++ unit tests
 
@@ -169,15 +131,6 @@ Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/
 
 0. Remember to rebuild your code before testing - `./build.sh`
 1. `pytest tests` to run all tests. `pytest tests/ops/test_cos.py` to run a chosen test file, like here we test cosinus
-
-## Releasing (for maintainers)
-
-1. Update version in `pyproject.toml`
-2. Create and push a git tag: `git tag v0.0.2 && git push origin v0.0.2`
-3. Create a GitHub Release from the tag
-4. The `publish.yml` workflow will automatically build wheels and publish to PyPI
-
-For testing: Use "Actions" > "Publish to PyPI" > "Run workflow" > select "testpypi"
 
 ## Cite
 
