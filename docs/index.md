@@ -1,6 +1,6 @@
 # torch-webgpu
 
-**WebGPU backend for PyTorch** - Compile and run PyTorch models on WebGPU.
+Compile and run PyTorch models on WebGPU
 
 <p align="center">
 <img src="https://raw.githubusercontent.com/jmaczan/torch-webgpu/main/webgpu.png" height="100" width="100">
@@ -62,3 +62,23 @@ torch-webgpu is at version **0.0.1** - experimental but functional.
 ## Get Started
 
 Ready to try it? Head to the [Installation](getting-started/installation.md) guide.
+
+## Cite
+
+If you use this software, please cite it as below.
+
+```bibtex
+@software{Maczan_torch-webgpu_2025,
+author = {Maczan, Jędrzej Paweł},
+month = oct,
+title = {{torch-webgpu - PyTorch compiler and WebGPU runtime}},
+url = {https://github.com/jmaczan/torch-webgpu},
+version = {1.0.0},
+year = {2025}
+}
+```
+
+
+## Credits
+
+[Jędrzej Maczan, 2025 - ∞](https://jedrzej.maczan.pl/)
