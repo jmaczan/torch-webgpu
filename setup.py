@@ -54,12 +54,18 @@ def get_dawn_library_name():
 
 
 def get_dawn_lib_path():
-    """Get the path to the Dawn library."""
+    """Get the path to the Dawn shared library, or None if statically linked."""
     lib_name = get_dawn_library_name()
     lib_path = DAWN_PREFIX / "lib" / lib_name
-    if not lib_path.exists():
-        raise RuntimeError(f"Dawn library not found at {lib_path}")
-    return lib_path
+    if lib_path.exists():
+        return lib_path
+    # Check if static library exists (static linking)
+    static_name = lib_name.replace(".so", ".a").replace(".dylib", ".a").replace(".dll", ".lib")
+    static_path = DAWN_PREFIX / "lib" / static_name
+    if static_path.exists():
+        print(f"Dawn static library found at {static_path}, using static linking")
+        return None
+    raise RuntimeError(f"Dawn library not found at {lib_path} or {static_path}")
 
 
 class BuildExtWithDawn(BuildExtension):
@@ -69,8 +75,13 @@ class BuildExtWithDawn(BuildExtension):
         # Run the normal build
         super().run()
 
-        # Copy Dawn library into the built package
+        # Copy Dawn library into the built package (only for dynamic linking)
         lib_path = get_dawn_lib_path()
+
+        if lib_path is None:
+            # Static linking - no need to copy library
+            print("Using static Dawn library, skipping library copy")
+            return
 
         # Find the built extension directory
         for output in self.get_outputs():

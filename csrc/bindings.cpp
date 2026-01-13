@@ -50,6 +50,6 @@ PyMODINIT_FUNC PyInit__C(void)
         nullptr,
         -1,
         methods.data()};
-    PyAPI_FUNC(PyObject *) module = PyModule_Create2(&module_def, python_api_version);
+    PyObject* module = PyModule_Create2(&module_def, python_api_version);
     return module;
 }
