@@ -1,6 +1,14 @@
 # torch-webgpu
 
-PyTorch compiler and WebGPU runtime, capable of running LLMs like [LLama 3.2 3B](examples/llama-3.2-3b.py) 
+**PyTorch compiler and WebGPU runtime, capable of running LLMs like [LLama 3.2 3B](examples/llama-3.2-3b.py)**
+
+![PyPI status](https://img.shields.io/pypi/status/torch-webgpu)
+![License](https://img.shields.io/pypi/l/torch-webgpu)
+![Python versions](https://img.shields.io/pypi/pyversions/torch-webgpu)
+![PyPI version](https://img.shields.io/pypi/v/torch-webgpu)
+![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)
+
+
 
 ## Example: Compile and run an LLM
 
