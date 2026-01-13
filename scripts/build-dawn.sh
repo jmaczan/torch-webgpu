@@ -32,6 +32,15 @@ cd "$DAWN_DIR"
 BUILD_DIR="$DAWN_DIR/out/Release"
 mkdir -p "$BUILD_DIR"
 
+# Determine platform-specific options
+# Enable D3D12 on Windows for best compatibility
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]] || [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+    ENABLE_D3D12="ON"
+    echo "Windows detected - enabling D3D12 backend"
+else
+    ENABLE_D3D12="OFF"
+fi
+
 # Generate build files with automatic dependency fetching
 echo "Configuring CMake (dependencies will be fetched automatically)..."
 cmake -S . -B "$BUILD_DIR" \
@@ -41,7 +50,7 @@ cmake -S . -B "$BUILD_DIR" \
     -DDAWN_BUILD_MONOLITHIC_LIBRARY=SHARED \
     -DDAWN_FETCH_DEPENDENCIES=ON \
     -DDAWN_ENABLE_D3D11=OFF \
-    -DDAWN_ENABLE_D3D12=OFF \
+    -DDAWN_ENABLE_D3D12=$ENABLE_D3D12 \
     -DDAWN_ENABLE_NULL=OFF \
     -DDAWN_ENABLE_DESKTOP_GL=OFF \
     -DDAWN_ENABLE_OPENGLES=OFF \
