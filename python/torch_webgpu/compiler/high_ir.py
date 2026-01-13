@@ -4,7 +4,7 @@ from enum import StrEnum, auto
 
 from .compiler_pass import CompilerPass, Transform, Pattern
 from .ir import IRNode
-from .logger import debug, debug_enabled
+from .logger import debug
 
 
 class HighIROp(StrEnum):
