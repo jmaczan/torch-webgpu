@@ -1,4 +1,16 @@
+import os
+import sys
 import torch
+
+# On Windows, add the libs directory to DLL search path before importing _C
+if sys.platform == "win32":
+    libs_dir = os.path.join(os.path.dirname(__file__), "libs")
+    if os.path.isdir(libs_dir):
+        if hasattr(os, "add_dll_directory"):
+            os.add_dll_directory(libs_dir)
+        # Also prepend to PATH for older Python/Windows compatibility
+        os.environ["PATH"] = libs_dir + os.pathsep + os.environ.get("PATH", "")
+
 from . import _C
 from . import webgpu
 
