@@ -213,7 +213,7 @@ namespace torch_webgpu
             }
             else if (src.device().is_privateuseone() && self.device().is_privateuseone())
             {
-                if (src.is_contiguous() and self.is_contiguous())
+                if (src.is_contiguous() && self.is_contiguous())
                 {
                     // TODO: handle a scenario when src and self share the storage and their memory ranges overlap
 
