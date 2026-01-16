@@ -6,6 +6,7 @@
 #include <cstring>
 #include "core/webgpu_context.h"
 #include "core/webgpu_allocator.h"
+#include "core/command_batcher.h"
 #include "unary.h"
 
 namespace torch_webgpu
@@ -67,6 +68,9 @@ namespace torch_webgpu
                     buffer_desc.mappedAtCreation = false;
 
                     wgpu::Buffer tmp = ctx.getDevice().CreateBuffer(&buffer_desc);
+
+                    // Flush any pending compute work before reading
+                    core::getCommandBatcher().flush();
 
                     wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
                     encoder.CopyBufferToBuffer(src_data->buffer, buffer_offset, tmp, 0, aligned_size);
@@ -136,6 +140,9 @@ namespace torch_webgpu
 
                 core::WebGPUContext &ctx = core::getWebGPUContext();
                 wgpu::Buffer tmp = ctx.getDevice().CreateBuffer(&buffer_desc);
+
+                // Flush any pending compute work before reading
+                core::getCommandBatcher().flush();
 
                 wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
                 encoder.CopyBufferToBuffer(src_data->buffer, src_buffer_offset, tmp, 0, aligned_size);

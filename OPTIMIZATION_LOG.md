@@ -181,3 +181,58 @@ The fundamental bottleneck is **WebGPU command submission overhead**:
 **Conclusion**: torch-webgpu performance is fundamentally limited by WebGPU per-dispatch overhead (~0.4ms).
 Further optimization requires architectural changes beyond kernel-level improvements.
 
+---
+
+## Optimization 4: Command Batching (Experimental)
+- **Date**: 2026-01-16
+- **Change**: Implemented command batching to reduce WebGPU submission overhead
+  - Created `CommandBatcher` class to batch multiple dispatches into single command buffer
+  - Batch size: 16 dispatches before auto-flush
+  - Flush on GPU→CPU copy to ensure correctness
+- **Files**: `csrc/core/command_batcher.h`, `csrc/core/command_batcher.cpp`, updated ops
+
+### Architecture
+
+**Before (per-op submission):**
+```
+op1: CreateEncoder → Dispatch → Submit
+op2: CreateEncoder → Dispatch → Submit
+... (200 times per forward)
+```
+
+**After (batched submission):**
+```
+CreateEncoder → Dispatch(op1) → Dispatch(op2) → ... → Dispatch(op16) → Submit
+CreateEncoder → Dispatch(op17) → ... → Submit
+```
+
+### Results
+| Metric | Before Batching | After Batching | Change |
+|--------|-----------------|----------------|--------|
+| Tokens/sec (stable) | ~11.8 | ~11.8 | ~0% |
+| TTFT | ~73ms | ~74ms | ~0% |
+
+### Analysis: Why No Improvement?
+
+1. **Token generation is inherently sequential**
+   - Each token requires the previous token's output
+   - Forces GPU→CPU copy (argmax) after each forward pass
+   - This triggers a flush, preventing cross-token batching
+
+2. **Within-forward batching limited**
+   - 200 ops / 16 batch size = ~12 submits (vs 200)
+   - But even 12 submits at 0.4ms each = only 5ms saved
+   - Other overhead (buffer creation, bind groups) still ~0.3ms per op
+
+3. **The fundamental issue remains**
+   - Dispatch overhead is only ~40% of total per-op overhead
+   - Buffer creation, bind group creation, etc. are not batched
+   - True solution requires graph-level compilation or persistent kernels
+
+### Next Steps for True Overhead Reduction
+
+1. **Buffer pooling** - Reuse uniform buffers instead of creating per-op
+2. **Bind group caching** - Cache bind groups keyed by buffer tuple
+3. **Graph compilation** - Compile entire forward pass into single command buffer
+4. **Mega-kernel** - Single kernel that executes entire forward pass from buffer instructions
+

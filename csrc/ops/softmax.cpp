@@ -3,6 +3,7 @@
 #include <webgpu/webgpu_cpp.h>
 #include "core/webgpu_context.h"
 #include "core/webgpu_allocator.h"
+#include "core/command_batcher.h"
 
 namespace torch_webgpu
 {
@@ -354,12 +355,6 @@ fn main(
 
             wgpu::BindGroup bind_group = ctx.getDevice().CreateBindGroup(&bind_group_descriptor);
 
-            wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
-            wgpu::ComputePassDescriptor pass_descriptor;
-            wgpu::ComputePassEncoder pass_encoder = encoder.BeginComputePass(&pass_descriptor);
-            pass_encoder.SetPipeline(kernel.pipeline);
-            pass_encoder.SetBindGroup(0, bind_group);
-
             uint32_t num_workgroups;
             if (use_parallel) {
                 // Parallel kernel: one workgroup per batch row
@@ -370,11 +365,8 @@ fn main(
                 num_workgroups = (params.batch_size + workgroup_size - 1) / workgroup_size;
             }
 
-            pass_encoder.DispatchWorkgroups(num_workgroups);
-            pass_encoder.End();
-
-            wgpu::CommandBuffer command_buffer = encoder.Finish();
-            ctx.getQueue().Submit(1, &command_buffer);
+            // Use batched dispatch for reduced submission overhead
+            core::dispatchCompute(kernel.pipeline, bind_group, num_workgroups, 1, 1);
 
             return out;
         }

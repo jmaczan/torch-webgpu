@@ -5,6 +5,7 @@
 #include <webgpu/webgpu_cpp.h>
 #include "core/webgpu_context.h"
 #include "core/webgpu_allocator.h"
+#include "core/command_batcher.h"
 #include "binary.h"
 #include "utils/math.h"
 #include <fstream>
@@ -255,23 +256,14 @@ namespace torch_webgpu
 
             wgpu::BindGroup bind_group = ctx.getDevice().CreateBindGroup(&bind_group_descriptor);
 
-            wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
-            wgpu::ComputePassDescriptor pass_descriptor;
-            wgpu::ComputePassEncoder pass_encoder = encoder.BeginComputePass(&pass_descriptor);
-            pass_encoder.SetPipeline(kernel.pipeline);
-            pass_encoder.SetBindGroup(0, bind_group);
-
             // Tiled matmul: dispatch workgroups for a 2D grid
             // wid.x corresponds to columns (K dimension)
             // wid.y corresponds to rows (M dimension)
             const uint32_t wgx = ceil_div_u32(params.K, TILE_X);  // Number of column tiles
             const uint32_t wgy = ceil_div_u32(params.M, TILE_Y);  // Number of row tiles
 
-            pass_encoder.DispatchWorkgroups(wgx, wgy);
-            pass_encoder.End();
-
-            wgpu::CommandBuffer command_buffer = encoder.Finish();
-            ctx.getQueue().Submit(1, &command_buffer);
+            // Use batched dispatch for reduced submission overhead
+            core::dispatchCompute(kernel.pipeline, bind_group, wgx, wgy, 1);
         }
 
         at::Tensor &add_out_webgpu(

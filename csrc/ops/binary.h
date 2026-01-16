@@ -5,6 +5,7 @@
 #include "utils/string.h"
 #include "core/webgpu_context.h"
 #include "core/webgpu_allocator.h"
+#include "core/command_batcher.h"
 
 namespace torch_webgpu
 {
@@ -209,18 +210,8 @@ namespace torch_webgpu
 
             wgpu::BindGroup bind_group = ctx.getDevice().CreateBindGroup(&bind_group_descriptor);
 
-            wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
-            wgpu::ComputePassDescriptor pass_descriptor;
-            wgpu::ComputePassEncoder pass_encoder = encoder.BeginComputePass(&pass_descriptor);
-            pass_encoder.SetPipeline(kernel.pipeline);
-            pass_encoder.SetBindGroup(0, bind_group);
-
-            // Use 2D dispatch for large tensors to stay within WebGPU workgroup limits
-            pass_encoder.DispatchWorkgroups(dispatch_x, dispatch_y, 1);
-            pass_encoder.End();
-
-            wgpu::CommandBuffer command_buffer = encoder.Finish();
-            ctx.getQueue().Submit(1, &command_buffer);
+            // Use batched dispatch for reduced submission overhead
+            core::dispatchCompute(kernel.pipeline, bind_group, dispatch_x, dispatch_y, 1);
         }
     }
 }
