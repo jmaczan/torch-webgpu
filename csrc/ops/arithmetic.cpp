@@ -261,30 +261,11 @@ namespace torch_webgpu
             pass_encoder.SetPipeline(kernel.pipeline);
             pass_encoder.SetBindGroup(0, bind_group);
 
-            const uint32_t x_group_size = ceil_div_u32(params.K, TILE_X);
-            const uint32_t y_group_size = ceil_div_u32(params.M, TILE_Y);
-
-            // just a thought - if both M/wsx and K/wsy get ceiled, then we get too many threads, that's clear
-            // but what if we are able to (auto)tune the organization of workgroups, based on
-            // which configuration we waste less threads?
-            // maybe we could do it like: compute waste in
-            // a = wgx * wgy = ceil_div_u32(params.M, wsx) * eil_div_u32(params.K, wsy)
-            // b = wg = ceil_div_u32(params.M * params.K, wsx * wsy);
-            // pick which one's waste is less
-            // but hey, if we do that, then we can end up in place that is worse than if we wasted threads
-            // because the computation speed doesn't only (and mainly) come from limiting threads waste
-            // it comes from data locality, thread organization etc
-            // it should be benchmarked and then if one is always better, then just implement it
-            // otherwise, compute (and plot) where in which ranges one is better than another
-            // and base on that write heuristics
-            // but this one might be also tricky, because of search space - it's wide
-            // and it's very possible that small changes in initial values affect computed performance
-            // so to get reliable conclusions, we need to compute a lot
-            // TODO: continue this analysis
-            const uint32_t wsx = 16;
-            const uint32_t wsy = 16;
-            const uint32_t wgx = ceil_div_u32(params.M, wsx);
-            const uint32_t wgy = ceil_div_u32(params.K, wsy);
+            // Tiled matmul: dispatch workgroups for a 2D grid
+            // wid.x corresponds to columns (K dimension)
+            // wid.y corresponds to rows (M dimension)
+            const uint32_t wgx = ceil_div_u32(params.K, TILE_X);  // Number of column tiles
+            const uint32_t wgy = ceil_div_u32(params.M, TILE_Y);  // Number of row tiles
 
             pass_encoder.DispatchWorkgroups(wgx, wgy);
             pass_encoder.End();

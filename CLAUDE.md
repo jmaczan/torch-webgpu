@@ -344,8 +344,8 @@ Do not start Task 4 until Task 3 is complete.
 
 ## Current Status
 
-- [ ] Task 1: Optimization complete
-- [ ] Task 2: torch-webgpu benchmarked
+- [x] Task 1: Optimization complete (stop condition reached: 3 consecutive <5% improvements)
+- [x] Task 2: torch-webgpu benchmarked (results_webgpu.json)
 - [ ] Task 3A: ONNX Runtime Web benchmarked
 - [ ] Task 3B: CPU benchmarked
 - [ ] Task 3C: CUDA benchmarked

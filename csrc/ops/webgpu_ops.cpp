@@ -43,18 +43,86 @@ namespace torch_webgpu
             return out;
         }
 
+        at::Tensor fused_mul_silu(
+            const at::Tensor &self,
+            const at::Tensor &other)
+        {
+            // Computes: self * silu(other) = self * other / (1 + exp(-other))
+            // Used for GLU activation pattern in Qwen/Llama MLPs
+            auto out = at::empty_like(self);
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(out);
+            config.add_input(self);
+            config.add_input(other);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(false);
+            auto iter = config.build();
+
+            run_binary_kernel<BinaryOp::FusedMulSilu>(iter, 1.0f);
+
+            return out;
+        }
+
+        at::Tensor fused_add_silu(
+            const at::Tensor &self,
+            const at::Tensor &other)
+        {
+            auto out = at::empty_like(self);
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(out);
+            config.add_input(self);
+            config.add_input(other);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(false);
+            auto iter = config.build();
+
+            run_binary_kernel<BinaryOp::FusedAddSilu>(iter, 1.0f);
+
+            return out;
+        }
+
+        at::Tensor fused_add_gelu(
+            const at::Tensor &self,
+            const at::Tensor &other)
+        {
+            auto out = at::empty_like(self);
+            at::TensorIteratorConfig config;
+            config.set_check_mem_overlap(true);
+            config.add_output(out);
+            config.add_input(self);
+            config.add_input(other);
+            config.promote_inputs_to_common_dtype(true);
+            config.cast_common_dtype_to_outputs(true);
+            config.check_all_same_device(false);
+            auto iter = config.build();
+
+            run_binary_kernel<BinaryOp::FusedAddGelu>(iter, 1.0f);
+
+            return out;
+        }
+
     }
     TORCH_LIBRARY(webgpu, m)
     {
         m.def("create_buffer(int[] size, int[] stride, ScalarType? dtype=None) -> Tensor");
         m.def("write_buffer(Tensor self, Tensor src) -> Tensor");
         m.def("fused_add_relu(Tensor self, Tensor src) -> Tensor");
+        m.def("fused_mul_silu(Tensor self, Tensor src) -> Tensor");
+        m.def("fused_add_silu(Tensor self, Tensor src) -> Tensor");
+        m.def("fused_add_gelu(Tensor self, Tensor src) -> Tensor");
     }
     TORCH_LIBRARY_IMPL(webgpu, PrivateUse1, m)
     {
         m.impl("create_buffer", TORCH_FN(ops::create_buffer));
         m.impl("write_buffer", TORCH_FN(ops::write_buffer));
         m.impl("fused_add_relu", TORCH_FN(ops::fused_add_relu));
+        m.impl("fused_mul_silu", TORCH_FN(ops::fused_mul_silu));
+        m.impl("fused_add_silu", TORCH_FN(ops::fused_add_silu));
+        m.impl("fused_add_gelu", TORCH_FN(ops::fused_add_gelu));
     }
     TORCH_LIBRARY_IMPL(webgpu, CatchAll, m)
     {

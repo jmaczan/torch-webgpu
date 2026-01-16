@@ -158,6 +158,9 @@ high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.GETATTR: [],  # Getattr is just reference to module attributes
     HighIROp.MUL: [LowIROp.RUN_SHADER],
     HighIROp.FUSED_ADD_RELU: [LowIROp.RUN_SHADER],
+    HighIROp.FUSED_MUL_SILU: [LowIROp.RUN_SHADER],
+    HighIROp.FUSED_ADD_SILU: [LowIROp.RUN_SHADER],
+    HighIROp.FUSED_ADD_GELU: [LowIROp.RUN_SHADER],
     HighIROp.RELU: [LowIROp.RUN_SHADER],
     HighIROp.ADD: [LowIROp.RUN_SHADER],
     HighIROp.MM: [LowIROp.RUN_SHADER],

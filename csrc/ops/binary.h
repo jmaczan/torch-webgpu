@@ -22,7 +22,10 @@ namespace torch_webgpu
             Mul,
             Sub,
             Div,
-            FusedAddRelu
+            FusedAddRelu,
+            FusedAddSilu,
+            FusedAddGelu,
+            FusedMulSilu,  // For SiLU gate pattern: gate * silu(up)
         };
 
         std::string get_binary_shader(BinaryOp binary_op);

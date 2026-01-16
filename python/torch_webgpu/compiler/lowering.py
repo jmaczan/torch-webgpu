@@ -82,6 +82,9 @@ SHADER_TO_FUNC = {
     "where": torch.where,
     "getitem": lambda x, idx: x[idx],  # indexing/slicing
     "fused_add_relu": lambda a, b: torch.relu(torch.add(a, b)),
+    "fused_mul_silu": lambda a, b: a * F.silu(b),  # GLU pattern: gate * silu(up)
+    "fused_add_silu": lambda a, b: F.silu(torch.add(a, b)),
+    "fused_add_gelu": lambda a, b: F.gelu(torch.add(a, b)),
     "cast": lambda x, dtype: x.to(dtype) if dtype else x,  # Perform dtype cast
     "scaled_dot_product_attention": F.scaled_dot_product_attention,
     "repeat_interleave": torch.repeat_interleave,

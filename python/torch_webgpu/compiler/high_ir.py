@@ -14,6 +14,9 @@ class HighIROp(StrEnum):
     ADD = auto()
     RELU = auto()
     FUSED_ADD_RELU = auto()
+    FUSED_MUL_SILU = auto()
+    FUSED_ADD_SILU = auto()
+    FUSED_ADD_GELU = auto()
     MOVE_TO = auto()
     OUTPUT = auto()
     MUL = auto()
@@ -183,6 +186,18 @@ class HighIRRelu(HighIRNode):
 
 class HighIRFusedAddRelu(HighIRNode):
     ir_op = HighIROp.FUSED_ADD_RELU
+
+
+class HighIRFusedMulSilu(HighIRNode):
+    ir_op = HighIROp.FUSED_MUL_SILU
+
+
+class HighIRFusedAddSilu(HighIRNode):
+    ir_op = HighIROp.FUSED_ADD_SILU
+
+
+class HighIRFusedAddGelu(HighIRNode):
+    ir_op = HighIROp.FUSED_ADD_GELU
 
 
 class HighIRMoveTo(HighIRNode):
@@ -760,6 +775,9 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.MOVE_TO: HighIRMoveTo,
     HighIROp.OUTPUT: HighIROutput,
     HighIROp.FUSED_ADD_RELU: HighIRFusedAddRelu,
+    HighIROp.FUSED_MUL_SILU: HighIRFusedMulSilu,
+    HighIROp.FUSED_ADD_SILU: HighIRFusedAddSilu,
+    HighIROp.FUSED_ADD_GELU: HighIRFusedAddGelu,
     HighIROp.MUL: HighIRMul,
     HighIROp.MM: HighIRMM,
     # Basic arithmetic
@@ -862,7 +880,29 @@ high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = [
                     Pattern("ir_op", HighIROp.RELU),
                 ],
                 output=HighIROp.FUSED_ADD_RELU,
-            )
+            ),
+            Transform(
+                pattern=[
+                    Pattern("ir_op", HighIROp.ADD),
+                    Pattern("ir_op", HighIROp.SILU),
+                ],
+                output=HighIROp.FUSED_ADD_SILU,
+            ),
+            Transform(
+                pattern=[
+                    Pattern("ir_op", HighIROp.ADD),
+                    Pattern("ir_op", HighIROp.GELU),
+                ],
+                output=HighIROp.FUSED_ADD_GELU,
+            ),
+            # GLU pattern: silu(gate) * up - fuses SILU followed by MUL
+            Transform(
+                pattern=[
+                    Pattern("ir_op", HighIROp.SILU),
+                    Pattern("ir_op", HighIROp.MUL),
+                ],
+                output=HighIROp.FUSED_MUL_SILU,
+            ),
         ]
     ),
 ]

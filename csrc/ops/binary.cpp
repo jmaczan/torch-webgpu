@@ -110,6 +110,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             case BinaryOp::FusedAddRelu:
                 op_impl = "max(0.0, selfBuffer[idx_self] + otherBuffer[idx_other])";
                 break;
+            case BinaryOp::FusedAddSilu:
+                // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
+                // Use inline expression since WGSL doesn't support block expressions
+                op_impl = "(selfBuffer[idx_self] + otherBuffer[idx_other]) / (1.0 + exp(-(selfBuffer[idx_self] + otherBuffer[idx_other])))";
+                break;
+            case BinaryOp::FusedAddGelu:
+                // GELU approximation: x * 0.5 * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
+                // Inline with temporary calculations
+                op_impl = R"((selfBuffer[idx_self] + otherBuffer[idx_other]) * 0.5 * (1.0 + tanh(0.7978845608 * ((selfBuffer[idx_self] + otherBuffer[idx_other]) + 0.044715 * (selfBuffer[idx_self] + otherBuffer[idx_other]) * (selfBuffer[idx_self] + otherBuffer[idx_other]) * (selfBuffer[idx_self] + otherBuffer[idx_other])))))";
+                break;
+            case BinaryOp::FusedMulSilu:
+                // gate * silu(up) for GLU-style activations
+                // self = gate, other = up (input to silu)
+                op_impl = "selfBuffer[idx_self] * (otherBuffer[idx_other] / (1.0 + exp(-otherBuffer[idx_other])))";
+                break;
             default:
                 TORCH_CHECK(false, "Unsupported binary op, can't produce a WGSL shader");
             }
