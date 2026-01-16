@@ -10,9 +10,9 @@ namespace torch_webgpu
     {
         namespace
         {
-            // Softmax shader - operates on the last dimension
-            // For simplicity, works with contiguous tensors on last dim
-            const std::string softmax_shader = R"wgsl(
+            // Simple softmax shader for small dimensions (< 1024 elements)
+            // Each thread handles one batch row
+            const std::string softmax_shader_simple = R"wgsl(
 struct Params {
     batch_size: u32,
     dim_size: u32,
@@ -60,30 +60,127 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 )wgsl";
 
+            // Optimized softmax shader for large dimensions using parallel reduction
+            // One workgroup per batch row, multiple threads collaborate on reduction
+            const std::string softmax_shader_parallel = R"wgsl(
+struct Params {
+    batch_size: u32,
+    dim_size: u32,
+    self_offset: u32,
+    out_offset: u32,
+};
+
+@group(0) @binding(0)
+var<storage, read> selfBuffer: array<f32>;
+
+@group(0) @binding(1)
+var<storage, read_write> outBuffer: array<f32>;
+
+@group(0) @binding(2)
+var<uniform> params: Params;
+
+const WORKGROUP_SIZE: u32 = 256u;
+
+var<workgroup> shared_max: array<f32, WORKGROUP_SIZE>;
+var<workgroup> shared_sum: array<f32, WORKGROUP_SIZE>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>
+) {
+    let batch_idx = wid.x;
+    let thread_idx = lid.x;
+
+    if (batch_idx >= params.batch_size) { return; }
+
+    let base_idx = params.self_offset + batch_idx * params.dim_size;
+    let out_base_idx = params.out_offset + batch_idx * params.dim_size;
+
+    // Each thread processes multiple elements (strided access for coalescing)
+    let elements_per_thread = (params.dim_size + WORKGROUP_SIZE - 1u) / WORKGROUP_SIZE;
+
+    // Phase 1: Find local max
+    var local_max: f32 = -3.402823e+38; // -FLT_MAX
+    for (var i: u32 = 0u; i < elements_per_thread; i++) {
+        let idx = thread_idx + i * WORKGROUP_SIZE;
+        if (idx < params.dim_size) {
+            let val = selfBuffer[base_idx + idx];
+            local_max = max(local_max, val);
+        }
+    }
+    shared_max[thread_idx] = local_max;
+    workgroupBarrier();
+
+    // Parallel reduction for max
+    for (var stride: u32 = WORKGROUP_SIZE / 2u; stride > 0u; stride = stride / 2u) {
+        if (thread_idx < stride) {
+            shared_max[thread_idx] = max(shared_max[thread_idx], shared_max[thread_idx + stride]);
+        }
+        workgroupBarrier();
+    }
+    let global_max = shared_max[0];
+    workgroupBarrier();
+
+    // Phase 2: Compute exp and write to output, compute local sum
+    var local_sum: f32 = 0.0;
+    for (var i: u32 = 0u; i < elements_per_thread; i++) {
+        let idx = thread_idx + i * WORKGROUP_SIZE;
+        if (idx < params.dim_size) {
+            let exp_val = exp(selfBuffer[base_idx + idx] - global_max);
+            outBuffer[out_base_idx + idx] = exp_val;
+            local_sum += exp_val;
+        }
+    }
+    shared_sum[thread_idx] = local_sum;
+    workgroupBarrier();
+
+    // Parallel reduction for sum
+    for (var stride: u32 = WORKGROUP_SIZE / 2u; stride > 0u; stride = stride / 2u) {
+        if (thread_idx < stride) {
+            shared_sum[thread_idx] = shared_sum[thread_idx] + shared_sum[thread_idx + stride];
+        }
+        workgroupBarrier();
+    }
+    let global_sum = shared_sum[0];
+    let inv_sum = 1.0 / global_sum;
+    workgroupBarrier();
+
+    // Phase 3: Normalize
+    for (var i: u32 = 0u; i < elements_per_thread; i++) {
+        let idx = thread_idx + i * WORKGROUP_SIZE;
+        if (idx < params.dim_size) {
+            outBuffer[out_base_idx + idx] *= inv_sum;
+        }
+    }
+}
+)wgsl";
+
+            // Threshold for using parallel kernel (vocab size 151936 >> 1024)
+            constexpr uint32_t PARALLEL_THRESHOLD = 1024;
+            constexpr uint32_t PARALLEL_WORKGROUP_SIZE = 256;
+
             struct SoftmaxKernel
             {
                 wgpu::BindGroupLayout bind_group_layout;
                 wgpu::ComputePipeline pipeline;
             };
 
-            static SoftmaxKernel *softmax_kernel = nullptr;
+            static SoftmaxKernel *softmax_kernel_simple = nullptr;
+            static SoftmaxKernel *softmax_kernel_parallel = nullptr;
 
-            SoftmaxKernel &get_softmax_kernel()
+            SoftmaxKernel create_kernel(const std::string& shader_code, const char* label)
             {
-                if (softmax_kernel != nullptr)
-                {
-                    return *softmax_kernel;
-                }
-
                 wgpu::ShaderSourceWGSL shader_source{
                     wgpu::ShaderSourceWGSL::Init{
                         nullptr,
-                        wgpu::StringView{softmax_shader.c_str(), softmax_shader.size()},
+                        wgpu::StringView{shader_code.c_str(), shader_code.size()},
                     }};
 
                 wgpu::ShaderModuleDescriptor shader_descriptor{};
                 shader_descriptor.nextInChain = &shader_source;
-                shader_descriptor.label = "Softmax kernel";
+                shader_descriptor.label = label;
                 core::WebGPUContext &ctx = core::getWebGPUContext();
                 wgpu::ShaderModule shader_module = ctx.getDevice().CreateShaderModule(&shader_descriptor);
 
@@ -126,9 +223,29 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
                 wgpu::ComputePipeline pipeline = ctx.getDevice().CreateComputePipeline(&pipeline_descriptor);
 
-                static SoftmaxKernel k{bind_group_layout, pipeline};
-                softmax_kernel = &k;
-                return *softmax_kernel;
+                return SoftmaxKernel{bind_group_layout, pipeline};
+            }
+
+            SoftmaxKernel &get_softmax_kernel_simple()
+            {
+                if (softmax_kernel_simple != nullptr)
+                {
+                    return *softmax_kernel_simple;
+                }
+                static SoftmaxKernel k = create_kernel(softmax_shader_simple, "Softmax simple kernel");
+                softmax_kernel_simple = &k;
+                return *softmax_kernel_simple;
+            }
+
+            SoftmaxKernel &get_softmax_kernel_parallel()
+            {
+                if (softmax_kernel_parallel != nullptr)
+                {
+                    return *softmax_kernel_parallel;
+                }
+                static SoftmaxKernel k = create_kernel(softmax_shader_parallel, "Softmax parallel kernel");
+                softmax_kernel_parallel = &k;
+                return *softmax_kernel_parallel;
             }
         }
 
@@ -180,7 +297,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 return out;
             }
 
-            SoftmaxKernel &kernel = get_softmax_kernel();
+            // Choose kernel based on dimension size
+            bool use_parallel = (dim_size > PARALLEL_THRESHOLD);
+            SoftmaxKernel &kernel = use_parallel ? get_softmax_kernel_parallel() : get_softmax_kernel_simple();
 
             core::WebGPUAllocation *self_allocation = static_cast<core::WebGPUAllocation *>(input_contig.storage().data_ptr().get());
             core::WebGPUAllocation *out_allocation = static_cast<core::WebGPUAllocation *>(out.storage().data_ptr().get());
@@ -241,8 +360,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             pass_encoder.SetPipeline(kernel.pipeline);
             pass_encoder.SetBindGroup(0, bind_group);
 
-            const uint32_t workgroup_size = 64;
-            uint32_t num_workgroups = (params.batch_size + workgroup_size - 1) / workgroup_size;
+            uint32_t num_workgroups;
+            if (use_parallel) {
+                // Parallel kernel: one workgroup per batch row
+                num_workgroups = params.batch_size;
+            } else {
+                // Simple kernel: one thread per batch row
+                const uint32_t workgroup_size = 64;
+                num_workgroups = (params.batch_size + workgroup_size - 1) / workgroup_size;
+            }
 
             pass_encoder.DispatchWorkgroups(num_workgroups);
             pass_encoder.End();

@@ -1,0 +1,21 @@
+{
+  "tokens_per_second": 11.180445864638676,
+  "tokens_per_second_std": 2.944304082905791,
+  "avg_time_per_run_s": 2.8621398813091217,
+  "time_to_first_token_ms": 70.76146801700816,
+  "total_tokens": 320,
+  "total_time_s": 28.62139881309122,
+  "n_tokens_requested": 32,
+  "avg_tokens_generated": 32.0,
+  "runs": 10,
+  "warmup": 5,
+  "input_tokens": 5,
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "backend": "torch-webgpu",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "driver": "570.195.03",
+    "memory_total": "32607 MiB"
+  },
+  "prompt": "The capital of France is"
+}
