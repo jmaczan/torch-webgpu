@@ -1,0 +1,22 @@
+{
+  "tokens_per_second": 182.9295640456502,
+  "tokens_per_second_std": 0.7537264227867126,
+  "avg_time_per_run_s": 0.1749307180987671,
+  "time_to_first_token_ms": 5.466584940586472,
+  "total_tokens": 320,
+  "total_time_s": 1.749307180987671,
+  "n_tokens_requested": 32,
+  "avg_tokens_generated": 32.0,
+  "runs": 10,
+  "warmup": 5,
+  "input_tokens": 5,
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "backend": "cuda-eager",
+  "compile_mode": null,
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "driver": "570.195.03",
+    "memory_total": "32607 MiB"
+  },
+  "prompt": "The capital of France is"
+}

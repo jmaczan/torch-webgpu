@@ -1,0 +1,21 @@
+{
+  "tokens_per_second": 13.731960907322046,
+  "tokens_per_second_std": 0.4322627782821655,
+  "avg_time_per_run_s": 2.330329966417048,
+  "time_to_first_token_ms": 72.82281145053275,
+  "total_tokens": 320,
+  "total_time_s": 23.30329966417048,
+  "n_tokens_requested": 32,
+  "avg_tokens_generated": 32.0,
+  "runs": 10,
+  "warmup": 3,
+  "input_tokens": 5,
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "backend": "cpu-eager",
+  "hardware": {
+    "model": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "cores": "16",
+    "threads_per_core": "2"
+  },
+  "prompt": "The capital of France is"
+}
