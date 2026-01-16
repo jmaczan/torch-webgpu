@@ -6,6 +6,7 @@
 #include "core/webgpu_context.h"
 #include "core/webgpu_allocator.h"
 #include "core/command_batcher.h"
+#include "core/bind_group_cache.h"
 
 namespace torch_webgpu
 {
@@ -173,42 +174,52 @@ namespace torch_webgpu
                 params.other_strides[i] = static_cast<uint32_t>(other_stride);
             }
 
-            wgpu::BufferDescriptor uniform_descriptor{};
-            uniform_descriptor.label = "Params";
-            uniform_descriptor.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
-            uniform_descriptor.size = sizeof(Params);
-            uniform_descriptor.mappedAtCreation = false;
+            // Use buffer pool for reduced allocation overhead
+            wgpu::Buffer params_buffer = core::acquireUniformBuffer(&params, sizeof(Params));
             core::WebGPUContext &ctx = core::getWebGPUContext();
-            wgpu::Buffer params_buffer = ctx.getDevice().CreateBuffer(&uniform_descriptor);
-            ctx.getQueue().WriteBuffer(params_buffer, 0, &params, sizeof(Params));
 
-            wgpu::BindGroupEntry bind_group_entries[4]{};
-            bind_group_entries[0].binding = 0;
-            bind_group_entries[0].buffer = self_buffer;
-            bind_group_entries[0].offset = 0;
-            bind_group_entries[0].size = self_buffer.GetSize();
+            // Try bind group cache first
+            std::vector<wgpu::Buffer> buffers = {self_buffer, other_buffer, out_buffer, params_buffer};
+            std::vector<uint64_t> sizes = {self_buffer.GetSize(), other_buffer.GetSize(), out_buffer.GetSize(), sizeof(Params)};
+            core::BindGroupKey cache_key = core::makeBindGroupKey(kernel.pipeline, buffers, sizes);
 
-            bind_group_entries[1].binding = 1;
-            bind_group_entries[1].buffer = other_buffer;
-            bind_group_entries[1].offset = 0;
-            bind_group_entries[1].size = other_buffer.GetSize();
+            wgpu::BindGroup bind_group;
+            auto cached = core::getBindGroupCache().get(cache_key);
+            if (cached.has_value())
+            {
+                bind_group = cached.value();
+            }
+            else
+            {
+                wgpu::BindGroupEntry bind_group_entries[4]{};
+                bind_group_entries[0].binding = 0;
+                bind_group_entries[0].buffer = self_buffer;
+                bind_group_entries[0].offset = 0;
+                bind_group_entries[0].size = self_buffer.GetSize();
 
-            bind_group_entries[2].binding = 2;
-            bind_group_entries[2].buffer = out_buffer;
-            bind_group_entries[2].offset = 0;
-            bind_group_entries[2].size = out_buffer.GetSize();
+                bind_group_entries[1].binding = 1;
+                bind_group_entries[1].buffer = other_buffer;
+                bind_group_entries[1].offset = 0;
+                bind_group_entries[1].size = other_buffer.GetSize();
 
-            bind_group_entries[3].binding = 3;
-            bind_group_entries[3].buffer = params_buffer;
-            bind_group_entries[3].offset = 0;
-            bind_group_entries[3].size = sizeof(Params);
+                bind_group_entries[2].binding = 2;
+                bind_group_entries[2].buffer = out_buffer;
+                bind_group_entries[2].offset = 0;
+                bind_group_entries[2].size = out_buffer.GetSize();
 
-            wgpu::BindGroupDescriptor bind_group_descriptor{};
-            bind_group_descriptor.layout = kernel.bind_group_layout;
-            bind_group_descriptor.entryCount = 4;
-            bind_group_descriptor.entries = bind_group_entries;
+                bind_group_entries[3].binding = 3;
+                bind_group_entries[3].buffer = params_buffer;
+                bind_group_entries[3].offset = 0;
+                bind_group_entries[3].size = sizeof(Params);
 
-            wgpu::BindGroup bind_group = ctx.getDevice().CreateBindGroup(&bind_group_descriptor);
+                wgpu::BindGroupDescriptor bind_group_descriptor{};
+                bind_group_descriptor.layout = kernel.bind_group_layout;
+                bind_group_descriptor.entryCount = 4;
+                bind_group_descriptor.entries = bind_group_entries;
+
+                bind_group = ctx.getDevice().CreateBindGroup(&bind_group_descriptor);
+                core::getBindGroupCache().put(cache_key, bind_group);
+            }
 
             // Use batched dispatch for reduced submission overhead
             core::dispatchCompute(kernel.pipeline, bind_group, dispatch_x, dispatch_y, 1);

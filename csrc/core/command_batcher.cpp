@@ -1,5 +1,6 @@
 #include "command_batcher.h"
 #include "webgpu_context.h"
+#include "buffer_pool.h"
 #include <iostream>
 
 namespace torch_webgpu
@@ -94,6 +95,8 @@ namespace torch_webgpu
             {
                 endCurrentBatch();
             }
+            // Release pooled buffers back to the pool
+            getBufferPool().releaseAll();
         }
 
         void CommandBatcher::setEnabled(bool enabled)
@@ -148,6 +151,17 @@ namespace torch_webgpu
                 wgpu::CommandBuffer command_buffer = encoder.Finish();
                 ctx.getQueue().Submit(1, &command_buffer);
             }
+        }
+
+        wgpu::Buffer acquireUniformBuffer(const void* data, size_t size)
+        {
+            // Acquire buffer from pool
+            wgpu::Buffer buffer = getBufferPool().acquire(size);
+
+            // Write data to buffer
+            getWebGPUContext().getQueue().WriteBuffer(buffer, 0, data, size);
+
+            return buffer;
         }
 
     } // namespace core

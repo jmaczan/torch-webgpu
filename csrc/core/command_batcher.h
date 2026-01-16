@@ -103,5 +103,14 @@ namespace torch_webgpu
             uint32_t workgroups_z = 1
         );
 
+        /**
+         * Acquire a uniform buffer from the pool and write data to it.
+         * The buffer is automatically returned to the pool on batch flush.
+         *
+         * Usage:
+         *   wgpu::Buffer params_buf = acquireUniformBuffer(&params, sizeof(params));
+         */
+        wgpu::Buffer acquireUniformBuffer(const void* data, size_t size);
+
     } // namespace core
 } // namespace torch_webgpu

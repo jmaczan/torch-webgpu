@@ -229,10 +229,143 @@ CreateEncoder → Dispatch(op17) → ... → Submit
    - Buffer creation, bind group creation, etc. are not batched
    - True solution requires graph-level compilation or persistent kernels
 
-### Next Steps for True Overhead Reduction
+---
 
-1. **Buffer pooling** - Reuse uniform buffers instead of creating per-op
-2. **Bind group caching** - Cache bind groups keyed by buffer tuple
-3. **Graph compilation** - Compile entire forward pass into single command buffer
-4. **Mega-kernel** - Single kernel that executes entire forward pass from buffer instructions
+## Optimization 5: Buffer Pooling
+- **Date**: 2026-01-16
+- **Change**: Implemented buffer pooling to reduce uniform buffer allocation overhead
+  - Created `BufferPool` class with size classes (64, 128, 256, 512, 1024, 2048, 4096 bytes)
+  - Buffers are reused instead of created per-op
+  - `acquireUniformBuffer()` helper function for easy integration
+  - Buffers automatically released back to pool on batch flush
+- **Files**: `csrc/core/buffer_pool.h`, `csrc/core/buffer_pool.cpp`, updated ops
+
+### Architecture
+
+**Before (per-op buffer creation):**
+```
+CreateBuffer(256 bytes) → WriteBuffer → Use → (buffer garbage collected)
+CreateBuffer(256 bytes) → WriteBuffer → Use → (buffer garbage collected)
+... (200 times per forward)
+```
+
+**After (buffer pooling):**
+```
+// First forward pass:
+pool.acquire(256) → WriteBuffer → Use → pool.release() on flush
+pool.acquire(256) → WriteBuffer → Use → pool.release() on flush
+... (200 times, but buffers reused on subsequent passes)
+
+// Subsequent passes:
+pool.acquire(256) → [reuses existing buffer] → WriteBuffer → Use → release
+```
+
+### Results
+| Metric | Before Pooling | After Pooling | Change |
+|--------|----------------|---------------|--------|
+| Tokens/sec (avg) | ~9.4 | ~9.4 | ~0% |
+| Tokens/sec (stable, excl. first run) | ~10.3 | ~10.3 | ~0% |
+| TTFT | ~74ms | ~77ms | ~0% |
+
+### Analysis: Why Minimal Improvement?
+
+1. **Buffer creation is a small fraction of overhead**
+   - CreateBuffer: ~0.06ms per call
+   - 200 ops × 0.06ms = ~12ms total
+   - Even if we eliminate 100% of this, it's only ~12ms savings
+
+2. **WriteBuffer still happens every time**
+   - We still call `WriteBuffer()` on each op to update params
+   - This is unavoidable since params change per-op
+
+3. **Bind group creation remains dominant**
+   - CreateBindGroup: ~0.15-0.2ms per call
+   - 200 ops × 0.15ms = ~30ms total
+   - This is not addressed by buffer pooling
+
+---
+
+## Optimization 6: Bind Group Caching
+- **Date**: 2026-01-16
+- **Change**: Implemented bind group caching to avoid recreation overhead
+  - Created `BindGroupCache` class with hash-based lookup
+  - Cache key: (pipeline pointer, buffer pointers, buffer sizes)
+  - Max cache size: 1024 entries with simple eviction
+  - Integrated into binary ops, unary ops, softmax, and matmul
+- **Files**: `csrc/core/bind_group_cache.h`, `csrc/core/bind_group_cache.cpp`, updated ops
+
+### Architecture
+
+**Before (per-op bind group creation):**
+```
+CreateBindGroup({buf1, buf2, buf3, params}) → Use → (bind group GC'd)
+CreateBindGroup({buf4, buf5, buf6, params}) → Use → (bind group GC'd)
+... (200 times per forward)
+```
+
+**After (bind group caching):**
+```
+cache.get(key) → miss → CreateBindGroup() → cache.put() → Use
+cache.get(key) → hit → Use (skip CreateBindGroup)
+```
+
+### Results
+| Metric | Before Caching | After Caching | Change |
+|--------|----------------|---------------|--------|
+| Tokens/sec (avg) | ~9.4 | ~9.4 | ~0% |
+| Tokens/sec (stable, excl. first run) | ~10.3 | ~10.3 | ~0% |
+| TTFT | ~77ms | ~75ms | ~0% |
+
+### Analysis: Why Minimal Improvement?
+
+1. **Very low cache hit rate**
+   - Input/output tensor buffers change per token
+   - Even with buffer pooling, different ops use different data buffers
+   - Cache key includes all buffer pointers, so different buffers = cache miss
+
+2. **Token generation is sequential**
+   - Each token uses different activations (hidden states)
+   - Different activations = different buffers = cache miss
+   - Only weight buffers are reused, but combined with different activation buffers
+
+3. **Inference pattern doesn't enable caching**
+   - Forward pass: input1, weight1 → hidden1 → ... → output1
+   - Next token: input2 (from output1), weight1 → hidden2 → ... → output2
+   - The input/output buffers change each token, breaking cache key match
+
+### Conclusion
+
+Bind group caching doesn't help because:
+- In LLM inference, activation buffers change every token
+- Only weight buffers remain constant, but they're combined with changing activation buffers
+- The cache key (all buffer pointers) rarely matches between operations
+
+---
+
+## Optimization Summary (After 6 Attempts)
+
+We've now tried:
+1. **Parallel Softmax** - 84x isolated improvement, softmax no longer bottleneck
+2. **Tiled Matmul** - 2-3x isolated improvement, limited by dispatch overhead
+3. **Kernel Fusion** - <5% end-to-end improvement
+4. **Command Batching** - ~0% improvement (sequential token generation forces flushes)
+5. **Buffer Pooling** - ~0% improvement (buffer creation is small fraction of overhead)
+6. **Bind Group Caching** - ~0% improvement (very low hit rate due to changing buffers)
+
+### Root Cause Confirmed
+
+The fundamental bottleneck is **per-operation overhead in WebGPU**, which includes:
+- Command encoder/dispatch overhead: ~0.15ms
+- Bind group creation: ~0.15ms
+- Buffer operations (even with pooling): ~0.05ms
+- Other overhead (pipeline state, etc.): ~0.05ms
+
+Total per-op overhead: ~0.3-0.4ms × 200 ops = ~60-80ms per forward pass
+
+### What Would Actually Help
+
+1. **Graph compilation** - Compile entire forward pass into single command buffer
+2. **Mega-kernel** - Single kernel that executes multiple operations
+3. **Different API** - Direct Vulkan/CUDA access to reduce overhead
+4. **Smaller models** - Fewer ops per forward = less overhead
 
