@@ -39,9 +39,14 @@ import torch.nn.functional as F
 # --- Fused op fallback functions ---
 # These provide CPU fallbacks for fused ops that are only registered for WebGPU (PrivateUse1)
 
+def _is_webgpu_device(x):
+    """Check if tensor is on WebGPU device."""
+    return x.device.type in ('webgpu', 'privateuseone', 'privateuse1')
+
+
 def _rms_norm_with_fallback(x, weight, eps=1e-6):
     """RMSNorm with CPU fallback."""
-    if x.device.type == 'privateuseone':
+    if _is_webgpu_device(x):
         return torch.ops.webgpu.rms_norm(x, weight, eps)
     # CPU fallback: y = x * rsqrt(mean(x^2) + eps) * weight
     variance = x.pow(2).mean(dim=-1, keepdim=True)
@@ -51,8 +56,18 @@ def _rms_norm_with_fallback(x, weight, eps=1e-6):
 
 def _fused_qkv_proj_with_fallback(x, q_w, k_w, v_w):
     """Fused Q, K, V projection with CPU fallback."""
-    if x.device.type == 'privateuseone':
-        return torch.ops.webgpu.fused_qkv_proj(x, q_w, k_w, v_w)
+    if _is_webgpu_device(x):
+        # Only use fused kernel if all weights have same output dimension (not GQA)
+        if q_w.size(0) == k_w.size(0) == v_w.size(0):
+            try:
+                return torch.ops.webgpu.fused_qkv_proj(x, q_w, k_w, v_w)
+            except Exception:
+                pass  # Fall through to separate projections
+        # GQA or error - use separate projections (still on WebGPU)
+        q = F.linear(x, q_w)
+        k = F.linear(x, k_w)
+        v = F.linear(x, v_w)
+        return (q, k, v)
     # CPU fallback: three separate linear projections
     q = F.linear(x, q_w)
     k = F.linear(x, k_w)
@@ -62,7 +77,7 @@ def _fused_qkv_proj_with_fallback(x, q_w, k_w, v_w):
 
 def _fused_gate_up_silu_with_fallback(x, gate_w, up_w):
     """Fused gate+up+silu MLP with CPU fallback."""
-    if x.device.type == 'privateuseone':
+    if _is_webgpu_device(x):
         return torch.ops.webgpu.fused_gate_up_silu(x, gate_w, up_w)
     # CPU fallback: gate_proj -> silu -> * up_proj
     gate = F.linear(x, gate_w)

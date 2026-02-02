@@ -54,10 +54,11 @@ def benchmark_inference(
     warmup: int = 3,
     runs: int = 10,
     verbose: bool = True,
+    device: str = "webgpu",
 ):
     """Benchmark token generation with the given model."""
     inputs = tokenizer(prompt, return_tensors="pt")
-    input_ids = inputs["input_ids"]
+    input_ids = inputs["input_ids"].to(device)
     input_length = input_ids.shape[1]
 
     if verbose:
@@ -187,7 +188,6 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         torch_dtype=torch.float32,
-        device_map="cpu",
         trust_remote_code=True,
     )
     model.eval()
@@ -198,11 +198,16 @@ def main():
         print(f"Model loaded: {total_params/1e9:.2f}B parameters")
         print()
 
-    # Compile with WebGPU backend
+    # Move model to WebGPU device
+    # This ensures all operations use native WebGPU kernels
     if verbose:
-        print("Compiling model with WebGPU backend...")
+        print("Moving model to WebGPU device...")
+    webgpu_device = torch.device("webgpu")
+    model = model.to(webgpu_device)
 
-    compiled_model = torch.compile(model, backend=webgpu_backend, dynamic=False)
+    # Note: torch.compile with custom backend doesn't work well with custom devices
+    # Use eager mode for now - the native WebGPU ops are already optimized
+    compiled_model = model
 
     if verbose:
         print("Compilation done.")
@@ -217,6 +222,7 @@ def main():
         warmup=args.warmup,
         runs=args.runs,
         verbose=verbose,
+        device=webgpu_device,
     )
 
     # Add metadata
