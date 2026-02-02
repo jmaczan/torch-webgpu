@@ -1376,3 +1376,74 @@ If we could eliminate ALL dispatches (single mega-kernel):
 
 ---
 
+## Optimization 20: Fused K+V Projection for GQA
+- **Date**: 2026-02-02
+- **Change**: Fused K and V projections for Grouped Query Attention
+- **Insight**: In GQA, K and V have identical dimensions (128 vs Q's 896), so they can be fused
+
+### Implementation
+```python
+class FusedKProj(nn.Module):
+    def __init__(self, k_proj, v_proj):
+        self.k_weight = k_proj.weight
+        self.v_weight = v_proj.weight
+        self._cached_v = None
+
+    def forward(self, x):
+        k, v = torch.ops.webgpu.fused_kv_proj(x, self.k_weight, self.v_weight)
+        self._cached_v = v
+        return k
+
+class FusedVProj(nn.Module):
+    def __init__(self, fused_k_proj):
+        self.fused_k_proj = fused_k_proj
+
+    def forward(self, x):
+        return self.fused_k_proj._cached_v
+```
+
+### Results
+| Metric | Before K+V | After K+V | Improvement |
+|--------|------------|-----------|-------------|
+| Tokens/sec | 20.2 | 21.1 | **+4.5%** |
+| TTFT | 43ms | 42ms | -2% |
+| Dispatches saved | - | 24/forward | 1 per layer |
+
+---
+
+## FINAL PERFORMANCE SUMMARY (2026-02-02)
+
+| Backend | Tokens/sec | Std | TTFT (ms) | vs CUDA |
+|---------|------------|-----|-----------|---------|
+| CUDA (compiled) | 185.5 | 1.6 | 5.4 | 1.00x |
+| CUDA (eager) | 182.9 | 0.8 | 5.5 | 0.99x |
+| **torch-webgpu (fused)** | **21.1** | **0.7** | **42** | **0.11x** |
+| CPU (eager) | 13.7 | 0.4 | 73 | 0.07x |
+| ONNX-WebGPU | 13.1 | 0.2 | 74 | 0.07x |
+
+### Complete Optimization Journey
+
+| Optimization | Tokens/sec | Cumulative Gain |
+|--------------|------------|-----------------|
+| Baseline (torch.compile) | 10.0 | - |
+| + Eager mode | 13.5 | +35% |
+| + Fused RMSNorm | 19.4 | +94% |
+| + Fused MLP | 20.5 | +105% |
+| + Fused K+V | 21.1 | **+111%** |
+
+### Total Dispatches Saved
+| Fusion | Instances | Dispatches Saved |
+|--------|-----------|------------------|
+| RMSNorm (6→1) | 48 | 240 |
+| MLP gate+up+silu (3→1) | 24 | 48 |
+| K+V projection (2→1) | 24 | 24 |
+| **Total** | **96** | **312/forward** |
+
+### Key Achievements
+- **2.11x faster** than baseline torch.compile
+- **54% faster** than CPU
+- **61% faster** than ONNX-WebGPU
+- **11% of CUDA performance** (vs 5.4% baseline)
+
+---
+
