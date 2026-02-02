@@ -52,10 +52,39 @@ class FusedMLP(nn.Module):
         return self.down_proj(hidden)
 
 
-def optimize_model_for_webgpu(model):
+class FusedKProj(nn.Module):
+    """K projection that also computes V and caches it for the paired V projection."""
+    def __init__(self, k_proj, v_proj):
+        super().__init__()
+        self.k_weight = k_proj.weight
+        self.v_weight = v_proj.weight
+        self._cached_v = None
+        self._call_count = 0
+
+    def forward(self, x):
+        # Compute both K and V in single fused dispatch
+        k, v = torch.ops.webgpu.fused_kv_proj(x, self.k_weight, self.v_weight)
+        self._cached_v = v
+        self._call_count += 1
+        return k
+
+
+class FusedVProj(nn.Module):
+    """V projection that returns the cached value from paired K projection."""
+    def __init__(self, fused_k_proj):
+        super().__init__()
+        self.fused_k_proj = fused_k_proj
+
+    def forward(self, x):
+        # Return the cached V from the K projection
+        return self.fused_k_proj._cached_v
+
+
+def optimize_model_for_webgpu(model, enable_fused_kv=True):
     """Replace decomposed ops with fused WebGPU kernels for maximum performance."""
     rmsnorm_count = 0
     mlp_count = 0
+    kv_count = 0
 
     # Replace RMSNorm layers
     for name, module in list(model.named_modules()):
@@ -79,7 +108,22 @@ def optimize_model_for_webgpu(model):
             setattr(parent, parts[-1], fused)
             mlp_count += 1
 
-    return model, rmsnorm_count + mlp_count
+    # Fuse K+V projections in attention layers (for GQA where K and V have same dims)
+    if enable_fused_kv:
+        for name, module in list(model.named_modules()):
+            if 'Attention' in type(module).__name__ and hasattr(module, 'k_proj') and hasattr(module, 'v_proj'):
+                # Check if K and V have same output dimensions (GQA requirement)
+                if module.k_proj.weight.shape == module.v_proj.weight.shape:
+                    # Create fused K projection
+                    fused_k = FusedKProj(module.k_proj, module.v_proj)
+                    # Create V projection that returns cached value
+                    fused_v = FusedVProj(fused_k)
+                    # Replace the projections
+                    module.k_proj = fused_k
+                    module.v_proj = fused_v
+                    kv_count += 1
+
+    return model, rmsnorm_count + mlp_count + kv_count
 
 
 def get_gpu_info():
@@ -265,7 +309,7 @@ def main():
         print("Optimizing model with fused WebGPU kernels...")
     model, replaced = optimize_model_for_webgpu(model)
     if verbose:
-        print(f"  Replaced {replaced} layers with fused versions (RMSNorm + MLP)")
+        print(f"  Replaced {replaced} layers with fused versions (RMSNorm + MLP + K/V)")
         print()
 
     # Run benchmark
