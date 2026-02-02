@@ -22,6 +22,7 @@ BACKEND_ORDER = [
     ("results_cuda.json", "CUDA (compiled)"),
     ("results_cuda_eager.json", "CUDA (eager)"),
     ("results_onnx_cuda.json", "ONNX-CUDA"),
+    ("results_onnx_webgpu.json", "ONNX-WebGPU"),
     ("results_onnx_cpu.json", "ONNX-CPU"),
     ("results_cpu.json", "CPU (eager)"),
     ("results_webgpu.json", "torch-webgpu"),
@@ -84,6 +85,7 @@ def plot_tokens_per_second(results: Dict[str, Dict[str, Any]], output_path: Path
         "CUDA (compiled)": "#2ecc71",  # Green
         "CUDA (eager)": "#27ae60",     # Darker green
         "ONNX-CUDA": "#3498db",        # Blue
+        "ONNX-WebGPU": "#1abc9c",      # Teal
         "ONNX-CPU": "#9b59b6",         # Purple
         "CPU (eager)": "#e74c3c",      # Red
         "torch-webgpu": "#f39c12",     # Orange

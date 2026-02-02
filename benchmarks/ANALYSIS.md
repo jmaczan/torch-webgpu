@@ -18,6 +18,7 @@
 | CUDA (compiled) | 185.5 (+/-1.6) | 1.00x | 13.51x | 5.4 |
 | CUDA (eager) | 182.9 (+/-0.8) | 0.99x | 13.32x | 5.5 |
 | ONNX-CUDA | 158.2 (+/-3.1) | 0.85x | 11.52x | 6.0 |
+| ONNX-WebGPU | 12.5 (+/-0.4) | 0.07x | 0.91x | 74.5 |
 | ONNX-CPU | 14.0 (+/-0.3) | 0.08x | 1.02x | 66.0 |
 | CPU (eager) | 13.7 (+/-0.4) | 0.07x | 1.00x | 72.8 |
 | torch-webgpu | 10.0 (+/-2.5) | 0.05x | 0.73x | 73.3 |
@@ -37,9 +38,12 @@
 - Sequential token generation prevents cross-token batching
 
 ### Comparison with ONNX Runtime
-- ONNX Runtime CUDA: Similar to native PyTorch CUDA performance
-- ONNX Runtime CPU: Similar to native PyTorch CPU performance
+- **ONNX Runtime CUDA**: 158 tok/s - similar to native PyTorch CUDA performance
+- **ONNX Runtime WebGPU**: 12.5 tok/s - 25% faster than torch-webgpu (10 tok/s)
+- **ONNX Runtime CPU**: 14 tok/s - similar to native PyTorch CPU performance
 - Both ONNX backends benefit from graph-level optimization
+
+**Key insight**: ONNX Runtime WebGPU (with graph optimization) achieves only 25% better than torch-webgpu, confirming the bottleneck is WebGPU's API overhead, not implementation quality. Both WebGPU implementations are slower than CPU.
 
 ### Bottleneck Analysis
 

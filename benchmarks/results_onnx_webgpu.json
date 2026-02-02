@@ -1,0 +1,24 @@
+{
+  "tokens_per_second": 12.50762283718504,
+  "tokens_per_second_std": 0.38763999054107195,
+  "avg_time_per_run_s": 2.558439794399965,
+  "time_to_first_token_ms": 74.54820080056379,
+  "total_tokens": 160,
+  "total_time_s": 12.792198971999824,
+  "n_tokens_requested": 32,
+  "avg_tokens_generated": 32.0,
+  "runs": 5,
+  "warmup": 2,
+  "input_tokens": 5,
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "backend": "onnxruntime-webgpu",
+  "provider": "WebGpuExecutionProvider",
+  "onnxruntime_version": "1.24.0.dev20251218001",
+  "hardware": {
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "driver": "570.211.01",
+    "memory_total": "32607 MiB"
+  },
+  "prompt": "The capital of France is"
+}
