@@ -20,10 +20,37 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Add parent directory to path for torch_webgpu import
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from torch_webgpu.compiler.webgpu_compiler import webgpu_backend
+import torch_webgpu  # noqa - registers WebGPU device
+import torch.nn as nn
 
 
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
+
+
+class FusedRMSNorm(nn.Module):
+    """Fused RMSNorm that uses the optimized WebGPU kernel."""
+    def __init__(self, weight, eps=1e-6):
+        super().__init__()
+        self.weight = weight
+        self.eps = eps
+
+    def forward(self, x):
+        return torch.ops.webgpu.rms_norm(x, self.weight, self.eps)
+
+
+def optimize_model_for_webgpu(model):
+    """Replace decomposed ops with fused WebGPU kernels for maximum performance."""
+    replaced = 0
+    for name, module in list(model.named_modules()):
+        if 'RMSNorm' in type(module).__name__:
+            parts = name.split('.')
+            parent = model
+            for part in parts[:-1]:
+                parent = getattr(parent, part)
+            fused = FusedRMSNorm(module.weight, eps=module.variance_epsilon)
+            setattr(parent, parts[-1], fused)
+            replaced += 1
+    return model, replaced
 
 
 def get_gpu_info():
@@ -199,23 +226,22 @@ def main():
         print()
 
     # Move model to WebGPU device
-    # This ensures all operations use native WebGPU kernels
     if verbose:
         print("Moving model to WebGPU device...")
     webgpu_device = torch.device("webgpu")
     model = model.to(webgpu_device)
 
-    # Note: torch.compile with custom backend doesn't work well with custom devices
-    # Use eager mode for now - the native WebGPU ops are already optimized
-    compiled_model = model
-
+    # Optimize model by replacing decomposed ops with fused WebGPU kernels
     if verbose:
-        print("Compilation done.")
+        print("Optimizing model with fused WebGPU kernels...")
+    model, replaced = optimize_model_for_webgpu(model)
+    if verbose:
+        print(f"  Replaced {replaced} RMSNorm layers with fused version")
         print()
 
     # Run benchmark
     results = benchmark_inference(
-        compiled_model,
+        model,
         tokenizer,
         prompt=args.prompt,
         n_tokens=args.n_tokens,
