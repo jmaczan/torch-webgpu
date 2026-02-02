@@ -12,7 +12,7 @@ namespace torch_webgpu
             , queue_(queue)
             , batch_size_(batch_size)
             , current_batch_count_(0)
-            , enabled_(true)  // Enable batching by default
+            , enabled_(false)  // Disable batching by default - causes RAW dependency issues
             , has_active_pass_(false)
             , total_dispatches_(0)
             , total_submissions_(0)

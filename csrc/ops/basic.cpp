@@ -235,14 +235,22 @@ namespace torch_webgpu
             }
 
             // fallback to copy, worst case scenario
+            // Make contiguous first, then reshape (contiguous tensor can be reshaped trivially)
             out = self.contiguous();
 
             TORCH_CHECK(out.dtype() == self.dtype());
             TORCH_CHECK(out.numel() == self.numel());
             TORCH_CHECK(out.device() == self.device());
-            TORCH_CHECK(out.storage_offset() == self.storage_offset());
 
-            return out;
+            // Now that it's contiguous, compute new strides and apply the reshape
+            std::vector<int64_t> final_strides(new_shape_vec.size());
+            if (!new_shape_vec.empty()) {
+                final_strides[new_shape_vec.size() - 1] = 1;
+                for (int dim = static_cast<int>(new_shape_vec.size()) - 2; dim >= 0; --dim) {
+                    final_strides[dim] = new_shape_vec[dim + 1] * final_strides[dim + 1];
+                }
+            }
+            return at::as_strided(out, new_shape_vec, final_strides, out.storage_offset());
         }
 
         at::Tensor as_strided(

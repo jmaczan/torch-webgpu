@@ -1104,3 +1104,98 @@ If tensors were on WebGPU device (requires fixing missing ops):
 
 The fusion system is **technically complete and working**. The 21.1% operation reduction is verified. However, actual performance benefits can only be observed when running on WebGPU device, which requires implementing additional ops to support the full Qwen model on PrivateUse1 device.
 
+---
+
+## Bug Fix 1: reshape() with Non-Contiguous Tensors
+- **Date**: 2026-02-02
+- **Issue**: `reshape()` on expanded tensors (from `expand()`) was returning incorrect shape
+- **Root Cause**: The fallback path in `reshape()` that handles non-contiguous tensors called `self.contiguous()` but then returned without actually reshaping to the new shape
+- **Impact**: The `repeat_kv()` function used in Grouped Query Attention (GQA) was producing wrong shapes on WebGPU
+- **Fix**: After making tensor contiguous, now properly apply the reshape by computing new strides and using `as_strided()`
+- **File**: `csrc/ops/basic.cpp`
+
+### Before Fix
+```
+K repeated (CPU): [1, 14, 1, 64] ✓
+K repeated (GPU): [1, 2, 7, 1, 64] ✗ Wrong!
+```
+
+### After Fix
+```
+K repeated (CPU): [1, 14, 1, 64] ✓
+K repeated (GPU): [1, 14, 1, 64] ✓ Correct!
+```
+
+---
+
+## Bug Fix 2: Command Batching RAW Dependencies
+- **Date**: 2026-02-02
+- **Issue**: Model forward pass producing incorrect results (NaN/garbage output) despite individual operations passing tests
+- **Root Cause**: Command batching was combining multiple compute dispatches into a single compute pass, but WebGPU wasn't properly handling Read-After-Write (RAW) dependencies between operations that share buffers
+- **Symptom**: Layer output values were exploding exponentially (layer 0: [-400, +650], layer 1: [-8B, +11B], layer 2: [-5e24, +6e24], layer 3: NaN)
+- **Diagnosis**: Adding hooks that force `.to('cpu')` after each operation (which flushes the command batcher) made the model produce correct output
+- **Fix**: Disabled command batching by default (set `enabled_(false)` in `CommandBatcher` constructor)
+- **File**: `csrc/core/command_batcher.cpp`
+
+### Verification
+```
+Without batching: layer.forward() = [-1.0397, 3.0369] ✓
+With batching:    layer.forward() = [-401.8136, 652.9401] ✗
+```
+
+### Note on Future Batching
+Command batching could potentially still provide performance benefits, but would require:
+1. Explicit memory barriers between dependent operations
+2. Or separate compute passes for operations that read from recently written buffers
+3. Or graph-level dependency analysis to identify safe batching groups
+
+---
+
+## Correctness Verification: Full Model on WebGPU
+- **Date**: 2026-02-02
+- **Status**: ✅ VERIFIED WORKING
+
+After the two bug fixes above, the full Qwen2.5-0.5B-Instruct model now runs correctly on WebGPU:
+
+### Forward Pass Verification
+```
+CPU prediction: 12095 = ' Paris' ✓
+GPU prediction: 12095 = ' Paris' ✓
+Max diff: 0.000299
+Mean diff: 0.000021
+```
+
+### Generation Verification
+```
+CPU: "The capital of France is Paris. It was founded in 789"
+GPU: "The capital of France is Paris. It was founded in 789"
+✓ Generations MATCH!
+```
+
+### Performance
+| Metric | Value |
+|--------|-------|
+| Tokens/sec | 10.12 (+/- 2.07) |
+| TTFT | 73.96ms |
+| vs CUDA (185 tok/s) | 5.5% |
+
+### Added Python Bindings
+New functions exposed via `torch_webgpu._C`:
+- `flush_commands()` - Flush pending WebGPU commands
+- `disable_batching()` - Disable command batching (now default)
+- `enable_batching()` - Re-enable command batching (use with caution)
+
+---
+
+## Final Performance Summary (2026-02-02)
+
+| Backend | Tokens/sec | vs CUDA | Status |
+|---------|------------|---------|--------|
+| CUDA (compiled) | 185.5 | 100% | ✅ |
+| CUDA (eager) | 182.9 | 99% | ✅ |
+| CPU | 13.7 | 7.4% | ✅ |
+| ONNX Runtime WebGPU | 13.1 | 7.1% | ✅ |
+| **torch-webgpu** | **10.1** | **5.5%** | ✅ |
+
+**Correctness Status**: Full model (Qwen2.5-0.5B) runs correctly on WebGPU, producing outputs that match CPU within numerical precision.
+

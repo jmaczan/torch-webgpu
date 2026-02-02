@@ -18,6 +18,7 @@
 #include "core/webgpu_context.h"
 #include "core/webgpu_allocator.h"
 #include "core/webgpu_device_guard.h"
+#include "core/command_batcher.h"
 
 namespace torch_webgpu
 {
@@ -44,9 +45,33 @@ namespace torch_webgpu
     }
 }
 
+// Python bindings for command batcher control
+static PyObject* flush_commands(PyObject* self, PyObject* args)
+{
+    torch_webgpu::core::getCommandBatcher().flush();
+    Py_RETURN_NONE;
+}
+
+static PyObject* disable_batching(PyObject* self, PyObject* args)
+{
+    torch_webgpu::core::getCommandBatcher().setEnabled(false);
+    Py_RETURN_NONE;
+}
+
+static PyObject* enable_batching(PyObject* self, PyObject* args)
+{
+    torch_webgpu::core::getCommandBatcher().setEnabled(true);
+    Py_RETURN_NONE;
+}
+
 PyMODINIT_FUNC PyInit__C(void)
 {
-    static std::vector<PyMethodDef> methods;
+    static std::vector<PyMethodDef> methods = {
+        {"flush_commands", flush_commands, METH_NOARGS, "Flush pending WebGPU commands"},
+        {"disable_batching", disable_batching, METH_NOARGS, "Disable command batching"},
+        {"enable_batching", enable_batching, METH_NOARGS, "Enable command batching"},
+        {nullptr, nullptr, 0, nullptr}  // Sentinel
+    };
     static const int python_api_version = 1013;
     static struct PyModuleDef module_def = {
         PyModuleDef_HEAD_INIT,
