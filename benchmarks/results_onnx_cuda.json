@@ -1,0 +1,23 @@
+{
+  "tokens_per_second": 158.19889795308265,
+  "tokens_per_second_std": 3.08660726527248,
+  "avg_time_per_run_s": 0.2022770096002205,
+  "time_to_first_token_ms": 5.9572632002527826,
+  "total_tokens": 320,
+  "total_time_s": 2.022770096002205,
+  "n_tokens_requested": 32,
+  "avg_tokens_generated": 32.0,
+  "runs": 10,
+  "warmup": 5,
+  "input_tokens": 5,
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "backend": "onnxruntime-cuda",
+  "provider": "CUDAExecutionProvider",
+  "hardware": {
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "driver": "570.211.01",
+    "memory_total": "32607 MiB"
+  },
+  "prompt": "The capital of France is"
+}

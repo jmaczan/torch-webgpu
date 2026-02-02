@@ -342,7 +342,46 @@ Bind group caching doesn't help because:
 
 ---
 
-## Optimization Summary (After 6 Attempts)
+## Optimization 7: Fused RMSNorm Kernel
+- **Date**: 2026-02-02
+- **Change**: Implemented fused RMSNorm kernel as a single WebGPU dispatch
+  - Single kernel computes: `y = x * rsqrt(mean(x^2) + eps) * weight`
+  - Parallel reduction variant for hidden_size > 1024 (uses 256 threads)
+  - Simple variant for smaller hidden sizes
+  - Registered as `torch.ops.webgpu.rms_norm()`
+- **Files**: `csrc/ops/rms_norm.cpp`, `python/torch_webgpu/compiler/high_ir.py`, `python/torch_webgpu/compiler/lowering.py`
+
+### Correctness
+All unit tests pass:
+- Basic RMSNorm: max_diff < 1e-5 vs PyTorch reference
+- Qwen hidden size (896): max_diff < 1e-5
+- Large hidden size (4096, parallel kernel): max_diff < 1e-5
+- 3D inputs (batch, seq_len, hidden): max_diff < 1e-5
+- Numerical stability with large values: max_diff < 1e-4
+
+### Integration Challenge
+The Qwen2RMSNorm module decomposes into 6+ consecutive operations in the FX graph:
+1. `to(float32)` - dtype conversion
+2. `pow(2)` - square input
+3. `mean(-1, keepdim=True)` - compute variance
+4. `add(eps)` - add epsilon
+5. `rsqrt` - inverse sqrt
+6. `mul(x, rsqrt)` - normalize
+7. `get_attr(weight)` - load weight
+8. `to(dtype)` - cast back
+9. `mul(weight, normalized)` - apply weight
+
+Current compiler pass only supports consecutive 2-node patterns.
+Full integration requires either:
+- Extended pattern matching for non-consecutive multi-node patterns
+- Higher-level module interception (replacing Qwen2RMSNorm.forward)
+
+### Impact on Full Model
+Without full integration into the model's FX graph, the fused RMSNorm kernel is available but not automatically applied to Qwen inference.
+
+---
+
+## Optimization Summary (After 7 Attempts)
 
 We've now tried:
 1. **Parallel Softmax** - 84x isolated improvement, softmax no longer bottleneck

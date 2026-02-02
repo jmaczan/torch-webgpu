@@ -37,6 +37,7 @@ class HighIROp(StrEnum):
     LINEAR = auto()
     EMBEDDING = auto()
     LAYER_NORM = auto()
+    RMS_NORM = auto()  # Root Mean Square Layer Normalization
     GETITEM = auto()
     NEG = auto()
     EXP = auto()
@@ -274,6 +275,11 @@ class HighIREmbedding(HighIRNode):
 
 class HighIRLayerNorm(HighIRNode):
     ir_op = HighIROp.LAYER_NORM
+
+
+class HighIRRmsNorm(HighIRNode):
+    """Root Mean Square Layer Normalization."""
+    ir_op = HighIROp.RMS_NORM
 
 
 class HighIRGetitem(HighIRNode):
@@ -699,6 +705,7 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     F.softmax: HighIROp.SOFTMAX,
     # Normalization
     F.layer_norm: HighIROp.LAYER_NORM,
+    "rms_norm": HighIROp.RMS_NORM,  # Custom RMSNorm op
     # Linear and embedding
     F.linear: HighIROp.LINEAR,
     F.embedding: HighIROp.EMBEDDING,
@@ -810,6 +817,7 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     HighIROp.SOFTMAX: HighIRSoftmax,
     # Normalization
     HighIROp.LAYER_NORM: HighIRLayerNorm,
+    HighIROp.RMS_NORM: HighIRRmsNorm,
     # Linear and embedding
     HighIROp.LINEAR: HighIRLinear,
     HighIROp.EMBEDDING: HighIREmbedding,
