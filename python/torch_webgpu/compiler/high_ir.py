@@ -17,6 +17,10 @@ class HighIROp(StrEnum):
     FUSED_MUL_SILU = auto()
     FUSED_ADD_SILU = auto()
     FUSED_ADD_GELU = auto()
+    # Fused WebGPU ops
+    FUSED_RMS_NORM = auto()  # Fused RMSNorm kernel
+    FUSED_QKV_PROJ = auto()  # Fused Q, K, V projection
+    FUSED_GATE_UP_SILU = auto()  # Fused gate+up+silu for MLP
     MOVE_TO = auto()
     OUTPUT = auto()
     MUL = auto()
@@ -280,6 +284,21 @@ class HighIRLayerNorm(HighIRNode):
 class HighIRRmsNorm(HighIRNode):
     """Root Mean Square Layer Normalization."""
     ir_op = HighIROp.RMS_NORM
+
+
+class HighIRFusedRmsNorm(HighIRNode):
+    """Fused RMSNorm WebGPU kernel."""
+    ir_op = HighIROp.FUSED_RMS_NORM
+
+
+class HighIRFusedQkvProj(HighIRNode):
+    """Fused Q, K, V projection WebGPU kernel."""
+    ir_op = HighIROp.FUSED_QKV_PROJ
+
+
+class HighIRFusedGateUpSilu(HighIRNode):
+    """Fused gate+up+silu MLP WebGPU kernel."""
+    ir_op = HighIROp.FUSED_GATE_UP_SILU
 
 
 class HighIRGetitem(HighIRNode):
@@ -706,6 +725,10 @@ fx_op_to_high_ir_op: dict[Any, HighIROp] = {
     # Normalization
     F.layer_norm: HighIROp.LAYER_NORM,
     "rms_norm": HighIROp.RMS_NORM,  # Custom RMSNorm op
+    # Fused WebGPU ops (from fusion.py)
+    "webgpu.rms_norm": HighIROp.FUSED_RMS_NORM,
+    "webgpu.fused_qkv_proj": HighIROp.FUSED_QKV_PROJ,
+    "webgpu.fused_gate_up_silu": HighIROp.FUSED_GATE_UP_SILU,
     # Linear and embedding
     F.linear: HighIROp.LINEAR,
     F.embedding: HighIROp.EMBEDDING,
@@ -818,6 +841,10 @@ high_ir_op_to_high_ir_node: dict[HighIROp, type[HighIRNode]] = {
     # Normalization
     HighIROp.LAYER_NORM: HighIRLayerNorm,
     HighIROp.RMS_NORM: HighIRRmsNorm,
+    # Fused WebGPU ops
+    HighIROp.FUSED_RMS_NORM: HighIRFusedRmsNorm,
+    HighIROp.FUSED_QKV_PROJ: HighIRFusedQkvProj,
+    HighIROp.FUSED_GATE_UP_SILU: HighIRFusedGateUpSilu,
     # Linear and embedding
     HighIROp.LINEAR: HighIRLinear,
     HighIROp.EMBEDDING: HighIREmbedding,
@@ -918,9 +945,24 @@ high_ir_compiler_passes: list[CompilerPass[HighIRNode]] = [
 
 def get_high_ir_node(fx_op, fx_node: torch.fx.Node) -> Optional[HighIRNode]:
     ir_op = fx_op_to_high_ir_op.get(fx_op)
+
+    # Handle torch.ops.webgpu.* calls by extracting the op name
+    # The string representation can be "webgpu.rms_norm" or similar
+    if not ir_op:
+        fx_op_str = str(fx_op)
+        # Check for webgpu namespace ops (e.g., "webgpu.rms_norm")
+        if fx_op_str.startswith('webgpu.') or 'torch.ops.webgpu' in fx_op_str:
+            # Try direct match first (e.g., "webgpu.rms_norm")
+            ir_op = fx_op_to_high_ir_op.get(fx_op_str)
+            if not ir_op:
+                # Extract just the op name (e.g., "rms_norm")
+                op_name = fx_op_str.split('.')[-1]
+                ir_op = fx_op_to_high_ir_op.get(op_name)
+
     if not ir_op:
         return None
     ir_node_type = high_ir_op_to_high_ir_node.get(ir_op)
+    ir_node = None
     if ir_node_type:
         ir_node = ir_node_type(
             fx_node=fx_node, value_id=fx_node.name, inputs=fx_node.all_input_nodes

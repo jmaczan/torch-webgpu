@@ -35,6 +35,41 @@ def write_buffer(node: LowIRWriteBuffer, runtime: Runtime) -> torch.Tensor:
 
 import torch.nn.functional as F
 
+
+# --- Fused op fallback functions ---
+# These provide CPU fallbacks for fused ops that are only registered for WebGPU (PrivateUse1)
+
+def _rms_norm_with_fallback(x, weight, eps=1e-6):
+    """RMSNorm with CPU fallback."""
+    if x.device.type == 'privateuseone':
+        return torch.ops.webgpu.rms_norm(x, weight, eps)
+    # CPU fallback: y = x * rsqrt(mean(x^2) + eps) * weight
+    variance = x.pow(2).mean(dim=-1, keepdim=True)
+    x_norm = x * torch.rsqrt(variance + eps)
+    return x_norm * weight
+
+
+def _fused_qkv_proj_with_fallback(x, q_w, k_w, v_w):
+    """Fused Q, K, V projection with CPU fallback."""
+    if x.device.type == 'privateuseone':
+        return torch.ops.webgpu.fused_qkv_proj(x, q_w, k_w, v_w)
+    # CPU fallback: three separate linear projections
+    q = F.linear(x, q_w)
+    k = F.linear(x, k_w)
+    v = F.linear(x, v_w)
+    return (q, k, v)
+
+
+def _fused_gate_up_silu_with_fallback(x, gate_w, up_w):
+    """Fused gate+up+silu MLP with CPU fallback."""
+    if x.device.type == 'privateuseone':
+        return torch.ops.webgpu.fused_gate_up_silu(x, gate_w, up_w)
+    # CPU fallback: gate_proj -> silu -> * up_proj
+    gate = F.linear(x, gate_w)
+    up = F.linear(x, up_w)
+    return F.silu(gate) * up
+
+
 # Map shader names to actual torch functions
 SHADER_TO_FUNC = {
     "linear": F.linear,
@@ -85,8 +120,12 @@ SHADER_TO_FUNC = {
     "fused_mul_silu": lambda a, b: a * F.silu(b),  # GLU pattern: gate * silu(up)
     "fused_add_silu": lambda a, b: F.silu(torch.add(a, b)),
     "fused_add_gelu": lambda a, b: F.gelu(torch.add(a, b)),
-    # RMSNorm: y = x * rsqrt(mean(x^2) + eps) * weight
-    "rms_norm": lambda x, weight, eps=1e-6: x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps) * weight,
+    # RMSNorm: Use fused C++ kernel if on WebGPU, otherwise CPU fallback
+    "rms_norm": _rms_norm_with_fallback,
+    # Fused WebGPU ops from fusion pass - with CPU fallbacks
+    "fused_rms_norm": _rms_norm_with_fallback,
+    "fused_qkv_proj": _fused_qkv_proj_with_fallback,
+    "fused_gate_up_silu": _fused_gate_up_silu_with_fallback,
     "cast": lambda x, dtype: x.to(dtype) if dtype else x,  # Perform dtype cast
     "scaled_dot_product_attention": F.scaled_dot_product_attention,
     "repeat_interleave": torch.repeat_interleave,

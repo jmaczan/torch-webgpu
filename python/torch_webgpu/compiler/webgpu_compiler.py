@@ -19,6 +19,7 @@ from .low_ir import (
     low_ir_print_tabular,
 )
 from .compiler_pass import run_compiler_passes
+from .fusion import apply_fusion
 
 
 @register_backend
@@ -28,6 +29,14 @@ def webgpu_backend(
 ) -> Callable:
     if debug_enabled():
         debug("FX graph (input):")
+        gm.graph.print_tabular()
+
+    # Apply aggressive fusion to minimize dispatch count
+    # This is critical for performance - each dispatch has ~0.4ms overhead
+    gm = apply_fusion(gm)
+
+    if debug_enabled():
+        debug("FX graph (after fusion):")
         gm.graph.print_tabular()
 
     high_ir = fx_to_high_ir(gm)

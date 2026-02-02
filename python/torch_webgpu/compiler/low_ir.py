@@ -208,6 +208,11 @@ high_ir_op_to_low_ir_op: dict[HighIROp, list[LowIROp]] = {
     HighIROp.SOFTMAX: [LowIROp.RUN_SHADER],
     # Normalization
     HighIROp.LAYER_NORM: [LowIROp.RUN_SHADER],
+    HighIROp.RMS_NORM: [LowIROp.RUN_SHADER],  # Fused RMSNorm kernel
+    # Fused WebGPU ops
+    HighIROp.FUSED_RMS_NORM: [LowIROp.RUN_SHADER],
+    HighIROp.FUSED_QKV_PROJ: [LowIROp.RUN_SHADER],
+    HighIROp.FUSED_GATE_UP_SILU: [LowIROp.RUN_SHADER],
     # Linear and embedding
     HighIROp.LINEAR: [LowIROp.RUN_SHADER],
     HighIROp.EMBEDDING: [LowIROp.RUN_SHADER],
