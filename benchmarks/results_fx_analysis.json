@@ -1,0 +1,33 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "total_fx_nodes": 1911,
+  "compute_operations": {
+    "linear": 169,
+    "mul": 220,
+    "add": 145,
+    "scaled_dot_product_attention": 24,
+    "silu": 24,
+    "rsqrt": 49,
+    "pow": 49,
+    "mean": 49,
+    "neg": 48,
+    "cat": 97,
+    "embedding": 1,
+    "matmul": 1
+  },
+  "shape_operations_no_dispatch": {
+    "view": 72,
+    "reshape": 72,
+    "transpose": 97,
+    "contiguous": 48,
+    "getitem": 171,
+    "to_dtype": 101
+  },
+  "total_compute_ops": 876,
+  "notes": [
+    "pow, mean, rsqrt are from RMSNorm decomposition (49 norms = 24 layers * 2 + 1 final)",
+    "mul includes both RMSNorm weight multiply and MLP operations",
+    "Some operations may be fused in WebGPU backend, reducing actual dispatches",
+    "cat operations may or may not require dispatches depending on implementation"
+  ]
+}
