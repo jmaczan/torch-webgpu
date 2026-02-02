@@ -57,9 +57,8 @@ fn main(
     let row = gid.y;
     let col = gid.x;
 
-    if (row >= params.M || col >= params.N) {
-        return;
-    }
+    // Don't early return - all threads must participate in barriers
+    let valid = row < params.M && col < params.N;
 
     var gate_acc: f32 = 0.0;
     var up_acc: f32 = 0.0;
@@ -69,18 +68,22 @@ fn main(
     for (var t = 0u; t < num_tiles; t++) {
         let tile_k = t * TILE_SIZE + lid.x;
 
-        // Load x tile
-        if (row < params.M && tile_k < params.K) {
-            tile_x[lid.y * TILE_SIZE + lid.x] = x[params.x_offset + row * params.K + tile_k];
+        // Load x tile - use safe bounds
+        let x_row = min(row, params.M - 1u);
+        if (tile_k < params.K) {
+            tile_x[lid.y * TILE_SIZE + lid.x] = x[params.x_offset + x_row * params.K + tile_k];
         } else {
             tile_x[lid.y * TILE_SIZE + lid.x] = 0.0;
         }
 
-        // Load weight tiles (transposed access)
+        // Load weight tiles - weights are [N, K], we need W[n, k] for W.T
+        // W[n, k] in row-major = weight[n * K + k]
         let weight_k = t * TILE_SIZE + lid.y;
-        if (weight_k < params.K && col < params.N) {
-            tile_gate[lid.y * TILE_SIZE + lid.x] = gate_weight[params.gate_offset + weight_k * params.N + col];
-            tile_up[lid.y * TILE_SIZE + lid.x] = up_weight[params.up_offset + weight_k * params.N + col];
+        let safe_col = min(col, params.N - 1u);
+        if (weight_k < params.K) {
+            // Access W[col, weight_k] = W[n, k] to get W.T[k, n]
+            tile_gate[lid.y * TILE_SIZE + lid.x] = gate_weight[params.gate_offset + safe_col * params.K + weight_k];
+            tile_up[lid.y * TILE_SIZE + lid.x] = up_weight[params.up_offset + safe_col * params.K + weight_k];
         } else {
             tile_gate[lid.y * TILE_SIZE + lid.x] = 0.0;
             tile_up[lid.y * TILE_SIZE + lid.x] = 0.0;
@@ -88,16 +91,19 @@ fn main(
 
         workgroupBarrier();
 
-        for (var k = 0u; k < TILE_SIZE; k++) {
-            let x_val = tile_x[lid.y * TILE_SIZE + k];
-            gate_acc += x_val * tile_gate[k * TILE_SIZE + lid.x];
-            up_acc += x_val * tile_up[k * TILE_SIZE + lid.x];
+        // Only accumulate if this thread is valid
+        if (valid) {
+            for (var k = 0u; k < TILE_SIZE; k++) {
+                let x_val = tile_x[lid.y * TILE_SIZE + k];
+                gate_acc += x_val * tile_gate[k * TILE_SIZE + lid.x];
+                up_acc += x_val * tile_up[k * TILE_SIZE + lid.x];
+            }
         }
 
         workgroupBarrier();
     }
 
-    if (row < params.M && col < params.N) {
+    if (valid) {
         output[params.out_offset + row * params.N + col] = silu(gate_acc) * up_acc;
     }
 }

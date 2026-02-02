@@ -38,9 +38,26 @@ class FusedRMSNorm(nn.Module):
         return torch.ops.webgpu.rms_norm(x, self.weight, self.eps)
 
 
+class FusedMLP(nn.Module):
+    """Fused MLP that combines gate+up projections with SiLU activation."""
+    def __init__(self, gate_proj, up_proj, down_proj):
+        super().__init__()
+        self.gate_weight = gate_proj.weight
+        self.up_weight = up_proj.weight
+        self.down_proj = down_proj
+
+    def forward(self, x):
+        # Fused: silu(x @ gate_weight.T) * (x @ up_weight.T)
+        hidden = torch.ops.webgpu.fused_gate_up_silu(x, self.gate_weight, self.up_weight)
+        return self.down_proj(hidden)
+
+
 def optimize_model_for_webgpu(model):
     """Replace decomposed ops with fused WebGPU kernels for maximum performance."""
-    replaced = 0
+    rmsnorm_count = 0
+    mlp_count = 0
+
+    # Replace RMSNorm layers
     for name, module in list(model.named_modules()):
         if 'RMSNorm' in type(module).__name__:
             parts = name.split('.')
@@ -49,8 +66,20 @@ def optimize_model_for_webgpu(model):
                 parent = getattr(parent, part)
             fused = FusedRMSNorm(module.weight, eps=module.variance_epsilon)
             setattr(parent, parts[-1], fused)
-            replaced += 1
-    return model, replaced
+            rmsnorm_count += 1
+
+    # Replace MLP layers
+    for name, module in list(model.named_modules()):
+        if 'MLP' in type(module).__name__ and hasattr(module, 'gate_proj'):
+            parts = name.split('.')
+            parent = model
+            for part in parts[:-1]:
+                parent = getattr(parent, part)
+            fused = FusedMLP(module.gate_proj, module.up_proj, module.down_proj)
+            setattr(parent, parts[-1], fused)
+            mlp_count += 1
+
+    return model, rmsnorm_count + mlp_count
 
 
 def get_gpu_info():
