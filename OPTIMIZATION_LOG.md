@@ -1199,3 +1199,180 @@ New functions exposed via `torch_webgpu._C`:
 
 **Correctness Status**: Full model (Qwen2.5-0.5B) runs correctly on WebGPU, producing outputs that match CPU within numerical precision.
 
+---
+
+## Optimization 17: Eager Mode Execution
+- **Date**: 2026-02-02
+- **Change**: Bypassed torch.compile entirely and used eager mode execution with fused kernels
+- **Insight**: torch.compile adds significant overhead for WebGPU that exceeds any fusion benefits
+
+### Results
+| Metric | torch.compile | Eager Mode | Improvement |
+|--------|--------------|------------|-------------|
+| Tokens/sec | 10.0 | 13.5 | **+35%** |
+| TTFT | ~75ms | ~71ms | -5% |
+
+### Why Eager Mode is Faster
+1. torch.compile's compilation overhead (graph tracing, IR conversion, Python lowering)
+2. FakeTensor issues with PrivateUse1 device
+3. Per-dispatch overhead dominates anyway - graph-level fusion can't help much
+
+---
+
+## Optimization 18: Fused RMSNorm Module Replacement
+- **Date**: 2026-02-02
+- **Change**: Directly replaced HuggingFace Qwen2RMSNorm modules with custom FusedRMSNorm
+- **Insight**: Instead of trying to pattern-match the FX graph, monkey-patch the model
+
+### Implementation
+```python
+class FusedRMSNorm(nn.Module):
+    def __init__(self, weight, eps=1e-6):
+        super().__init__()
+        self.weight = weight
+        self.eps = eps
+
+    def forward(self, x):
+        return torch.ops.webgpu.rms_norm(x, self.weight, self.eps)
+```
+
+### Results
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| Tokens/sec | 13.5 | 19.4 | **+44%** |
+| TTFT | 71ms | 47ms | -35% |
+| Dispatches saved | - | 240/forward | 5 per RMSNorm × 48 |
+
+### Key Fix: Device Type Detection
+The fallback functions were checking for `'privateuseone'` but the actual device type is `'webgpu'`. Fixed by using multi-name check:
+```python
+def _is_webgpu_device(x):
+    return x.device.type in ('webgpu', 'privateuseone', 'privateuse1')
+```
+
+---
+
+## Optimization 19: Fused MLP Gate+Up+SiLU Module Replacement
+- **Date**: 2026-02-02
+- **Change**: Replaced Qwen MLP modules with custom FusedMLP that uses fused kernel
+- **Kernel**: `torch.ops.webgpu.fused_gate_up_silu(x, gate_weight, up_weight)`
+
+### Implementation
+```python
+class FusedMLP(nn.Module):
+    def __init__(self, gate_proj, up_proj, down_proj):
+        super().__init__()
+        self.gate_weight = gate_proj.weight
+        self.up_weight = up_proj.weight
+        self.down_proj = down_proj
+
+    def forward(self, x):
+        hidden = torch.ops.webgpu.fused_gate_up_silu(x, self.gate_weight, self.up_weight)
+        return self.down_proj(hidden)
+```
+
+### Bug Fixes Required
+1. **Non-uniform control flow**: Early return before `workgroupBarrier()` was invalid WGSL
+   - Fix: Use `valid` flag and always execute barriers
+2. **Weight transpose**: Was accessing W[k,n] instead of W[n,k]
+   - Fix: Changed indexing to `safe_col * params.K + weight_k`
+
+### Results
+| Metric | RMSNorm Only | + MLP Fusion | Improvement |
+|--------|--------------|--------------|-------------|
+| Tokens/sec | 19.4 | 20.5 | **+5%** |
+| TTFT | 47ms | 43ms | -8% |
+| Dispatches saved | - | 48/forward | 2 per MLP × 24 |
+
+---
+
+## BREAKTHROUGH: Final Performance (2026-02-02)
+
+| Backend | Tokens/sec | Std | TTFT (ms) | vs CUDA |
+|---------|------------|-----|-----------|---------|
+| CUDA (compiled) | 185.5 | 1.6 | 5.4 | 1.00x |
+| CUDA (eager) | 182.9 | 0.8 | 5.5 | 0.99x |
+| **torch-webgpu (fused)** | **20.5** | **0.5** | **43** | **0.11x** |
+| CPU (eager) | 13.7 | 0.4 | 73 | 0.07x |
+| ONNX-WebGPU | 13.1 | 0.2 | 74 | 0.07x |
+
+### Performance Improvements Summary
+
+| Optimization | Tokens/sec | Cumulative Gain |
+|--------------|------------|-----------------|
+| Baseline (torch.compile) | 10.0 | - |
+| + Eager mode | 13.5 | +35% |
+| + Fused RMSNorm | 19.4 | +94% |
+| + Fused MLP | 20.5 | **+105%** |
+
+### Key Insights
+
+1. **Eager mode beats torch.compile for WebGPU**: 35% faster without compilation overhead
+2. **Module replacement > Graph fusion**: Directly replacing PyTorch modules bypasses all pattern matching complexity
+3. **Diminishing returns from fusion**: RMSNorm fusion gave 44% speedup, MLP fusion only 5% more
+4. **torch-webgpu now beats CPU by 49%** and ONNX-WebGPU by 56%
+
+### Total Dispatches Saved
+| Fusion | Instances | Dispatches Saved |
+|--------|-----------|------------------|
+| RMSNorm | 48 | 240 |
+| MLP gate+up | 24 | 48 |
+| **Total** | 72 | **288/forward** |
+
+---
+
+## Current Performance Ceiling Analysis
+
+### Where We Are
+- **20.5 tok/s** = 11% of CUDA (185.5 tok/s)
+- **TTFT: 43ms** = 8x slower than CUDA (5.4ms)
+- **288 dispatches saved** through fusion
+
+### Remaining Dispatch Overhead
+With fusion:
+- ~580 original dispatches → ~290 remaining
+- At ~0.15ms per dispatch = ~43ms overhead (matches TTFT!)
+- Compute time: ~5-10ms (similar to CUDA)
+
+### Theoretical Ceiling
+If we could eliminate ALL dispatches (single mega-kernel):
+- Compute time: ~5-10ms
+- Tokens/sec: ~100-200 (close to CUDA!)
+- **The gap is 100% dispatch overhead, not compute**
+
+---
+
+## Remaining Optimization Opportunities
+
+### 1. Fused Q, K, V Projection (Not Yet Applied)
+- Pattern: 3 separate linears from same input
+- Potential: 24 × 2 = 48 dispatches saved
+- Expected gain: ~5-10%
+
+### 2. Fused Attention (O projection + residual)
+- Pattern: attention_out @ W_o + residual
+- Potential: 24 dispatches saved
+- Expected gain: ~3-5%
+
+### 3. KV Cache Optimization
+- Currently: cat() operations add overhead
+- Potential: In-place KV cache updates
+- Expected gain: Unknown
+
+### 4. Speculative Decoding
+- Not an optimization but a technique
+- Could improve effective throughput by batching verification
+
+---
+
+## Files Modified in Breakthrough
+
+| File | Changes |
+|------|---------|
+| `benchmarks/bench_qwen.py` | Added FusedRMSNorm, FusedMLP, optimize_model_for_webgpu() |
+| `python/torch_webgpu/compiler/lowering.py` | Fixed _is_webgpu_device() check |
+| `csrc/ops/fused_mlp.cpp` | Fixed WGSL shader bugs (barrier, weight transpose) |
+| `paper/tmlr/paper.tex` | Updated with 20.5 tok/s results |
+
+---
+

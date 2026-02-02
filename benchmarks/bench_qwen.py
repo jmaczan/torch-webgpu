@@ -265,7 +265,7 @@ def main():
         print("Optimizing model with fused WebGPU kernels...")
     model, replaced = optimize_model_for_webgpu(model)
     if verbose:
-        print(f"  Replaced {replaced} RMSNorm layers with fused version")
+        print(f"  Replaced {replaced} layers with fused versions (RMSNorm + MLP)")
         print()
 
     # Run benchmark

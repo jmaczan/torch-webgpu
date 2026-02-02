@@ -85,6 +85,16 @@ def _fused_gate_up_silu_with_fallback(x, gate_w, up_w):
     return F.silu(gate) * up
 
 
+def _fused_kv_proj_with_fallback(x, k_w, v_w):
+    """Fused K, V projection with CPU fallback (for GQA where K and V have same dims)."""
+    if _is_webgpu_device(x):
+        return torch.ops.webgpu.fused_kv_proj(x, k_w, v_w)
+    # CPU fallback: two separate linear projections
+    k = F.linear(x, k_w)
+    v = F.linear(x, v_w)
+    return (k, v)
+
+
 # Map shader names to actual torch functions
 SHADER_TO_FUNC = {
     "linear": F.linear,
@@ -140,6 +150,7 @@ SHADER_TO_FUNC = {
     # Fused WebGPU ops from fusion pass - with CPU fallbacks
     "fused_rms_norm": _rms_norm_with_fallback,
     "fused_qkv_proj": _fused_qkv_proj_with_fallback,
+    "fused_kv_proj": _fused_kv_proj_with_fallback,
     "fused_gate_up_silu": _fused_gate_up_silu_with_fallback,
     "cast": lambda x, dtype: x.to(dtype) if dtype else x,  # Perform dtype cast
     "scaled_dot_product_attention": F.scaled_dot_product_attention,
