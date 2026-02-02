@@ -554,6 +554,27 @@ namespace torch_webgpu
             }
             return result;
         }
+
+        // In-place tensor addition with dtype conversion support
+        at::Tensor& add_inplace_tensor(at::Tensor &self, const at::Tensor &other, const at::Scalar &alpha)
+        {
+            // Convert other to self's dtype if needed
+            at::Tensor other_work = other;
+            if (other.scalar_type() != self.scalar_type())
+            {
+                other_work = other.to(self.scalar_type());
+            }
+
+            // Ensure other is on same device
+            at::Tensor other_gpu = other_work.device().is_privateuseone()
+                                       ? other_work
+                                       : other_work.to(self.device());
+
+            // Use at::add then copy result back
+            auto result = at::add(self, other_gpu, alpha);
+            self.copy_(result);
+            return self;
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -571,6 +592,7 @@ namespace torch_webgpu
         m.impl("div.Tensor", TORCH_FN(ops::div_tensor));
         m.impl("sub.Tensor", TORCH_FN(ops::sub_tensor));
         m.impl("add.Tensor", TORCH_FN(ops::add_tensor));
+        m.impl("add_.Tensor", TORCH_FN(ops::add_inplace_tensor));
     }
 }
 
