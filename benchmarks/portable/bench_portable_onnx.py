@@ -3,21 +3,14 @@
 Portable ONNX Runtime benchmark for Qwen2.5-0.5B-Instruct.
 
 Supports multiple execution providers:
-- WebGPU (via DirectML on Windows, Metal on Mac)
 - CUDA
 - CPU
 
 Works on any platform with pip-installable packages.
 
 Usage:
-    # For WebGPU/DirectML (Windows):
-    pip install onnxruntime-directml transformers optimum[onnxruntime]
-
-    # For Metal (Mac):
-    pip install onnxruntime transformers optimum[onnxruntime]
-
-    # Then run:
-    python bench_portable_onnx.py --provider dml --output results_onnx_dml.json
+    pip install onnxruntime-gpu transformers optimum[onnxruntime]
+    python bench_portable_onnx.py --provider cuda --output results_onnx_cuda.json
     python bench_portable_onnx.py --provider cpu --output results_onnx_cpu.json
 """
 
@@ -27,8 +20,6 @@ import math
 import platform
 import time
 from pathlib import Path
-
-import numpy as np
 
 
 def get_system_info():
@@ -88,87 +79,8 @@ def calculate_confidence_interval(data, confidence=0.95):
     }
 
 
-def export_model_to_onnx(model_name: str, output_dir: Path, verbose: bool = True):
-    """Export model to ONNX format using optimum."""
-    if verbose:
-        print(f"Exporting {model_name} to ONNX...")
-
-    try:
-        from optimum.onnxruntime import ORTModelForCausalLM
-        from transformers import AutoTokenizer
-
-        # Export using optimum
-        model = ORTModelForCausalLM.from_pretrained(
-            model_name,
-            export=True,
-        )
-        model.save_pretrained(output_dir)
-
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        tokenizer.save_pretrained(output_dir)
-
-        if verbose:
-            print(f"Model exported to {output_dir}")
-
-        return True
-    except Exception as e:
-        if verbose:
-            print(f"Export failed: {e}")
-        return False
-
-
-def load_onnx_model(model_path: Path, provider: str, verbose: bool = True):
-    """Load ONNX model with specified execution provider."""
-    import onnxruntime as ort
-    from transformers import AutoTokenizer
-
-    # Map provider names to ONNX Runtime provider names
-    provider_map = {
-        "cpu": "CPUExecutionProvider",
-        "cuda": "CUDAExecutionProvider",
-        "dml": "DmlExecutionProvider",
-        "coreml": "CoreMLExecutionProvider",
-        "webgpu": "WebGPUExecutionProvider",  # Not yet available in most builds
-    }
-
-    ort_provider = provider_map.get(provider.lower(), provider)
-
-    available = ort.get_available_providers()
-    if ort_provider not in available:
-        if verbose:
-            print(f"Warning: {ort_provider} not available. Available: {available}")
-            print(f"Falling back to CPU")
-        ort_provider = "CPUExecutionProvider"
-
-    if verbose:
-        print(f"Using execution provider: {ort_provider}")
-
-    # Find model file
-    model_file = model_path / "model.onnx"
-    if not model_file.exists():
-        # Try decoder model for causal LM
-        model_file = model_path / "decoder_model.onnx"
-
-    if not model_file.exists():
-        raise FileNotFoundError(f"No ONNX model found in {model_path}")
-
-    # Create session
-    sess_options = ort.SessionOptions()
-    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-
-    session = ort.InferenceSession(
-        str(model_file),
-        sess_options,
-        providers=[ort_provider],
-    )
-
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-
-    return session, tokenizer
-
-
 def benchmark_onnx_inference(
-    session,
+    model,
     tokenizer,
     prompt: str,
     n_tokens: int = 50,
@@ -176,10 +88,9 @@ def benchmark_onnx_inference(
     runs: int = 30,
     verbose: bool = True,
 ):
-    """Benchmark ONNX model inference."""
-    inputs = tokenizer(prompt, return_tensors="np")
-    input_ids = inputs["input_ids"]
-    input_length = input_ids.shape[1]
+    """Benchmark ONNX model inference using optimum's generate()."""
+    inputs = tokenizer(prompt, return_tensors="pt")
+    input_length = inputs["input_ids"].shape[1]
 
     if verbose:
         print(f"Input prompt: '{prompt}'")
@@ -187,33 +98,17 @@ def benchmark_onnx_inference(
         print(f"Generating {n_tokens} tokens, {runs} runs after {warmup} warmup")
         print()
 
-    # Get input/output names
-    input_names = [inp.name for inp in session.get_inputs()]
-    output_names = [out.name for out in session.get_outputs()]
-
-    def generate_token(current_ids):
-        """Generate a single token."""
-        feed_dict = {"input_ids": current_ids}
-
-        # Add attention mask if required
-        if "attention_mask" in input_names:
-            feed_dict["attention_mask"] = np.ones_like(current_ids)
-
-        outputs = session.run(output_names, feed_dict)
-        logits = outputs[0]
-
-        # Get next token (greedy)
-        next_token = np.argmax(logits[0, -1, :])
-        return next_token
-
     # Warmup
     if verbose:
         print("Warming up...")
     for i in range(warmup):
-        current_ids = input_ids.copy()
-        for _ in range(min(5, n_tokens)):
-            next_token = generate_token(current_ids)
-            current_ids = np.concatenate([current_ids, [[next_token]]], axis=1)
+        with torch.no_grad():
+            _ = model.generate(
+                **inputs,
+                max_new_tokens=min(5, n_tokens),
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
         if verbose:
             print(f"  Warmup {i+1}/{warmup} done")
 
@@ -226,28 +121,24 @@ def benchmark_onnx_inference(
         print("\nBenchmarking...")
 
     for run_idx in range(runs):
-        current_ids = input_ids.copy()
-        tokens_this_run = 0
-
         run_start = time.perf_counter()
-        first_token_time = None
 
-        for tok_idx in range(n_tokens):
-            next_token = generate_token(current_ids)
-
-            if first_token_time is None:
-                first_token_time = time.perf_counter()
-
-            current_ids = np.concatenate([current_ids, [[next_token]]], axis=1)
-            tokens_this_run += 1
-
-            if next_token == tokenizer.eos_token_id:
-                break
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=n_tokens,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
 
         run_end = time.perf_counter()
 
+        # Count generated tokens (excluding input)
+        tokens_this_run = outputs.shape[1] - input_length
         run_time = run_end - run_start
-        ttft = first_token_time - run_start if first_token_time else run_time
+
+        # Estimate TTFT as time / tokens (approximation for generate())
+        ttft = run_time / tokens_this_run if tokens_this_run > 0 else run_time
 
         times.append(run_time)
         ttft_times.append(ttft)
@@ -290,10 +181,8 @@ def main():
     parser = argparse.ArgumentParser(description="Portable ONNX Runtime benchmark")
     parser.add_argument("--output", type=str, default="results_onnx_portable.json", help="Output JSON file")
     parser.add_argument("--provider", type=str, default="cpu",
-                        choices=["cpu", "cuda", "dml", "coreml", "webgpu"],
+                        choices=["cpu", "cuda"],
                         help="ONNX Runtime execution provider")
-    parser.add_argument("--model-dir", type=str, default=None,
-                        help="Path to ONNX model directory (will export if not exists)")
     parser.add_argument("--n-tokens", type=int, default=50, help="Tokens to generate per run")
     parser.add_argument("--warmup", type=int, default=3, help="Warmup runs")
     parser.add_argument("--runs", type=int, default=30, help="Benchmark runs")
@@ -319,34 +208,42 @@ def main():
         print(f"Available providers: {system_info['available_providers']}")
         print()
 
-    # Determine model path
-    if args.model_dir:
-        model_path = Path(args.model_dir)
+    # Import here after args parsing
+    global torch
+    import torch
+    from optimum.onnxruntime import ORTModelForCausalLM
+    from transformers import AutoTokenizer
+
+    # Load model with optimum (handles export automatically)
+    if verbose:
+        print(f"Loading {model_name} with ONNX Runtime...")
+
+    # Set provider
+    if args.provider == "cuda":
+        provider = "CUDAExecutionProvider"
     else:
-        model_path = Path("qwen_onnx")
+        provider = "CPUExecutionProvider"
 
-    # Export if needed
-    if not model_path.exists() or not (model_path / "model.onnx").exists():
-        if verbose:
-            print(f"ONNX model not found at {model_path}, exporting...")
-        model_path.mkdir(parents=True, exist_ok=True)
-        success = export_model_to_onnx(model_name, model_path, verbose)
-        if not success:
-            print("Failed to export model. Please install optimum:")
-            print("  pip install optimum[onnxruntime]")
-            return None
-
-    # Load model
-    if verbose:
-        print(f"Loading ONNX model from {model_path}...")
-    session, tokenizer = load_onnx_model(model_path, args.provider, verbose)
+    try:
+        model = ORTModelForCausalLM.from_pretrained(
+            model_name,
+            export=True,
+            provider=provider,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+    except Exception as e:
+        print(f"Failed to load model: {e}")
+        print("\nMake sure you have installed:")
+        print("  pip install optimum[onnxruntime] onnxruntime-gpu")
+        return None
 
     if verbose:
+        print(f"Model loaded with provider: {provider}")
         print()
 
     # Run benchmark
     results = benchmark_onnx_inference(
-        session,
+        model,
         tokenizer,
         prompt=args.prompt,
         n_tokens=args.n_tokens,
