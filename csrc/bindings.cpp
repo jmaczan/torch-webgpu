@@ -19,6 +19,8 @@
 #include "core/webgpu_allocator.h"
 #include "core/webgpu_device_guard.h"
 #include "core/command_batcher.h"
+#include "core/dispatch_profiler.h"
+#include "core/bind_group_cache.h"
 
 namespace torch_webgpu
 {
@@ -64,12 +66,89 @@ static PyObject* enable_batching(PyObject* self, PyObject* args)
     Py_RETURN_NONE;
 }
 
+// Python bindings for dispatch profiler
+static PyObject* enable_profiling(PyObject* self, PyObject* args)
+{
+    torch_webgpu::core::getDispatchProfiler().setEnabled(true);
+    Py_RETURN_NONE;
+}
+
+static PyObject* disable_profiling(PyObject* self, PyObject* args)
+{
+    torch_webgpu::core::getDispatchProfiler().setEnabled(false);
+    Py_RETURN_NONE;
+}
+
+static PyObject* reset_profiler(PyObject* self, PyObject* args)
+{
+    torch_webgpu::core::getDispatchProfiler().reset();
+    Py_RETURN_NONE;
+}
+
+static PyObject* get_profile_stats(PyObject* self, PyObject* args)
+{
+    auto& profiler = torch_webgpu::core::getDispatchProfiler();
+    auto& bind_cache = torch_webgpu::core::getBindGroupCache();
+
+    PyObject* dict = PyDict_New();
+    if (!dict) return nullptr;
+
+    // Dispatch counts
+    PyDict_SetItemString(dict, "dispatch_count",
+        PyLong_FromSize_t(profiler.getDispatchCount()));
+    PyDict_SetItemString(dict, "submission_count",
+        PyLong_FromSize_t(profiler.getSubmissionCount()));
+
+    // Timings in microseconds
+    PyDict_SetItemString(dict, "total_encoder_time_us",
+        PyFloat_FromDouble(profiler.getTotalEncoderTimeUs()));
+    PyDict_SetItemString(dict, "total_bind_group_time_us",
+        PyFloat_FromDouble(profiler.getTotalBindGroupTimeUs()));
+    PyDict_SetItemString(dict, "total_submission_time_us",
+        PyFloat_FromDouble(profiler.getTotalSubmissionTimeUs()));
+    PyDict_SetItemString(dict, "total_gpu_sync_time_us",
+        PyFloat_FromDouble(profiler.getTotalGpuSyncTimeUs()));
+
+    // Averages
+    PyDict_SetItemString(dict, "avg_encoder_time_us",
+        PyFloat_FromDouble(profiler.getAvgEncoderTimeUs()));
+    PyDict_SetItemString(dict, "avg_bind_group_time_us",
+        PyFloat_FromDouble(profiler.getAvgBindGroupTimeUs()));
+    PyDict_SetItemString(dict, "avg_submission_time_us",
+        PyFloat_FromDouble(profiler.getAvgSubmissionTimeUs()));
+    PyDict_SetItemString(dict, "avg_dispatch_overhead_us",
+        PyFloat_FromDouble(profiler.getAvgDispatchOverheadUs()));
+
+    // Bind group cache stats
+    PyDict_SetItemString(dict, "bind_group_cache_hits",
+        PyLong_FromSize_t(bind_cache.getHits()));
+    PyDict_SetItemString(dict, "bind_group_cache_misses",
+        PyLong_FromSize_t(bind_cache.getMisses()));
+    PyDict_SetItemString(dict, "bind_group_cache_hit_rate",
+        PyFloat_FromDouble(bind_cache.getHitRate()));
+    PyDict_SetItemString(dict, "bind_group_cache_size",
+        PyLong_FromSize_t(bind_cache.getSize()));
+
+    return dict;
+}
+
+static PyObject* get_profile_summary(PyObject* self, PyObject* args)
+{
+    std::string summary = torch_webgpu::core::getDispatchProfiler().getSummary();
+    return PyUnicode_FromString(summary.c_str());
+}
+
 PyMODINIT_FUNC PyInit__C(void)
 {
     static std::vector<PyMethodDef> methods = {
         {"flush_commands", flush_commands, METH_NOARGS, "Flush pending WebGPU commands"},
         {"disable_batching", disable_batching, METH_NOARGS, "Disable command batching"},
         {"enable_batching", enable_batching, METH_NOARGS, "Enable command batching"},
+        {"enable_profiling", enable_profiling, METH_NOARGS, "Enable dispatch profiling"},
+        {"disable_profiling", disable_profiling, METH_NOARGS, "Disable dispatch profiling"},
+        {"reset_profiler", reset_profiler, METH_NOARGS, "Reset profiler counters"},
+        {"get_profile_stats", get_profile_stats, METH_NOARGS, "Get profiling statistics as dict"},
+        {"get_profile_summary", get_profile_summary, METH_NOARGS, "Get profiling summary as string"},
         {nullptr, nullptr, 0, nullptr}  // Sentinel
     };
     static const int python_api_version = 1013;

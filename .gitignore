@@ -264,3 +264,6 @@ gflops_benchmark.png
 bench_summary.json
 *.onnx
 *.onnx_data
+
+# Paper directory (kept private)
+paper/

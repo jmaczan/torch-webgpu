@@ -1,6 +1,7 @@
 #include "command_batcher.h"
 #include "webgpu_context.h"
 #include "buffer_pool.h"
+#include "dispatch_profiler.h"
 #include <iostream>
 
 namespace torch_webgpu
@@ -127,6 +128,10 @@ namespace torch_webgpu
         )
         {
             CommandBatcher& batcher = getCommandBatcher();
+            DispatchProfiler& profiler = getDispatchProfiler();
+
+            // Record dispatch count
+            profiler.recordDispatch();
 
             if (batcher.isEnabled())
             {
@@ -141,15 +146,24 @@ namespace torch_webgpu
             {
                 // Immediate mode - create encoder, dispatch, submit
                 WebGPUContext& ctx = getWebGPUContext();
+
+                // Profile encoder creation
+                ScopedTimer encoder_timer;
                 wgpu::CommandEncoder encoder = ctx.getDevice().CreateCommandEncoder();
                 wgpu::ComputePassDescriptor pass_descriptor{};
                 wgpu::ComputePassEncoder pass_encoder = encoder.BeginComputePass(&pass_descriptor);
+                profiler.recordEncoderCreation(encoder_timer.elapsedUs());
+
                 pass_encoder.SetPipeline(pipeline);
                 pass_encoder.SetBindGroup(0, bind_group);
                 pass_encoder.DispatchWorkgroups(workgroups_x, workgroups_y, workgroups_z);
                 pass_encoder.End();
                 wgpu::CommandBuffer command_buffer = encoder.Finish();
+
+                // Profile submission
+                ScopedTimer submit_timer;
                 ctx.getQueue().Submit(1, &command_buffer);
+                profiler.recordSubmission(submit_timer.elapsedUs());
             }
         }
 

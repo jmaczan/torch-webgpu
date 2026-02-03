@@ -234,15 +234,42 @@ def benchmark_inference(
     avg_time_per_run = total_time / runs
     avg_ttft = sum(ttft_times) / len(ttft_times)
 
-    # Calculate std
+    # Calculate std and confidence intervals
     tps_per_run = [t / tm for t, tm in zip(tokens_generated, times)]
-    tps_std = (sum((x - tokens_per_second)**2 for x in tps_per_run) / len(tps_per_run)) ** 0.5
+    tps_mean = sum(tps_per_run) / len(tps_per_run)
+    tps_std = (sum((x - tps_mean)**2 for x in tps_per_run) / len(tps_per_run)) ** 0.5
+
+    # 95% confidence interval (using t-distribution approximation)
+    import math
+    n = len(tps_per_run)
+    std_error = tps_std / math.sqrt(n)
+    # t-value for 95% CI with n-1 degrees of freedom (approximation)
+    try:
+        from scipy import stats
+        t_value = stats.t.ppf(0.975, n - 1)
+    except ImportError:
+        t_value = 1.96 if n >= 30 else 2.0  # Approximation
+    margin = t_value * std_error
+    tps_ci95 = [tps_mean - margin, tps_mean + margin]
+
+    # TTFT confidence interval
+    ttft_std = (sum((x - avg_ttft)**2 for x in ttft_times) / len(ttft_times)) ** 0.5
+    ttft_std_error = ttft_std / math.sqrt(n)
+    ttft_margin = t_value * ttft_std_error
+    ttft_ci95 = [avg_ttft - ttft_margin, avg_ttft + ttft_margin]
+
+    # Coefficient of variation
+    cv = (tps_std / tps_mean * 100) if tps_mean > 0 else 0
 
     results = {
         "tokens_per_second": tokens_per_second,
         "tokens_per_second_std": tps_std,
+        "tokens_per_second_ci95": tps_ci95,
+        "coefficient_of_variation": cv,
         "avg_time_per_run_s": avg_time_per_run,
         "time_to_first_token_ms": avg_ttft * 1000,
+        "time_to_first_token_std_ms": ttft_std * 1000,
+        "time_to_first_token_ci95_ms": [t * 1000 for t in ttft_ci95],
         "total_tokens": total_tokens,
         "total_time_s": total_time,
         "n_tokens_requested": n_tokens,
@@ -250,6 +277,8 @@ def benchmark_inference(
         "runs": runs,
         "warmup": warmup,
         "input_tokens": input_length,
+        "all_tps": tps_per_run,
+        "all_ttft_ms": [t * 1000 for t in ttft_times],
     }
 
     return results
@@ -260,7 +289,7 @@ def main():
     parser.add_argument("--output", type=str, default=None, help="Output JSON file path")
     parser.add_argument("--n-tokens", type=int, default=50, help="Number of tokens to generate per run")
     parser.add_argument("--warmup", type=int, default=3, help="Number of warmup runs")
-    parser.add_argument("--runs", type=int, default=10, help="Number of benchmark runs")
+    parser.add_argument("--runs", type=int, default=30, help="Number of benchmark runs (30 for statistical rigor)")
     parser.add_argument("--prompt", type=str, default="The capital of France is", help="Input prompt")
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
     args = parser.parse_args()
@@ -335,8 +364,15 @@ def main():
     print("=" * 60)
     print("RESULTS")
     print("=" * 60)
-    print(f"Tokens/second:       {results['tokens_per_second']:.2f} (+/- {results['tokens_per_second_std']:.2f})")
+    print(f"Tokens/second:       {results['tokens_per_second']:.2f} +/- {results['tokens_per_second_std']:.2f}")
+    ci = results.get('tokens_per_second_ci95', [])
+    if ci:
+        print(f"  95% CI:            [{ci[0]:.2f}, {ci[1]:.2f}]")
+    print(f"CV:                  {results.get('coefficient_of_variation', 0):.1f}%")
     print(f"Time to first token: {results['time_to_first_token_ms']:.2f} ms")
+    ttft_ci = results.get('time_to_first_token_ci95_ms', [])
+    if ttft_ci:
+        print(f"  95% CI:            [{ttft_ci[0]:.2f}, {ttft_ci[1]:.2f}] ms")
     print(f"Avg time per run:    {results['avg_time_per_run_s']:.3f} s")
     print(f"Total tokens:        {results['total_tokens']}")
     print(f"Total time:          {results['total_time_s']:.3f} s")
