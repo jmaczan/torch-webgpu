@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebLLM Browser Inference Benchmark</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1000px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        .container {
+            background: #16213e;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        h1 { color: #00d9ff; margin-bottom: 10px; }
+        h2 { color: #00d9ff; font-size: 1.2em; margin-top: 25px; }
+        .subtitle { color: #888; margin-bottom: 25px; }
+        .status-box {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .status-box.info { background: #1e3a5f; border-left: 4px solid #00d9ff; }
+        .status-box.success { background: #1e5f3a; border-left: 4px solid #00ff88; }
+        .status-box.error { background: #5f1e1e; border-left: 4px solid #ff4444; }
+        .status-box.warning { background: #5f4a1e; border-left: 4px solid #ffaa00; }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            margin: 5px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); }
+        button:disabled { background: #444; cursor: not-allowed; transform: none; box-shadow: none; }
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .config-item label {
+            display: block;
+            margin-bottom: 5px;
+            color: #aaa;
+            font-size: 13px;
+        }
+        .config-item select, .config-item input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #0f0f23;
+            color: #fff;
+            font-size: 14px;
+        }
+        #log {
+            background: #0f0f23;
+            color: #00ff88;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 350px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            margin-top: 20px;
+            border: 1px solid #333;
+        }
+        .progress-container {
+            margin: 20px 0;
+            display: none;
+        }
+        .progress-bar {
+            height: 8px;
+            background: #333;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2, #00d9ff);
+            background-size: 200% 100%;
+            animation: shimmer 2s infinite;
+            transition: width 0.3s;
+        }
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        .progress-text {
+            text-align: center;
+            margin-top: 8px;
+            color: #888;
+            font-size: 13px;
+        }
+        #results {
+            margin-top: 25px;
+            display: none;
+        }
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+        }
+        .result-card {
+            background: #0f0f23;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #333;
+        }
+        .result-card .value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #00d9ff;
+        }
+        .result-card .label {
+            color: #888;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        .result-card .ci {
+            color: #666;
+            font-size: 11px;
+            margin-top: 3px;
+        }
+        .all-runs {
+            margin-top: 20px;
+            padding: 15px;
+            background: #0f0f23;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebLLM Browser Inference Benchmark</h1>
+        <p class="subtitle">Full end-to-end LLM inference using WebGPU via WebLLM</p>
+
+        <div id="webgpu-status" class="status-box info">Checking WebGPU support...</div>
+
+        <h2>Configuration</h2>
+        <div class="config-grid">
+            <div class="config-item">
+                <label>Model</label>
+                <select id="model-select">
+                    <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Qwen2.5-0.5B (q4f16, ~300MB)</option>
+                    <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC">Qwen2.5-1.5B (q4f16, ~900MB)</option>
+                    <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama-3.2-1B (q4f16, ~700MB)</option>
+                    <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama-3.2-3B (q4f16, ~1.8GB)</option>
+                    <option value="TinyLlama-1.1B-Chat-v1.0-q4f16_1-MLC">TinyLlama-1.1B (q4f16, ~600MB)</option>
+                    <option value="phi-2-q4f16_1-MLC">Phi-2 (q4f16, ~1.5GB)</option>
+                    <option value="gemma-2b-it-q4f16_1-MLC">Gemma-2B (q4f16, ~1.2GB)</option>
+                </select>
+            </div>
+            <div class="config-item">
+                <label>Tokens to Generate</label>
+                <input type="number" id="num-tokens" value="50" min="10" max="256">
+            </div>
+            <div class="config-item">
+                <label>Number of Runs</label>
+                <input type="number" id="num-runs" value="10" min="3" max="30">
+            </div>
+            <div class="config-item">
+                <label>Warmup Runs</label>
+                <input type="number" id="warmup-runs" value="3" min="1" max="10">
+            </div>
+        </div>
+
+        <div>
+            <button id="run-benchmark" onclick="runBenchmark()">Run Benchmark</button>
+            <button id="download-results" onclick="downloadResults()" disabled>Download JSON</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <div class="progress-container" id="progress-container">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Initializing...</div>
+        </div>
+
+        <div id="log"></div>
+
+        <div id="results">
+            <h2>Results</h2>
+            <div class="results-grid" id="results-grid"></div>
+            <div class="all-runs" id="all-runs"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+
+        window.webllm = webllm;
+
+        // Check WebGPU
+        async function checkWebGPU() {
+            const statusEl = document.getElementById('webgpu-status');
+
+            if (!navigator.gpu) {
+                statusEl.className = 'status-box error';
+                statusEl.innerHTML = '<strong>WebGPU NOT SUPPORTED</strong><br>Please use Chrome 113+, Edge 113+, or Safari 17+';
+                document.getElementById('run-benchmark').disabled = true;
+                return false;
+            }
+
+            try {
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) throw new Error('No adapter');
+
+                const info = adapter.info;
+
+                statusEl.className = 'status-box success';
+                statusEl.innerHTML = `<strong>WebGPU Ready</strong><br>
+                    Vendor: ${info.vendor || 'Unknown'} |
+                    Architecture: ${info.architecture || 'Unknown'} |
+                    Device: ${info.device || info.description || 'Unknown'}`;
+
+                window.gpuInfo = {
+                    vendor: info.vendor,
+                    architecture: info.architecture,
+                    device: info.device,
+                    description: info.description
+                };
+                return true;
+            } catch (e) {
+                statusEl.className = 'status-box error';
+                statusEl.textContent = `WebGPU Error: ${e.message}`;
+                document.getElementById('run-benchmark').disabled = true;
+                return false;
+            }
+        }
+
+        window.checkWebGPU = checkWebGPU;
+        checkWebGPU();
+    </script>
+
+    <script>
+        let benchmarkResults = null;
+        let engine = null;
+
+        function log(msg, type = 'info') {
+            const el = document.getElementById('log');
+            const ts = new Date().toISOString().split('T')[1].slice(0, 8);
+            const color = type === 'error' ? '#ff4444' : type === 'warn' ? '#ffaa00' : '#00ff88';
+            el.innerHTML += `<span style="color:${color}">[${ts}] ${msg}</span>\n`;
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function setProgress(pct, text) {
+            document.getElementById('progress-fill').style.width = `${pct}%`;
+            document.getElementById('progress-text').textContent = text;
+        }
+
+        function calculateStats(arr) {
+            const n = arr.length;
+            const mean = arr.reduce((a, b) => a + b, 0) / n;
+            const variance = arr.reduce((s, x) => s + Math.pow(x - mean, 2), 0) / (n - 1);
+            const std = Math.sqrt(variance);
+            const sem = std / Math.sqrt(n);
+            // t-value for 95% CI (approximation for n >= 10)
+            const t = n >= 30 ? 1.96 : (n >= 10 ? 2.262 : 2.776);
+            return {
+                mean, std, sem, n,
+                ci95_lower: mean - t * sem,
+                ci95_upper: mean + t * sem,
+                cv: (std / mean) * 100
+            };
+        }
+
+        async function runBenchmark() {
+            const btn = document.getElementById('run-benchmark');
+            btn.disabled = true;
+
+            const progressContainer = document.getElementById('progress-container');
+            progressContainer.style.display = 'block';
+
+            const modelId = document.getElementById('model-select').value;
+            const numTokens = parseInt(document.getElementById('num-tokens').value);
+            const numRuns = parseInt(document.getElementById('num-runs').value);
+            const warmupRuns = parseInt(document.getElementById('warmup-runs').value);
+
+            log(`=== Starting Benchmark ===`);
+            log(`Model: ${modelId}`);
+            log(`Tokens: ${numTokens}, Runs: ${numRuns}, Warmup: ${warmupRuns}`);
+
+            try {
+                // Initialize engine
+                setProgress(0, 'Loading model...');
+                log('Initializing WebLLM engine...');
+
+                const loadStart = performance.now();
+
+                engine = await window.webllm.CreateMLCEngine(modelId, {
+                    initProgressCallback: (progress) => {
+                        const pct = Math.round(progress.progress * 100);
+                        setProgress(pct, `Loading: ${progress.text}`);
+                        if (progress.progress === 1) {
+                            log(`Model loaded: ${progress.text}`);
+                        }
+                    }
+                });
+
+                const loadTime = (performance.now() - loadStart) / 1000;
+                log(`Model ready in ${loadTime.toFixed(2)}s`);
+
+                const prompt = "The capital of France is";
+
+                // Warmup
+                setProgress(0, 'Warming up...');
+                log(`Running ${warmupRuns} warmup runs...`);
+
+                for (let i = 0; i < warmupRuns; i++) {
+                    await engine.chat.completions.create({
+                        messages: [{ role: "user", content: prompt }],
+                        max_tokens: numTokens,
+                        temperature: 0,
+                    });
+                    setProgress(((i + 1) / warmupRuns) * 100, `Warmup ${i + 1}/${warmupRuns}`);
+                }
+
+                // Timed runs
+                log(`Running ${numRuns} timed runs...`);
+                const runData = [];
+
+                for (let i = 0; i < numRuns; i++) {
+                    setProgress((i / numRuns) * 100, `Run ${i + 1}/${numRuns}`);
+
+                    const startTime = performance.now();
+
+                    const response = await engine.chat.completions.create({
+                        messages: [{ role: "user", content: prompt }],
+                        max_tokens: numTokens,
+                        temperature: 0,
+                        stream_options: { include_usage: true }
+                    });
+
+                    const endTime = performance.now();
+                    const totalTimeMs = endTime - startTime;
+                    const totalTimeSec = totalTimeMs / 1000;
+
+                    // Get actual token count from response
+                    const tokensGenerated = response.usage?.completion_tokens || numTokens;
+                    const tps = tokensGenerated / totalTimeSec;
+
+                    // Get runtime stats if available
+                    const runtimeStats = await engine.runtimeStatsText();
+
+                    runData.push({
+                        run: i + 1,
+                        tokens_generated: tokensGenerated,
+                        total_time_ms: totalTimeMs,
+                        tokens_per_second: tps,
+                        runtime_stats: runtimeStats
+                    });
+
+                    log(`  Run ${i + 1}: ${tps.toFixed(2)} tok/s (${tokensGenerated} tokens in ${totalTimeMs.toFixed(0)}ms)`);
+                }
+
+                setProgress(100, 'Complete!');
+
+                // Calculate statistics
+                const tpsValues = runData.map(r => r.tokens_per_second);
+                const timeValues = runData.map(r => r.total_time_ms);
+                const tpsStats = calculateStats(tpsValues);
+                const timeStats = calculateStats(timeValues);
+
+                // Parse prefill/decode from runtime stats if available
+                let prefillTps = null;
+                let decodeTps = null;
+                try {
+                    const lastStats = runData[runData.length - 1].runtime_stats;
+                    const prefillMatch = lastStats.match(/prefill: ([\d.]+) tok\/s/);
+                    const decodeMatch = lastStats.match(/decode: ([\d.]+) tok\/s/);
+                    if (prefillMatch) prefillTps = parseFloat(prefillMatch[1]);
+                    if (decodeMatch) decodeTps = parseFloat(decodeMatch[1]);
+                } catch (e) {}
+
+                benchmarkResults = {
+                    timestamp: new Date().toISOString(),
+                    browser: navigator.userAgent,
+                    gpu: window.gpuInfo || {},
+                    config: {
+                        model: modelId,
+                        num_tokens: numTokens,
+                        num_runs: numRuns,
+                        warmup_runs: warmupRuns,
+                        prompt: prompt
+                    },
+                    results: {
+                        tokens_per_second: {
+                            mean: tpsStats.mean,
+                            std: tpsStats.std,
+                            ci95: [tpsStats.ci95_lower, tpsStats.ci95_upper],
+                            cv_percent: tpsStats.cv,
+                            all_values: tpsValues
+                        },
+                        total_time_ms: {
+                            mean: timeStats.mean,
+                            std: timeStats.std,
+                            ci95: [timeStats.ci95_lower, timeStats.ci95_upper],
+                            all_values: timeValues
+                        },
+                        prefill_tokens_per_second: prefillTps,
+                        decode_tokens_per_second: decodeTps,
+                        model_load_time_seconds: loadTime
+                    },
+                    all_runs: runData
+                };
+
+                displayResults(benchmarkResults);
+
+                log('');
+                log('=== FINAL RESULTS ===');
+                log(`Tokens/sec: ${tpsStats.mean.toFixed(2)} ± ${tpsStats.std.toFixed(2)}`);
+                log(`95% CI: [${tpsStats.ci95_lower.toFixed(2)}, ${tpsStats.ci95_upper.toFixed(2)}]`);
+                log(`CV: ${tpsStats.cv.toFixed(1)}%`);
+                if (prefillTps) log(`Prefill: ${prefillTps.toFixed(1)} tok/s`);
+                if (decodeTps) log(`Decode: ${decodeTps.toFixed(1)} tok/s`);
+                log('====================');
+
+                document.getElementById('download-results').disabled = false;
+
+            } catch (error) {
+                log(`ERROR: ${error.message}`, 'error');
+                console.error(error);
+                setProgress(0, 'Error occurred');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function displayResults(results) {
+            const grid = document.getElementById('results-grid');
+            const r = results.results;
+
+            grid.innerHTML = `
+                <div class="result-card">
+                    <div class="value">${r.tokens_per_second.mean.toFixed(1)}</div>
+                    <div class="label">Tokens/sec</div>
+                    <div class="ci">95% CI: [${r.tokens_per_second.ci95[0].toFixed(1)}, ${r.tokens_per_second.ci95[1].toFixed(1)}]</div>
+                </div>
+                <div class="result-card">
+                    <div class="value">±${r.tokens_per_second.std.toFixed(2)}</div>
+                    <div class="label">Std Dev</div>
+                    <div class="ci">CV: ${r.tokens_per_second.cv_percent.toFixed(1)}%</div>
+                </div>
+                <div class="result-card">
+                    <div class="value">${r.total_time_ms.mean.toFixed(0)}</div>
+                    <div class="label">Avg Time (ms)</div>
+                    <div class="ci">for ${results.config.num_tokens} tokens</div>
+                </div>
+                <div class="result-card">
+                    <div class="value">${r.model_load_time_seconds.toFixed(1)}s</div>
+                    <div class="label">Model Load</div>
+                    <div class="ci">${results.config.model.split('-')[0]}</div>
+                </div>
+                ${r.decode_tokens_per_second ? `
+                <div class="result-card">
+                    <div class="value">${r.decode_tokens_per_second.toFixed(1)}</div>
+                    <div class="label">Decode tok/s</div>
+                    <div class="ci">per-token generation</div>
+                </div>
+                ` : ''}
+                ${r.prefill_tokens_per_second ? `
+                <div class="result-card">
+                    <div class="value">${r.prefill_tokens_per_second.toFixed(0)}</div>
+                    <div class="label">Prefill tok/s</div>
+                    <div class="ci">prompt processing</div>
+                </div>
+                ` : ''}
+            `;
+
+            const allRuns = document.getElementById('all-runs');
+            allRuns.innerHTML = '<strong>All runs (tok/s):</strong> ' +
+                r.tokens_per_second.all_values.map(v => v.toFixed(2)).join(', ');
+
+            document.getElementById('results').style.display = 'block';
+        }
+
+        function downloadResults() {
+            if (!benchmarkResults) return;
+            const blob = new Blob([JSON.stringify(benchmarkResults, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const modelName = benchmarkResults.config.model.replace(/[^a-zA-Z0-9.-]/g, '_');
+            a.download = `webllm_benchmark_${modelName}_${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>

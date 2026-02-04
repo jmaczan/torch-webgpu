@@ -1,20 +1,53 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>WebGPU Browser Benchmark</title>
     <style>
-        body { font-family: monospace; padding: 20px; max-width: 900px; margin: 0 auto; }
-        pre { background: #f0f0f0; padding: 15px; overflow-x: auto; }
-        button { padding: 10px 20px; font-size: 16px; margin: 5px; cursor: pointer; }
-        .result { margin: 10px 0; padding: 10px; border: 1px solid #ddd; }
-        .error { background: #ffe0e0; }
-        .success { background: #e0ffe0; }
-        h2 { margin-top: 30px; }
+        body {
+            font-family: monospace;
+            padding: 20px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        pre {
+            background: #f0f0f0;
+            padding: 15px;
+            overflow-x: auto;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 5px;
+            cursor: pointer;
+        }
+
+        .result {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+
+        .error {
+            background: #ffe0e0;
+        }
+
+        .success {
+            background: #e0ffe0;
+        }
+
+        h2 {
+            margin-top: 30px;
+        }
     </style>
 </head>
+
 <body>
     <h1>WebGPU Browser Benchmark</h1>
-    <p>This benchmark measures WebGPU dispatch overhead in the browser to compare with native (wgpu, Dawn) implementations.</p>
+    <p>This benchmark measures WebGPU dispatch overhead in the browser to compare with native (wgpu, Dawn)
+        implementations.</p>
 
     <div id="status">Checking WebGPU support...</div>
 
@@ -62,17 +95,12 @@
 
                 // Get adapter info - API varies between browser versions
                 try {
-                    // Try new API first (requestAdapterInfo is async in some versions)
-                    if (typeof adapter.requestAdapterInfo === 'function') {
-                        adapterInfo = await adapter.requestAdapterInfo();
-                    } else if (adapter.info) {
-                        // Older API - info is a property
+                    if (adapter.info) {
                         adapterInfo = adapter.info;
                     } else {
                         adapterInfo = { vendor: 'unknown', device: 'unknown', description: 'unknown' };
                     }
                 } catch (e) {
-                    // Fallback if requestAdapterInfo fails
                     adapterInfo = adapter.info || { vendor: 'unknown', device: 'unknown', description: 'unknown' };
                 }
 
@@ -157,7 +185,7 @@
             return {
                 name: 'dispatch_overhead_single_op',
                 mean_us: times.reduce((a, b) => a + b) / times.length,
-                std_us: Math.sqrt(times.map(t => Math.pow(t - times.reduce((a,b) => a+b)/times.length, 2)).reduce((a,b) => a+b) / times.length),
+                std_us: Math.sqrt(times.map(t => Math.pow(t - times.reduce((a, b) => a + b) / times.length, 2)).reduce((a, b) => a + b) / times.length),
                 min_us: Math.min(...times),
                 max_us: Math.max(...times),
                 iterations: iterations,
@@ -237,7 +265,7 @@
                 name: 'sequential_dispatches',
                 n_dispatches: nDispatches,
                 mean_total_ms: meanMs,
-                std_total_ms: Math.sqrt(times.map(t => Math.pow(t - meanMs, 2)).reduce((a,b) => a+b) / times.length),
+                std_total_ms: Math.sqrt(times.map(t => Math.pow(t - meanMs, 2)).reduce((a, b) => a + b) / times.length),
                 per_dispatch_us: perDispatchUs,
                 iterations: iterations,
                 note: 'TRUE dispatch overhead (sync only at end)'
@@ -313,11 +341,11 @@
 
             // Create pipelines
             const pipelines = {
-                square: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: squareShader }), entryPoint: 'main' }}),
-                reduce: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: reduceShader }), entryPoint: 'main' }}),
-                rsqrt: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: rsqrtShader }), entryPoint: 'main' }}),
-                normalize: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: normalizeShader }), entryPoint: 'main' }}),
-                weightMul: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: weightMulShader }), entryPoint: 'main' }})
+                square: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: squareShader }), entryPoint: 'main' } }),
+                reduce: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: reduceShader }), entryPoint: 'main' } }),
+                rsqrt: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: rsqrtShader }), entryPoint: 'main' } }),
+                normalize: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: normalizeShader }), entryPoint: 'main' } }),
+                weightMul: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: weightMulShader }), entryPoint: 'main' } })
             };
 
             // Create buffers
@@ -331,28 +359,38 @@
             const outputBuf = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE });
 
             // Create bind groups
-            const bgSquare = device.createBindGroup({ layout: pipelines.square.getBindGroupLayout(0), entries: [
-                { binding: 0, resource: { buffer: inputBuf }},
-                { binding: 1, resource: { buffer: squaredBuf }}
-            ]});
-            const bgReduce = device.createBindGroup({ layout: pipelines.reduce.getBindGroupLayout(0), entries: [
-                { binding: 0, resource: { buffer: squaredBuf }},
-                { binding: 1, resource: { buffer: sumBuf }}
-            ]});
-            const bgRsqrt = device.createBindGroup({ layout: pipelines.rsqrt.getBindGroupLayout(0), entries: [
-                { binding: 0, resource: { buffer: sumBuf }},
-                { binding: 1, resource: { buffer: rsqrtBuf }}
-            ]});
-            const bgNormalize = device.createBindGroup({ layout: pipelines.normalize.getBindGroupLayout(0), entries: [
-                { binding: 0, resource: { buffer: inputBuf }},
-                { binding: 1, resource: { buffer: rsqrtBuf }},
-                { binding: 2, resource: { buffer: normalizedBuf }}
-            ]});
-            const bgWeightMul = device.createBindGroup({ layout: pipelines.weightMul.getBindGroupLayout(0), entries: [
-                { binding: 0, resource: { buffer: normalizedBuf }},
-                { binding: 1, resource: { buffer: weightBuf }},
-                { binding: 2, resource: { buffer: outputBuf }}
-            ]});
+            const bgSquare = device.createBindGroup({
+                layout: pipelines.square.getBindGroupLayout(0), entries: [
+                    { binding: 0, resource: { buffer: inputBuf } },
+                    { binding: 1, resource: { buffer: squaredBuf } }
+                ]
+            });
+            const bgReduce = device.createBindGroup({
+                layout: pipelines.reduce.getBindGroupLayout(0), entries: [
+                    { binding: 0, resource: { buffer: squaredBuf } },
+                    { binding: 1, resource: { buffer: sumBuf } }
+                ]
+            });
+            const bgRsqrt = device.createBindGroup({
+                layout: pipelines.rsqrt.getBindGroupLayout(0), entries: [
+                    { binding: 0, resource: { buffer: sumBuf } },
+                    { binding: 1, resource: { buffer: rsqrtBuf } }
+                ]
+            });
+            const bgNormalize = device.createBindGroup({
+                layout: pipelines.normalize.getBindGroupLayout(0), entries: [
+                    { binding: 0, resource: { buffer: inputBuf } },
+                    { binding: 1, resource: { buffer: rsqrtBuf } },
+                    { binding: 2, resource: { buffer: normalizedBuf } }
+                ]
+            });
+            const bgWeightMul = device.createBindGroup({
+                layout: pipelines.weightMul.getBindGroupLayout(0), entries: [
+                    { binding: 0, resource: { buffer: normalizedBuf } },
+                    { binding: 1, resource: { buffer: weightBuf } },
+                    { binding: 2, resource: { buffer: outputBuf } }
+                ]
+            });
 
             // Warmup
             for (let w = 0; w < 5; w++) {
@@ -442,7 +480,7 @@
                 name: 'rmsnorm_unfused',
                 dispatches: 5,
                 mean_ms: meanMs,
-                std_ms: Math.sqrt(times.map(t => Math.pow(t - meanMs, 2)).reduce((a,b) => a+b) / times.length),
+                std_ms: Math.sqrt(times.map(t => Math.pow(t - meanMs, 2)).reduce((a, b) => a + b) / times.length),
                 iterations: iterations
             };
         }
@@ -495,9 +533,9 @@
             const bindGroup = device.createBindGroup({
                 layout: pipeline.getBindGroupLayout(0),
                 entries: [
-                    { binding: 0, resource: { buffer: inputBuf }},
-                    { binding: 1, resource: { buffer: weightBuf }},
-                    { binding: 2, resource: { buffer: outputBuf }}
+                    { binding: 0, resource: { buffer: inputBuf } },
+                    { binding: 1, resource: { buffer: weightBuf } },
+                    { binding: 2, resource: { buffer: outputBuf } }
                 ]
             });
 
@@ -538,7 +576,7 @@
                 name: 'rmsnorm_fused',
                 dispatches: 1,
                 mean_ms: meanMs,
-                std_ms: Math.sqrt(times.map(t => Math.pow(t - meanMs, 2)).reduce((a,b) => a+b) / times.length),
+                std_ms: Math.sqrt(times.map(t => Math.pow(t - meanMs, 2)).reduce((a, b) => a + b) / times.length),
                 iterations: iterations
             };
         }
@@ -620,7 +658,7 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `browser_webgpu_benchmark_${new Date().toISOString().slice(0,10)}.json`;
+            a.download = `browser_webgpu_benchmark_${new Date().toISOString().slice(0, 10)}.json`;
             a.click();
             URL.revokeObjectURL(url);
         }
@@ -629,4 +667,5 @@
         init();
     </script>
 </body>
+
 </html>

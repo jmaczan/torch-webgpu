@@ -705,7 +705,24 @@ def main():
     print(f"  Device argmax: {t15['device_argmax']['mean']:.3f} ms [95% CI: {t15['device_argmax']['ci95_lower']:.3f}, {t15['device_argmax']['ci95_upper']:.3f}]")
     print(f"  Significance: p={t15['argmax_significance'].get('p_value', 'N/A'):.4f}")
 
-    # Save
+    # Save - convert numpy types to Python types
+    def convert_numpy(obj):
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        elif isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, dict):
+            return {k: convert_numpy(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_numpy(i) for i in obj]
+        return obj
+
+    results = convert_numpy(results)
+
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:

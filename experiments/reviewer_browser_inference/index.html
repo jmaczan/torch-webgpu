@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGPU LLM Inference Benchmark</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; }
+        .status {
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            font-family: monospace;
+        }
+        .status.info { background: #e3f2fd; color: #1565c0; }
+        .status.success { background: #e8f5e9; color: #2e7d32; }
+        .status.error { background: #ffebee; color: #c62828; }
+        .status.warning { background: #fff3e0; color: #ef6c00; }
+        button {
+            background: #1976d2;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover { background: #1565c0; }
+        button:disabled { background: #bdbdbd; cursor: not-allowed; }
+        #log {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            margin-top: 20px;
+        }
+        #results {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th { background: #e0e0e0; }
+        .config-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #fafafa;
+            border-radius: 5px;
+        }
+        label { display: block; margin: 10px 0 5px; font-weight: bold; }
+        select, input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebGPU LLM Inference Benchmark</h1>
+        <p>End-to-end browser LLM inference benchmark for TMLR paper validation.</p>
+
+        <div id="webgpu-status" class="status info">Checking WebGPU support...</div>
+
+        <div class="config-section">
+            <h3>Configuration</h3>
+            <label for="model-select">Model:</label>
+            <select id="model-select">
+                <option value="Qwen/Qwen2.5-0.5B-Instruct">Qwen2.5-0.5B-Instruct (494M params)</option>
+                <option value="Qwen/Qwen2.5-1.5B-Instruct">Qwen2.5-1.5B-Instruct (1.5B params)</option>
+                <option value="TinyLlama/TinyLlama-1.1B-Chat-v1.0">TinyLlama-1.1B (1.1B params)</option>
+                <option value="microsoft/phi-2">Phi-2 (2.7B params)</option>
+            </select>
+
+            <label for="num-tokens">Tokens to generate:</label>
+            <input type="number" id="num-tokens" value="50" min="10" max="200">
+
+            <label for="num-runs">Number of runs:</label>
+            <input type="number" id="num-runs" value="10" min="3" max="30">
+
+            <label for="warmup-runs">Warmup runs:</label>
+            <input type="number" id="warmup-runs" value="3" min="1" max="10">
+        </div>
+
+        <div>
+            <button id="run-benchmark" onclick="runBenchmark()">Run Benchmark</button>
+            <button id="download-results" onclick="downloadResults()" disabled>Download Results (JSON)</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <div id="log"></div>
+
+        <div id="results" style="display: none;">
+            <h3>Results Summary</h3>
+            <table id="results-table">
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Load Transformers.js -->
+    <script type="module">
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1';
+
+        // Make available globally
+        window.transformersPipeline = pipeline;
+        window.transformersEnv = env;
+
+        // Check WebGPU support
+        async function checkWebGPU() {
+            const statusEl = document.getElementById('webgpu-status');
+
+            if (!navigator.gpu) {
+                statusEl.className = 'status error';
+                statusEl.textContent = 'WebGPU is NOT supported in this browser. Please use Chrome 113+ or Safari 17+.';
+                document.getElementById('run-benchmark').disabled = true;
+                return false;
+            }
+
+            try {
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = 'WebGPU adapter not available.';
+                    document.getElementById('run-benchmark').disabled = true;
+                    return false;
+                }
+
+                const info = adapter.info;
+
+                statusEl.className = 'status success';
+                statusEl.innerHTML = `WebGPU supported!<br>
+                    <strong>Vendor:</strong> ${info.vendor || 'Unknown'}<br>
+                    <strong>Architecture:</strong> ${info.architecture || 'Unknown'}<br>
+                    <strong>Device:</strong> ${info.device || 'Unknown'}<br>
+                    <strong>Description:</strong> ${info.description || 'Unknown'}`;
+
+                window.gpuInfo = info;
+                return true;
+            } catch (e) {
+                statusEl.className = 'status error';
+                statusEl.textContent = `WebGPU error: ${e.message}`;
+                document.getElementById('run-benchmark').disabled = true;
+                return false;
+            }
+        }
+
+        window.checkWebGPU = checkWebGPU;
+        checkWebGPU();
+    </script>
+
+    <script>
+        let benchmarkResults = null;
+
+        function log(message, type = 'info') {
+            const logEl = document.getElementById('log');
+            const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+            const prefix = type === 'error' ? '[ERROR]' : type === 'warn' ? '[WARN]' : '[INFO]';
+            logEl.textContent += `${timestamp} ${prefix} ${message}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').textContent = '';
+        }
+
+        function calculateStats(times) {
+            const n = times.length;
+            const mean = times.reduce((a, b) => a + b, 0) / n;
+            const variance = times.reduce((sum, t) => sum + Math.pow(t - mean, 2), 0) / (n - 1);
+            const std = Math.sqrt(variance);
+            const sem = std / Math.sqrt(n);
+            const t_critical = 2.262; // t-value for 95% CI with df=9 (for n=10)
+            const ci95_lower = mean - t_critical * sem;
+            const ci95_upper = mean + t_critical * sem;
+            const cv = (std / mean) * 100;
+
+            return { mean, std, sem, ci95_lower, ci95_upper, cv, n };
+        }
+
+        async function runBenchmark() {
+            const button = document.getElementById('run-benchmark');
+            button.disabled = true;
+
+            const modelId = document.getElementById('model-select').value;
+            const numTokens = parseInt(document.getElementById('num-tokens').value);
+            const numRuns = parseInt(document.getElementById('num-runs').value);
+            const warmupRuns = parseInt(document.getElementById('warmup-runs').value);
+
+            log(`Starting benchmark...`);
+            log(`Model: ${modelId}`);
+            log(`Tokens to generate: ${numTokens}`);
+            log(`Runs: ${numRuns} (+ ${warmupRuns} warmup)`);
+
+            try {
+                // Configure for WebGPU
+                window.transformersEnv.backends.onnx.wasm.numThreads = 1;
+
+                log('Loading model (this may take a while on first run)...');
+                const startLoad = performance.now();
+
+                const generator = await window.transformersPipeline(
+                    'text-generation',
+                    modelId,
+                    {
+                        device: 'webgpu',
+                        dtype: 'fp16'
+                    }
+                );
+
+                const loadTime = (performance.now() - startLoad) / 1000;
+                log(`Model loaded in ${loadTime.toFixed(2)}s`);
+
+                const prompt = "The capital of France is";
+                const promptTokens = prompt.split(' ').length; // Approximate
+
+                // Warmup runs
+                log(`Running ${warmupRuns} warmup runs...`);
+                for (let i = 0; i < warmupRuns; i++) {
+                    await generator(prompt, {
+                        max_new_tokens: numTokens,
+                        do_sample: false,
+                        temperature: 1.0,
+                        top_p: 1.0
+                    });
+                    log(`  Warmup ${i + 1}/${warmupRuns} complete`);
+                }
+
+                // Timed runs
+                log(`Running ${numRuns} timed runs...`);
+                const runTimes = [];
+                const tokensPerSecond = [];
+                const ttftTimes = [];
+
+                for (let i = 0; i < numRuns; i++) {
+                    const startTime = performance.now();
+                    let firstTokenTime = null;
+
+                    const result = await generator(prompt, {
+                        max_new_tokens: numTokens,
+                        do_sample: false,
+                        temperature: 1.0,
+                        top_p: 1.0,
+                        callback_function: (output) => {
+                            if (firstTokenTime === null && output.generated_token_ids && output.generated_token_ids.length > 0) {
+                                firstTokenTime = performance.now() - startTime;
+                            }
+                        }
+                    });
+
+                    const endTime = performance.now();
+                    const totalTime = (endTime - startTime) / 1000; // seconds
+                    const tps = numTokens / totalTime;
+
+                    runTimes.push(totalTime);
+                    tokensPerSecond.push(tps);
+                    if (firstTokenTime !== null) {
+                        ttftTimes.push(firstTokenTime);
+                    }
+
+                    log(`  Run ${i + 1}/${numRuns}: ${tps.toFixed(2)} tok/s, total ${totalTime.toFixed(2)}s`);
+                }
+
+                // Calculate statistics
+                const tpsStats = calculateStats(tokensPerSecond);
+                const timeStats = calculateStats(runTimes);
+                const ttftStats = ttftTimes.length > 0 ? calculateStats(ttftTimes) : null;
+
+                benchmarkResults = {
+                    timestamp: new Date().toISOString(),
+                    browser: navigator.userAgent,
+                    gpu: window.gpuInfo || {},
+                    config: {
+                        model: modelId,
+                        num_tokens: numTokens,
+                        num_runs: numRuns,
+                        warmup_runs: warmupRuns,
+                        prompt: prompt
+                    },
+                    results: {
+                        tokens_per_second: {
+                            mean: tpsStats.mean,
+                            std: tpsStats.std,
+                            ci95: [tpsStats.ci95_lower, tpsStats.ci95_upper],
+                            cv_percent: tpsStats.cv,
+                            all_values: tokensPerSecond
+                        },
+                        total_time_seconds: {
+                            mean: timeStats.mean,
+                            std: timeStats.std,
+                            ci95: [timeStats.ci95_lower, timeStats.ci95_upper],
+                            all_values: runTimes
+                        },
+                        time_to_first_token_ms: ttftStats ? {
+                            mean: ttftStats.mean,
+                            std: ttftStats.std,
+                            ci95: [ttftStats.ci95_lower, ttftStats.ci95_upper],
+                            all_values: ttftTimes
+                        } : null,
+                        model_load_time_seconds: loadTime
+                    }
+                };
+
+                // Display results
+                displayResults(benchmarkResults);
+
+                log('');
+                log('=== RESULTS ===');
+                log(`Tokens/sec: ${tpsStats.mean.toFixed(2)} +/- ${tpsStats.std.toFixed(2)}`);
+                log(`95% CI: [${tpsStats.ci95_lower.toFixed(2)}, ${tpsStats.ci95_upper.toFixed(2)}]`);
+                log(`CV: ${tpsStats.cv.toFixed(1)}%`);
+                if (ttftStats) {
+                    log(`TTFT: ${ttftStats.mean.toFixed(1)} +/- ${ttftStats.std.toFixed(1)} ms`);
+                }
+                log('===============');
+
+                document.getElementById('download-results').disabled = false;
+
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                console.error(error);
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        function displayResults(results) {
+            const tbody = document.querySelector('#results-table tbody');
+            tbody.innerHTML = '';
+
+            const rows = [
+                ['Model', results.config.model],
+                ['Tokens Generated', results.config.num_tokens],
+                ['Runs', results.config.num_runs],
+                ['Tokens/sec (mean)', results.results.tokens_per_second.mean.toFixed(2)],
+                ['Tokens/sec (std)', results.results.tokens_per_second.std.toFixed(2)],
+                ['Tokens/sec (95% CI)', `[${results.results.tokens_per_second.ci95[0].toFixed(2)}, ${results.results.tokens_per_second.ci95[1].toFixed(2)}]`],
+                ['CV', `${results.results.tokens_per_second.cv_percent.toFixed(1)}%`],
+                ['Model Load Time', `${results.results.model_load_time_seconds.toFixed(2)}s`]
+            ];
+
+            if (results.results.time_to_first_token_ms) {
+                rows.push(['TTFT (mean)', `${results.results.time_to_first_token_ms.mean.toFixed(1)} ms`]);
+            }
+
+            rows.forEach(([metric, value]) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${metric}</td><td>${value}</td>`;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('results').style.display = 'block';
+        }
+
+        function downloadResults() {
+            if (!benchmarkResults) return;
+
+            const blob = new Blob([JSON.stringify(benchmarkResults, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `browser_inference_${benchmarkResults.config.model.replace('/', '_')}_${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
