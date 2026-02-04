@@ -1,0 +1,38 @@
+{
+  "system_info": {
+    "platform": "macOS-26.2-arm64-arm-64bit",
+    "gpu": "",
+    "backend": "Metal"
+  },
+  "hidden_dim": 896,
+  "intermediate_dim": 4864,
+  "experiments": {
+    "unfused": {
+      "name": "unfused_mlp",
+      "dispatches": 7,
+      "mean_ms": 5.740715834544972,
+      "std_ms": 1.7224638388672935,
+      "n_iterations": 100
+    },
+    "tiled": {
+      "name": "tiled_mlp",
+      "dispatches": 3,
+      "mean_ms": 2.851992107462138,
+      "std_ms": 0.5587298064458592,
+      "n_iterations": 100
+    },
+    "mega_kernel": {
+      "name": "mega_kernel_mlp",
+      "dispatches": 1,
+      "intermediate_dim": 256,
+      "note": "Reduced intermediate_dim to fit in workgroup memory",
+      "mean_ms": 1.4762870885897428,
+      "std_ms": 0.38442200448936337,
+      "n_iterations": 100
+    }
+  },
+  "analysis": {
+    "tiled_speedup_vs_unfused": 2.0128792851581143,
+    "mega_slowdown_vs_tiled": 0.517633651484199
+  }
+}

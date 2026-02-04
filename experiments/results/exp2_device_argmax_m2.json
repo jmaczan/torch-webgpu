@@ -1,0 +1,78 @@
+{
+  "system_info": {
+    "platform": "macOS-26.2-arm64-arm-64bit",
+    "processor": "arm",
+    "gpu": "",
+    "backend": "Metal"
+  },
+  "vocab_size": 151936,
+  "experiments": {
+    "full_readback": {
+      "name": "full_readback",
+      "buffer_size_kb": 593.5,
+      "mean_ms": 1.5890025452245027,
+      "std_ms": 0.32803432520823583,
+      "min_ms": 1.4132920186966658,
+      "max_ms": 2.822458976879716,
+      "n_iterations": 100
+    },
+    "device_argmax": {
+      "name": "device_argmax",
+      "buffer_size_bytes": 4,
+      "mean_ms": 1.6947083186823875,
+      "std_ms": 0.8165189282499993,
+      "min_ms": 1.3572919415310025,
+      "max_ms": 5.283583072014153,
+      "n_iterations": 100,
+      "correctness": true,
+      "expected_token": 77462,
+      "actual_token": 77462
+    },
+    "improvement_ms": -0.10570577345788479,
+    "improvement_pct": -6.652335062367702,
+    "buffer_map_unmap": [
+      {
+        "size_bytes": 4,
+        "size_kb": 0.00390625,
+        "mean_ms": 1.8011646473314613,
+        "std_ms": 0.6480623904659509
+      },
+      {
+        "size_bytes": 1024,
+        "size_kb": 1.0,
+        "mean_ms": 1.8252933269832283,
+        "std_ms": 0.3790322564209865
+      },
+      {
+        "size_bytes": 4096,
+        "size_kb": 4.0,
+        "mean_ms": 1.744753698585555,
+        "std_ms": 0.3292749079789836
+      },
+      {
+        "size_bytes": 16384,
+        "size_kb": 16.0,
+        "mean_ms": 1.759723707800731,
+        "std_ms": 0.3480276184266227
+      },
+      {
+        "size_bytes": 65536,
+        "size_kb": 64.0,
+        "mean_ms": 1.8283333396539092,
+        "std_ms": 0.3942103537240917
+      },
+      {
+        "size_bytes": 262144,
+        "size_kb": 256.0,
+        "mean_ms": 1.7832491779699922,
+        "std_ms": 0.3223882582058956
+      },
+      {
+        "size_bytes": 614400,
+        "size_kb": 600.0,
+        "mean_ms": 1.9171879743225873,
+        "std_ms": 0.46070204024346406
+      }
+    ]
+  }
+}
