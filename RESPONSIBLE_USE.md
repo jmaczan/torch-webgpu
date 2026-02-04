@@ -61,6 +61,25 @@ When using torch-webgpu for research:
 - Follow institutional review board guidelines where applicable
 - Make reproducibility artifacts available
 
+## Limitations of These Guidelines
+
+We acknowledge that documentation-based guidance has inherent limitations:
+
+- **Voluntary compliance**: These guidelines rely on good-faith adoption by deployers
+- **No enforcement mechanism**: Client-side inference cannot be remotely monitored or disabled
+- **Open-source modification**: Code can be forked and modified to remove safeguards
+
+These guidelines are intended for responsible developers. Preventing adversarial misuse requires ecosystem-level solutions (browser-level compute limits, model-level safety training) beyond what individual repositories can provide.
+
+## Complementary Measures
+
+For comprehensive risk mitigation, combine these guidelines with:
+
+1. **Model selection**: Choose models with built-in safety training
+2. **Deployment monitoring**: Even for client-side inference, monitor API patterns for abuse
+3. **Browser cooperation**: Support browser vendor efforts to add ML-specific resource controls
+4. **Community engagement**: Participate in responsible AI communities and disclosure networks
+
 ## Contact
 
 For questions about responsible use, open an issue on the GitHub repository.

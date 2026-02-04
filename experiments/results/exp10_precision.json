@@ -1,0 +1,81 @@
+{
+  "experiments": {
+    "rmsnorm": {
+      "operation": "RMSNorm",
+      "hidden_dim": 896,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "max_rel_diff": 0.0,
+      "mean_rel_diff": 0.0,
+      "cpu_output_sample": [
+        -0.08457579463720322,
+        -0.020667921751737595,
+        0.7961829304695129,
+        -1.2676877975463867,
+        -0.08795452117919922
+      ],
+      "webgpu_output_sample": [
+        -0.08457579463720322,
+        -0.020667921751737595,
+        0.7961829304695129,
+        -1.2676877975463867,
+        -0.08795452117919922
+      ],
+      "match_within_1e-5": true,
+      "match_within_1e-4": true,
+      "match_within_1e-3": true
+    },
+    "matmul": {
+      "operation": "MatMul",
+      "dimensions": "256x896 @ 896x256",
+      "max_abs_diff": 0.00016021728515625,
+      "mean_abs_diff": 1.1417758287279867e-05,
+      "max_rel_diff": 0.015375101938843727,
+      "mean_rel_diff": 2.3124941890273476e-06,
+      "cpu_output_sample": [
+        -9.550766944885254,
+        -46.397544860839844,
+        20.698753356933594,
+        -51.31132507324219,
+        -33.1152458190918
+      ],
+      "webgpu_output_sample": [
+        -9.550766944885254,
+        -46.39754104614258,
+        20.698741912841797,
+        -51.311302185058594,
+        -33.1152229309082
+      ],
+      "match_within_1e-5": false,
+      "match_within_1e-4": true,
+      "match_within_1e-3": true
+    },
+    "softmax": {
+      "operation": "Softmax",
+      "vocab_size": 1024,
+      "max_abs_diff": 5.960464477539063e-08,
+      "mean_abs_diff": 5.830830263064968e-11,
+      "max_rel_diff": 8.890272624739737e-07,
+      "mean_rel_diff": 3.237316192894468e-08,
+      "cpu_probability_sum": 1.0000001192092896,
+      "webgpu_probability_sum": 1.0,
+      "cpu_output_sample": [
+        2.6595055774595797e-15,
+        4.646483190995639e-18,
+        1.2035815561155152e-14,
+        7.621374364941147e-11,
+        1.7810832269976478e-18
+      ],
+      "webgpu_output_sample": [
+        2.659505365701343e-15,
+        4.646489808440539e-18,
+        1.2035818102253994e-14,
+        7.621377834388099e-11,
+        1.781085294949179e-18
+      ],
+      "match_within_1e-5": true,
+      "match_within_1e-4": true,
+      "match_within_1e-3": true
+    }
+  }
+}

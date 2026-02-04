@@ -1,0 +1,37 @@
+{
+  "gpu_info": {
+    "name": "NVIDIA GeForce RTX 5090",
+    "power_limit_w": 575.0,
+    "memory_mb": 32607
+  },
+  "experiments": {
+    "idle": {
+      "n_samples": 71,
+      "duration_s": 4.95926055801101,
+      "mean_power_w": 18.415070422535223,
+      "max_power_w": 19.95,
+      "min_power_w": 17.18,
+      "std_power_w": 0.9813455454363201
+    },
+    "cuda": {
+      "backend": "CUDA",
+      "tokens_per_second": 133.27085027416615,
+      "total_tokens": 250,
+      "total_time_s": 1.8758790799765848,
+      "mean_power_w": 133.40653858919796,
+      "joules_per_token": 1.0010181394862616,
+      "n_runs": 5
+    },
+    "webgpu": {
+      "backend": "WebGPU",
+      "dispatches_per_forward": 200,
+      "forward_passes_per_second": 122.58050146320203,
+      "total_forward_passes": 250,
+      "total_time_s": 2.0394760750350542,
+      "mean_power_w": 122.9974724654011,
+      "joules_per_forward": 1.0034016095318736,
+      "n_runs": 5,
+      "n_iterations": 50
+    }
+  }
+}

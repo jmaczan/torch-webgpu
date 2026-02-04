@@ -789,6 +789,9 @@ def main():
     parser = argparse.ArgumentParser(description="Cross-GPU WebGPU benchmark")
     parser.add_argument("--output", type=str, default="results/exp1_webgpu.json", help="Output JSON file")
     parser.add_argument("--iterations", type=int, default=100, help="Benchmark iterations")
+    parser.add_argument("--power-preference", type=str, default="high-performance",
+                        choices=["high-performance", "low-power"],
+                        help="GPU power preference (high-performance for discrete, low-power for integrated)")
     args = parser.parse_args()
 
     if not WGPU_AVAILABLE:
@@ -799,14 +802,29 @@ def main():
     print("Experiment 1: Cross-GPU WebGPU Validation")
     print("=" * 60)
 
+    # Request specific adapter
+    adapter = wgpu.gpu.request_adapter_sync(power_preference=args.power_preference)
+    if not adapter:
+        print(f"ERROR: No adapter found for power_preference={args.power_preference}")
+        return
+
+    adapter_info = adapter.info
+    print(f"\nSelected GPU: {adapter_info.get('device', 'unknown')}")
+    print(f"Vendor: {adapter_info.get('vendor', 'unknown')}")
+    print(f"Backend: {adapter_info.get('backend_type', 'unknown')}")
+    print(f"Adapter type: {adapter_info.get('adapter_type', 'unknown')}")
+
     # Get system info
     system_info = get_system_info()
-    print(f"\nSystem: {system_info.get('platform', 'unknown')}")
-    print(f"GPU: {system_info.get('gpu_description', 'unknown')}")
-    print(f"Backend: {system_info.get('wgpu_backend', 'unknown')}")
+    # Override with selected adapter info
+    system_info["gpu_vendor"] = adapter_info.get("vendor", "unknown")
+    system_info["gpu_device"] = adapter_info.get("device", "unknown")
+    system_info["gpu_description"] = adapter_info.get("description", "unknown")
+    system_info["wgpu_backend"] = adapter_info.get("backend_type", "unknown")
+    system_info["adapter_type"] = adapter_info.get("adapter_type", "unknown")
+    system_info["power_preference"] = args.power_preference
 
     # Request device
-    adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
     device = adapter.request_device_sync()
     queue = device.queue
 

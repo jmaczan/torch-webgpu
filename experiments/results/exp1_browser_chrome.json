@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-02-04T12:01:52.880Z",
+  "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/144.0.0.0 Safari/537.36",
+  "adapter_info": {},
+  "experiments": {
+    "dispatch_overhead_single_op": {
+      "name": "dispatch_overhead_single_op",
+      "mean_us": 2067.800000011921,
+      "std_us": 242.36988285021013,
+      "min_us": 99.99999403953552,
+      "max_us": 2299.9999821186066,
+      "iterations": 500,
+      "note": "Includes sync overhead (await onSubmittedWorkDone per op)"
+    },
+    "sequential_dispatches": {
+      "name": "sequential_dispatches",
+      "n_dispatches": 100,
+      "mean_total_ms": 2.0399999996026357,
+      "std_total_ms": 0.9112628590060683,
+      "per_dispatch_us": 20.399999996026356,
+      "iterations": 30,
+      "note": "TRUE dispatch overhead (sync only at end)"
+    },
+    "rmsnorm_unfused": {
+      "name": "rmsnorm_unfused",
+      "dispatches": 5,
+      "mean_ms": 2.104000000357628,
+      "std_ms": 0.0445421156734241,
+      "iterations": 50
+    },
+    "rmsnorm_fused": {
+      "name": "rmsnorm_fused",
+      "dispatches": 1,
+      "mean_ms": 2.104000000357628,
+      "std_ms": 0.06311893778481423,
+      "iterations": 50
+    },
+    "rmsnorm_fusion_speedup": 1
+  }
+}

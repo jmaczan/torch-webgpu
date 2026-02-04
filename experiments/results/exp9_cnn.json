@@ -1,0 +1,53 @@
+{
+  "system_info": {
+    "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "gpu_vendor": "NVIDIA",
+    "gpu_device": "NVIDIA GeForce RTX 5090",
+    "wgpu_backend": "Vulkan"
+  },
+  "experiments": {
+    "ResNet50-early (64ch, 56x56)": {
+      "n_layers": 50,
+      "channels": 64,
+      "spatial_size": 56,
+      "unfused_dispatches": 100,
+      "fused_dispatches": 50,
+      "unfused_mean_ms": 5.469468017690815,
+      "unfused_std_ms": 0.3967163509866496,
+      "fused_mean_ms": 2.8385787806473672,
+      "fused_std_ms": 0.33031758817342366,
+      "fusion_speedup": 1.926833264230717,
+      "per_dispatch_overhead_us": 52.617784740868956,
+      "n_iterations": 50
+    },
+    "ResNet50-mid (256ch, 14x14)": {
+      "n_layers": 50,
+      "channels": 256,
+      "spatial_size": 14,
+      "unfused_dispatches": 100,
+      "fused_dispatches": 50,
+      "unfused_mean_ms": 5.235363677493297,
+      "unfused_std_ms": 0.6803597529558564,
+      "fused_mean_ms": 2.326497742324136,
+      "fused_std_ms": 0.4717603354229435,
+      "fusion_speedup": 2.2503196896564566,
+      "per_dispatch_overhead_us": 58.17731870338321,
+      "n_iterations": 50
+    },
+    "ResNet50-late (512ch, 7x7)": {
+      "n_layers": 50,
+      "channels": 512,
+      "spatial_size": 7,
+      "unfused_dispatches": 100,
+      "fused_dispatches": 50,
+      "unfused_mean_ms": 4.039521740633063,
+      "unfused_std_ms": 0.40294114990551366,
+      "fused_mean_ms": 2.1325037407223135,
+      "fused_std_ms": 0.32294978468300606,
+      "fusion_speedup": 1.8942624406674249,
+      "per_dispatch_overhead_us": 38.14035999821499,
+      "n_iterations": 50
+    }
+  }
+}

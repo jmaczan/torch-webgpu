@@ -1,0 +1,34 @@
+{
+  "system_info": {
+    "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "gpu_vendor": "NVIDIA",
+    "gpu_device": "NVIDIA GeForce RTX 5090",
+    "wgpu_backend": "Vulkan"
+  },
+  "experiments": {
+    "single_layer": {
+      "hidden_dim": 768,
+      "n_heads": 12,
+      "patch_count": 197,
+      "dispatches_per_layer": 14,
+      "unfused_mean_ms": 2.1828132594237104,
+      "unfused_std_ms": 0.11178476549556204,
+      "per_dispatch_us": 155.91523281597932,
+      "n_iterations": 50
+    },
+    "vit_base": {
+      "model": "ViT-Base",
+      "n_layers": 12,
+      "hidden_dim": 768,
+      "n_heads": 12,
+      "patch_count": 197,
+      "total_dispatches": 168,
+      "mean_ms": 6.504693697206676,
+      "std_ms": 0.37271717163780954,
+      "images_per_second": 153.73514058462615,
+      "per_dispatch_us": 38.71841486432545,
+      "n_iterations": 20
+    }
+  }
+}

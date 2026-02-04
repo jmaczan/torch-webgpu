@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebGPU Browser Benchmark</title>
+    <style>
+        body { font-family: monospace; padding: 20px; max-width: 900px; margin: 0 auto; }
+        pre { background: #f0f0f0; padding: 15px; overflow-x: auto; }
+        button { padding: 10px 20px; font-size: 16px; margin: 5px; cursor: pointer; }
+        .result { margin: 10px 0; padding: 10px; border: 1px solid #ddd; }
+        .error { background: #ffe0e0; }
+        .success { background: #e0ffe0; }
+        h2 { margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <h1>WebGPU Browser Benchmark</h1>
+    <p>This benchmark measures WebGPU dispatch overhead in the browser to compare with native (wgpu, Dawn) implementations.</p>
+
+    <div id="status">Checking WebGPU support...</div>
+
+    <div id="adapter-info"></div>
+
+    <button id="runBtn" onclick="runAllBenchmarks()" disabled>Run All Benchmarks</button>
+    <button onclick="downloadResults()">Download Results JSON</button>
+
+    <h2>Results</h2>
+    <pre id="results">Results will appear here after running benchmarks...</pre>
+
+    <h2>Comparison with Native</h2>
+    <pre id="comparison"></pre>
+
+    <script>
+        let allResults = null;
+        let device = null;
+        let queue = null;
+        let adapterInfo = null;
+
+        // Native results for comparison (from our experiments)
+        const nativeResults = {
+            'wgpu/Vulkan (NVIDIA RTX 5090)': { dispatchOverhead: 26.8, fusionSpeedup: 1.88 },
+            'wgpu/Vulkan (AMD iGPU)': { dispatchOverhead: 24.5, fusionSpeedup: 1.67 },
+            'wgpu/Metal (Apple M2)': { dispatchOverhead: 71.1, fusionSpeedup: 0.95 },
+            'Dawn (NVIDIA RTX 5090)': { dispatchOverhead: 23.8, fusionSpeedup: 1.41 }
+        };
+
+        async function init() {
+            const statusEl = document.getElementById('status');
+            const adapterInfoEl = document.getElementById('adapter-info');
+            const runBtn = document.getElementById('runBtn');
+
+            if (!navigator.gpu) {
+                statusEl.innerHTML = '<span class="error">WebGPU not supported in this browser!</span>';
+                return;
+            }
+
+            try {
+                const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+                if (!adapter) {
+                    statusEl.innerHTML = '<span class="error">No WebGPU adapter found!</span>';
+                    return;
+                }
+
+                // Get adapter info - API varies between browser versions
+                try {
+                    // Try new API first (requestAdapterInfo is async in some versions)
+                    if (typeof adapter.requestAdapterInfo === 'function') {
+                        adapterInfo = await adapter.requestAdapterInfo();
+                    } else if (adapter.info) {
+                        // Older API - info is a property
+                        adapterInfo = adapter.info;
+                    } else {
+                        adapterInfo = { vendor: 'unknown', device: 'unknown', description: 'unknown' };
+                    }
+                } catch (e) {
+                    // Fallback if requestAdapterInfo fails
+                    adapterInfo = adapter.info || { vendor: 'unknown', device: 'unknown', description: 'unknown' };
+                }
+
+                device = await adapter.requestDevice();
+                queue = device.queue;
+
+                const info = `
+<div class="result success">
+<strong>WebGPU Adapter Info:</strong>
+  Vendor: ${adapterInfo.vendor || 'unknown'}
+  Architecture: ${adapterInfo.architecture || 'unknown'}
+  Device: ${adapterInfo.device || 'unknown'}
+  Description: ${adapterInfo.description || 'unknown'}
+  Browser: ${navigator.userAgent.split(' ').slice(-2).join(' ')}
+</div>`;
+                adapterInfoEl.innerHTML = info;
+                statusEl.innerHTML = '<span class="success">WebGPU ready!</span>';
+                runBtn.disabled = false;
+
+            } catch (e) {
+                statusEl.innerHTML = `<span class="error">WebGPU init error: ${e.message}</span>`;
+            }
+        }
+
+        async function measureDispatchOverhead(iterations = 1000) {
+            const shaderCode = `
+                @group(0) @binding(0) var<storage, read_write> data: array<f32>;
+                @compute @workgroup_size(64)
+                fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+                    data[gid.x] = data[gid.x] + 1.0;
+                }
+            `;
+
+            const shaderModule = device.createShaderModule({ code: shaderCode });
+            const pipeline = device.createComputePipeline({
+                layout: 'auto',
+                compute: { module: shaderModule, entryPoint: 'main' }
+            });
+
+            const buffer = device.createBuffer({
+                size: 256 * 4,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [{ binding: 0, resource: { buffer } }]
+            });
+
+            // Warmup
+            for (let i = 0; i < 10; i++) {
+                const encoder = device.createCommandEncoder();
+                const pass = encoder.beginComputePass();
+                pass.setPipeline(pipeline);
+                pass.setBindGroup(0, bindGroup);
+                pass.dispatchWorkgroups(4);
+                pass.end();
+                queue.submit([encoder.finish()]);
+            }
+            await queue.onSubmittedWorkDone();
+
+            // Measure single-op dispatch times
+            const times = [];
+            for (let i = 0; i < iterations; i++) {
+                const start = performance.now();
+
+                const encoder = device.createCommandEncoder();
+                const pass = encoder.beginComputePass();
+                pass.setPipeline(pipeline);
+                pass.setBindGroup(0, bindGroup);
+                pass.dispatchWorkgroups(4);
+                pass.end();
+                queue.submit([encoder.finish()]);
+                await queue.onSubmittedWorkDone();
+
+                const end = performance.now();
+                times.push((end - start) * 1000); // Convert to microseconds
+            }
+
+            buffer.destroy();
+
+            return {
+                name: 'dispatch_overhead_single_op',
+                mean_us: times.reduce((a, b) => a + b) / times.length,
+                std_us: Math.sqrt(times.map(t => Math.pow(t - times.reduce((a,b) => a+b)/times.length, 2)).reduce((a,b) => a+b) / times.length),
+                min_us: Math.min(...times),
+                max_us: Math.max(...times),
+                iterations: iterations,
+                note: 'Includes sync overhead (await onSubmittedWorkDone per op)'
+            };
+        }
+
+        async function measureSequentialDispatches(nDispatches = 100, iterations = 50) {
+            const shaderCode = `
+                @group(0) @binding(0) var<storage, read_write> data: array<f32>;
+                @compute @workgroup_size(64)
+                fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+                    let idx = gid.x;
+                    if (idx < arrayLength(&data)) {
+                        data[idx] = data[idx] + 1.0;
+                    }
+                }
+            `;
+
+            const shaderModule = device.createShaderModule({ code: shaderCode });
+            const pipeline = device.createComputePipeline({
+                layout: 'auto',
+                compute: { module: shaderModule, entryPoint: 'main' }
+            });
+
+            const buffer = device.createBuffer({
+                size: 256 * 4,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [{ binding: 0, resource: { buffer } }]
+            });
+
+            // Warmup
+            for (let w = 0; w < 5; w++) {
+                for (let i = 0; i < nDispatches; i++) {
+                    const encoder = device.createCommandEncoder();
+                    const pass = encoder.beginComputePass();
+                    pass.setPipeline(pipeline);
+                    pass.setBindGroup(0, bindGroup);
+                    pass.dispatchWorkgroups(4);
+                    pass.end();
+                    queue.submit([encoder.finish()]);
+                }
+                await queue.onSubmittedWorkDone();
+            }
+
+            // Measure
+            const times = [];
+            for (let iter = 0; iter < iterations; iter++) {
+                await queue.onSubmittedWorkDone();
+
+                const start = performance.now();
+                for (let i = 0; i < nDispatches; i++) {
+                    const encoder = device.createCommandEncoder();
+                    const pass = encoder.beginComputePass();
+                    pass.setPipeline(pipeline);
+                    pass.setBindGroup(0, bindGroup);
+                    pass.dispatchWorkgroups(4);
+                    pass.end();
+                    queue.submit([encoder.finish()]);
+                }
+                await queue.onSubmittedWorkDone();
+                const end = performance.now();
+
+                times.push(end - start);
+            }
+
+            buffer.destroy();
+
+            const meanMs = times.reduce((a, b) => a + b) / times.length;
+            const perDispatchUs = (meanMs * 1000) / nDispatches;
+
+            return {
+                name: 'sequential_dispatches',
+                n_dispatches: nDispatches,
+                mean_total_ms: meanMs,
+                std_total_ms: Math.sqrt(times.map(t => Math.pow(t - meanMs, 2)).reduce((a,b) => a+b) / times.length),
+                per_dispatch_us: perDispatchUs,
+                iterations: iterations,
+                note: 'TRUE dispatch overhead (sync only at end)'
+            };
+        }
+
+        async function benchmarkRMSNormUnfused(hiddenDim = 896, iterations = 100) {
+            // Create separate shaders for each step (simplified unfused approach)
+            const squareShader = `
+                @group(0) @binding(0) var<storage, read> input: array<f32>;
+                @group(0) @binding(1) var<storage, read_write> output: array<f32>;
+                @compute @workgroup_size(256)
+                fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+                    let idx = gid.x;
+                    if (idx < arrayLength(&input)) {
+                        output[idx] = input[idx] * input[idx];
+                    }
+                }
+            `;
+
+            const reduceShader = `
+                @group(0) @binding(0) var<storage, read> input: array<f32>;
+                @group(0) @binding(1) var<storage, read_write> output: array<f32>;
+                var<workgroup> wg_data: array<f32, 256>;
+                @compute @workgroup_size(256)
+                fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
+                    let idx = lid.x;
+                    wg_data[idx] = input[idx];
+                    workgroupBarrier();
+                    for (var s = 128u; s > 0u; s = s >> 1u) {
+                        if (idx < s) { wg_data[idx] += wg_data[idx + s]; }
+                        workgroupBarrier();
+                    }
+                    if (idx == 0u) { output[0] = wg_data[0]; }
+                }
+            `;
+
+            const rsqrtShader = `
+                @group(0) @binding(0) var<storage, read> input: array<f32>;
+                @group(0) @binding(1) var<storage, read_write> output: array<f32>;
+                @compute @workgroup_size(1)
+                fn main() {
+                    let mean = input[0] / 896.0;
+                    output[0] = 1.0 / sqrt(mean + 1e-6);
+                }
+            `;
+
+            const normalizeShader = `
+                @group(0) @binding(0) var<storage, read> input: array<f32>;
+                @group(0) @binding(1) var<storage, read> scale: array<f32>;
+                @group(0) @binding(2) var<storage, read_write> output: array<f32>;
+                @compute @workgroup_size(256)
+                fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+                    let idx = gid.x;
+                    if (idx < arrayLength(&input)) {
+                        output[idx] = input[idx] * scale[0];
+                    }
+                }
+            `;
+
+            const weightMulShader = `
+                @group(0) @binding(0) var<storage, read> input: array<f32>;
+                @group(0) @binding(1) var<storage, read> weight: array<f32>;
+                @group(0) @binding(2) var<storage, read_write> output: array<f32>;
+                @compute @workgroup_size(256)
+                fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+                    let idx = gid.x;
+                    if (idx < arrayLength(&input)) {
+                        output[idx] = input[idx] * weight[idx];
+                    }
+                }
+            `;
+
+            // Create pipelines
+            const pipelines = {
+                square: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: squareShader }), entryPoint: 'main' }}),
+                reduce: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: reduceShader }), entryPoint: 'main' }}),
+                rsqrt: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: rsqrtShader }), entryPoint: 'main' }}),
+                normalize: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: normalizeShader }), entryPoint: 'main' }}),
+                weightMul: device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: weightMulShader }), entryPoint: 'main' }})
+            };
+
+            // Create buffers
+            const bufferSize = hiddenDim * 4;
+            const inputBuf = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+            const squaredBuf = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE });
+            const sumBuf = device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE });
+            const rsqrtBuf = device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE });
+            const normalizedBuf = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE });
+            const weightBuf = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+            const outputBuf = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE });
+
+            // Create bind groups
+            const bgSquare = device.createBindGroup({ layout: pipelines.square.getBindGroupLayout(0), entries: [
+                { binding: 0, resource: { buffer: inputBuf }},
+                { binding: 1, resource: { buffer: squaredBuf }}
+            ]});
+            const bgReduce = device.createBindGroup({ layout: pipelines.reduce.getBindGroupLayout(0), entries: [
+                { binding: 0, resource: { buffer: squaredBuf }},
+                { binding: 1, resource: { buffer: sumBuf }}
+            ]});
+            const bgRsqrt = device.createBindGroup({ layout: pipelines.rsqrt.getBindGroupLayout(0), entries: [
+                { binding: 0, resource: { buffer: sumBuf }},
+                { binding: 1, resource: { buffer: rsqrtBuf }}
+            ]});
+            const bgNormalize = device.createBindGroup({ layout: pipelines.normalize.getBindGroupLayout(0), entries: [
+                { binding: 0, resource: { buffer: inputBuf }},
+                { binding: 1, resource: { buffer: rsqrtBuf }},
+                { binding: 2, resource: { buffer: normalizedBuf }}
+            ]});
+            const bgWeightMul = device.createBindGroup({ layout: pipelines.weightMul.getBindGroupLayout(0), entries: [
+                { binding: 0, resource: { buffer: normalizedBuf }},
+                { binding: 1, resource: { buffer: weightBuf }},
+                { binding: 2, resource: { buffer: outputBuf }}
+            ]});
+
+            // Warmup
+            for (let w = 0; w < 5; w++) {
+                const encoder = device.createCommandEncoder();
+                let pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.square);
+                pass.setBindGroup(0, bgSquare);
+                pass.dispatchWorkgroups(Math.ceil(hiddenDim / 256));
+                pass.end();
+
+                pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.reduce);
+                pass.setBindGroup(0, bgReduce);
+                pass.dispatchWorkgroups(1);
+                pass.end();
+
+                pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.rsqrt);
+                pass.setBindGroup(0, bgRsqrt);
+                pass.dispatchWorkgroups(1);
+                pass.end();
+
+                pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.normalize);
+                pass.setBindGroup(0, bgNormalize);
+                pass.dispatchWorkgroups(Math.ceil(hiddenDim / 256));
+                pass.end();
+
+                pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.weightMul);
+                pass.setBindGroup(0, bgWeightMul);
+                pass.dispatchWorkgroups(Math.ceil(hiddenDim / 256));
+                pass.end();
+
+                queue.submit([encoder.finish()]);
+            }
+            await queue.onSubmittedWorkDone();
+
+            // Timed runs
+            const times = [];
+            for (let i = 0; i < iterations; i++) {
+                const start = performance.now();
+
+                const encoder = device.createCommandEncoder();
+                let pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.square);
+                pass.setBindGroup(0, bgSquare);
+                pass.dispatchWorkgroups(Math.ceil(hiddenDim / 256));
+                pass.end();
+
+                pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.reduce);
+                pass.setBindGroup(0, bgReduce);
+                pass.dispatchWorkgroups(1);
+                pass.end();
+
+                pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.rsqrt);
+                pass.setBindGroup(0, bgRsqrt);
+                pass.dispatchWorkgroups(1);
+                pass.end();
+
+                pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.normalize);
+                pass.setBindGroup(0, bgNormalize);
+                pass.dispatchWorkgroups(Math.ceil(hiddenDim / 256));
+                pass.end();
+
+                pass = encoder.beginComputePass();
+                pass.setPipeline(pipelines.weightMul);
+                pass.setBindGroup(0, bgWeightMul);
+                pass.dispatchWorkgroups(Math.ceil(hiddenDim / 256));
+                pass.end();
+
+                queue.submit([encoder.finish()]);
+                await queue.onSubmittedWorkDone();
+
+                const end = performance.now();
+                times.push(end - start);
+            }
+
+            // Cleanup
+            [inputBuf, squaredBuf, sumBuf, rsqrtBuf, normalizedBuf, weightBuf, outputBuf].forEach(b => b.destroy());
+
+            const meanMs = times.reduce((a, b) => a + b) / times.length;
+            return {
+                name: 'rmsnorm_unfused',
+                dispatches: 5,
+                mean_ms: meanMs,
+                std_ms: Math.sqrt(times.map(t => Math.pow(t - meanMs, 2)).reduce((a,b) => a+b) / times.length),
+                iterations: iterations
+            };
+        }
+
+        async function benchmarkRMSNormFused(hiddenDim = 896, iterations = 100) {
+            const shaderCode = `
+                @group(0) @binding(0) var<storage, read> input: array<f32>;
+                @group(0) @binding(1) var<storage, read> weight: array<f32>;
+                @group(0) @binding(2) var<storage, read_write> output: array<f32>;
+                var<workgroup> wg_data: array<f32, 256>;
+
+                @compute @workgroup_size(256)
+                fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
+                    let idx = lid.x;
+                    let hidden_dim = 896u;
+
+                    var sum_sq: f32 = 0.0;
+                    for (var i = idx; i < hidden_dim; i += 256u) {
+                        let val = input[i];
+                        sum_sq += val * val;
+                    }
+
+                    wg_data[idx] = sum_sq;
+                    workgroupBarrier();
+
+                    for (var s = 128u; s > 0u; s = s >> 1u) {
+                        if (idx < s) { wg_data[idx] += wg_data[idx + s]; }
+                        workgroupBarrier();
+                    }
+
+                    let mean = wg_data[0] / f32(hidden_dim);
+                    let rsqrt_val = 1.0 / sqrt(mean + 1e-6);
+
+                    for (var i = idx; i < hidden_dim; i += 256u) {
+                        output[i] = input[i] * rsqrt_val * weight[i];
+                    }
+                }
+            `;
+
+            const pipeline = device.createComputePipeline({
+                layout: 'auto',
+                compute: { module: device.createShaderModule({ code: shaderCode }), entryPoint: 'main' }
+            });
+
+            const bufferSize = hiddenDim * 4;
+            const inputBuf = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+            const weightBuf = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+            const outputBuf = device.createBuffer({ size: bufferSize, usage: GPUBufferUsage.STORAGE });
+
+            const bindGroup = device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: { buffer: inputBuf }},
+                    { binding: 1, resource: { buffer: weightBuf }},
+                    { binding: 2, resource: { buffer: outputBuf }}
+                ]
+            });
+
+            // Warmup
+            for (let w = 0; w < 5; w++) {
+                const encoder = device.createCommandEncoder();
+                const pass = encoder.beginComputePass();
+                pass.setPipeline(pipeline);
+                pass.setBindGroup(0, bindGroup);
+                pass.dispatchWorkgroups(1);
+                pass.end();
+                queue.submit([encoder.finish()]);
+            }
+            await queue.onSubmittedWorkDone();
+
+            // Timed runs
+            const times = [];
+            for (let i = 0; i < iterations; i++) {
+                const start = performance.now();
+
+                const encoder = device.createCommandEncoder();
+                const pass = encoder.beginComputePass();
+                pass.setPipeline(pipeline);
+                pass.setBindGroup(0, bindGroup);
+                pass.dispatchWorkgroups(1);
+                pass.end();
+                queue.submit([encoder.finish()]);
+                await queue.onSubmittedWorkDone();
+
+                const end = performance.now();
+                times.push(end - start);
+            }
+
+            [inputBuf, weightBuf, outputBuf].forEach(b => b.destroy());
+
+            const meanMs = times.reduce((a, b) => a + b) / times.length;
+            return {
+                name: 'rmsnorm_fused',
+                dispatches: 1,
+                mean_ms: meanMs,
+                std_ms: Math.sqrt(times.map(t => Math.pow(t - meanMs, 2)).reduce((a,b) => a+b) / times.length),
+                iterations: iterations
+            };
+        }
+
+        async function runAllBenchmarks() {
+            const resultsEl = document.getElementById('results');
+            const comparisonEl = document.getElementById('comparison');
+            const runBtn = document.getElementById('runBtn');
+
+            runBtn.disabled = true;
+            resultsEl.textContent = 'Running benchmarks...';
+
+            try {
+                const results = {
+                    timestamp: new Date().toISOString(),
+                    browser: navigator.userAgent,
+                    adapter_info: adapterInfo,
+                    experiments: {}
+                };
+
+                // 1. Single-op dispatch overhead
+                resultsEl.textContent = 'Running: dispatch overhead (single op)...';
+                results.experiments.dispatch_overhead_single_op = await measureDispatchOverhead(500);
+
+                // 2. Sequential dispatches (true overhead)
+                resultsEl.textContent = 'Running: sequential dispatches (true overhead)...';
+                results.experiments.sequential_dispatches = await measureSequentialDispatches(100, 30);
+
+                // 3. RMSNorm unfused
+                resultsEl.textContent = 'Running: RMSNorm unfused (5 dispatches)...';
+                results.experiments.rmsnorm_unfused = await benchmarkRMSNormUnfused(896, 50);
+
+                // 4. RMSNorm fused
+                resultsEl.textContent = 'Running: RMSNorm fused (1 dispatch)...';
+                results.experiments.rmsnorm_fused = await benchmarkRMSNormFused(896, 50);
+
+                // Calculate derived metrics
+                const fusionSpeedup = results.experiments.rmsnorm_unfused.mean_ms / results.experiments.rmsnorm_fused.mean_ms;
+                results.experiments.rmsnorm_fusion_speedup = fusionSpeedup;
+
+                allResults = results;
+
+                // Display results
+                resultsEl.textContent = JSON.stringify(results, null, 2);
+
+                // Comparison with native
+                const browserOverhead = results.experiments.sequential_dispatches.per_dispatch_us;
+                let comparison = `Browser WebGPU Dispatch Overhead: ${browserOverhead.toFixed(1)} us\n\n`;
+                comparison += `Comparison with Native Implementations:\n`;
+                comparison += `-`.repeat(60) + '\n';
+
+                for (const [name, data] of Object.entries(nativeResults)) {
+                    const ratio = browserOverhead / data.dispatchOverhead;
+                    comparison += `${name.padEnd(35)} ${data.dispatchOverhead.toFixed(1)} us  (browser is ${ratio.toFixed(2)}x)\n`;
+                }
+
+                comparison += `-`.repeat(60) + '\n';
+                comparison += `\nRMSNorm Fusion Speedup:\n`;
+                comparison += `Browser: ${fusionSpeedup.toFixed(2)}x\n`;
+                for (const [name, data] of Object.entries(nativeResults)) {
+                    comparison += `${name.padEnd(35)} ${data.fusionSpeedup.toFixed(2)}x\n`;
+                }
+
+                comparisonEl.textContent = comparison;
+
+            } catch (e) {
+                resultsEl.textContent = `Error: ${e.message}\n${e.stack}`;
+            }
+
+            runBtn.disabled = false;
+        }
+
+        function downloadResults() {
+            if (!allResults) {
+                alert('Run benchmarks first!');
+                return;
+            }
+            const blob = new Blob([JSON.stringify(allResults, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `browser_webgpu_benchmark_${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Initialize on page load
+        init();
+    </script>
+</body>
+</html>

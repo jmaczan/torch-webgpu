@@ -1,0 +1,77 @@
+{
+  "system_info": {
+    "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "gpu_vendor": "NVIDIA",
+    "gpu_device": "NVIDIA GeForce RTX 5090",
+    "wgpu_backend": "Vulkan"
+  },
+  "experiments": {
+    "Qwen2.5-0.5B (baseline)": {
+      "config": {
+        "name": "Qwen2.5-0.5B (baseline)",
+        "hidden_dim": 896,
+        "intermediate_dim": 4864,
+        "n_layers": 24,
+        "parameters": "494M"
+      },
+      "n_layers": 24,
+      "hidden_dim": 896,
+      "dispatches_unfused": 528,
+      "dispatches_fused": 168,
+      "unfused_mean_ms": 24.416183499852195,
+      "unfused_std_ms": 3.226881416680892,
+      "fused_mean_ms": 8.04739600183287,
+      "fused_std_ms": 1.002540976414947,
+      "fusion_speedup": 3.0340477210629597,
+      "per_dispatch_overhead_unfused_us": 46.2427717800231,
+      "per_dispatch_overhead_fused_us": 47.90116667757661,
+      "dispatch_reduction_benefit_ms": 16.368787498019323,
+      "n_iterations": 30
+    },
+    "Qwen2.5-1.5B (target)": {
+      "config": {
+        "name": "Qwen2.5-1.5B (target)",
+        "hidden_dim": 1536,
+        "intermediate_dim": 8960,
+        "n_layers": 28,
+        "parameters": "1.54B"
+      },
+      "n_layers": 28,
+      "hidden_dim": 1536,
+      "dispatches_unfused": 616,
+      "dispatches_fused": 196,
+      "unfused_mean_ms": 25.24784156315339,
+      "unfused_std_ms": 2.663752399429875,
+      "fused_mean_ms": 9.14764343178831,
+      "fused_std_ms": 1.3807883081126735,
+      "fusion_speedup": 2.760037790215615,
+      "per_dispatch_overhead_unfused_us": 40.98675578433992,
+      "per_dispatch_overhead_fused_us": 46.67165016218526,
+      "dispatch_reduction_benefit_ms": 16.10019813136508,
+      "n_iterations": 30
+    },
+    "Hypothetical-3B": {
+      "config": {
+        "name": "Hypothetical-3B",
+        "hidden_dim": 2048,
+        "intermediate_dim": 10240,
+        "n_layers": 32,
+        "parameters": "~3B"
+      },
+      "n_layers": 32,
+      "hidden_dim": 2048,
+      "dispatches_unfused": 704,
+      "dispatches_fused": 224,
+      "unfused_mean_ms": 26.64773487097894,
+      "unfused_std_ms": 0.38076956049733895,
+      "fused_mean_ms": 9.408233631014204,
+      "fused_std_ms": 1.5759570561279204,
+      "fusion_speedup": 2.8323844747152953,
+      "per_dispatch_overhead_unfused_us": 37.85189612354963,
+      "per_dispatch_overhead_fused_us": 42.00104299559913,
+      "dispatch_reduction_benefit_ms": 17.23950123996474,
+      "n_iterations": 30
+    }
+  }
+}
