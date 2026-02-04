@@ -1,0 +1,50 @@
+{
+  "system_info": {
+    "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+    "cuda_device": "NVIDIA GeForce RTX 5090",
+    "cuda_version": "12.8",
+    "torch_version": "2.9.1+cu128",
+    "webgpu_device": "570.211.01"
+  },
+  "experiments": {
+    "cuda_launch": {
+      "name": "cuda_launch_overhead",
+      "mean_us": 7.358022478001658,
+      "std_us": 9.205708891805969,
+      "min_us": 5.419991794042289,
+      "max_us": 383.09099909383804,
+      "n_iterations": 10000
+    },
+    "webgpu_dispatch": {
+      "name": "webgpu_dispatch_overhead",
+      "mean_us": 21.412589863757603,
+      "std_us": 44.966281937338486,
+      "min_us": 16.821009921841323,
+      "max_us": 848.3679994242266,
+      "n_iterations": 1000
+    },
+    "cuda_unfused_rmsnorm": {
+      "name": "cuda_unfused_rmsnorm",
+      "operations": 5,
+      "mean_us": 21.277827938320115,
+      "std_us": 1.303557779317228,
+      "n_iterations": 500
+    },
+    "cuda_fused_rmsnorm": {
+      "name": "cuda_fused_rmsnorm",
+      "mean_us": 23.181839496828616,
+      "std_us": 24.27336696703403,
+      "n_iterations": 500
+    },
+    "cuda_compiled_rmsnorm": {
+      "name": "cuda_compiled_rmsnorm",
+      "mean_us": 20.917685731546953,
+      "std_us": 1.5140276322241832,
+      "n_iterations": 500
+    }
+  },
+  "analysis": {
+    "webgpu_vs_cuda_overhead_ratio": 2.9101011756589497,
+    "cuda_fusion_speedup": 0.9178662435839495
+  }
+}

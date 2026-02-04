@@ -1,0 +1,78 @@
+{
+  "system_info": {
+    "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "gpu": "570.211.01",
+    "backend": "Vulkan"
+  },
+  "vocab_size": 151936,
+  "experiments": {
+    "full_readback": {
+      "name": "full_readback",
+      "buffer_size_kb": 593.5,
+      "mean_ms": 0.42342319968156517,
+      "std_ms": 2.33588858251292,
+      "min_ms": 0.07550200098194182,
+      "max_ms": 16.77381800254807,
+      "n_iterations": 50
+    },
+    "device_argmax": {
+      "name": "device_argmax",
+      "buffer_size_bytes": 4,
+      "mean_ms": 0.12269881932297722,
+      "std_ms": 0.005085092681057491,
+      "min_ms": 0.11707001249305904,
+      "max_ms": 0.14168600318953395,
+      "n_iterations": 50,
+      "correctness": true,
+      "expected_token": 46317,
+      "actual_token": 46317
+    },
+    "improvement_ms": 0.30072438035858795,
+    "improvement_pct": 71.02217842214299,
+    "buffer_map_unmap": [
+      {
+        "size_bytes": 4,
+        "size_kb": 0.00390625,
+        "mean_ms": 0.08810075931251049,
+        "std_ms": 0.11362928866651054
+      },
+      {
+        "size_bytes": 1024,
+        "size_kb": 1.0,
+        "mean_ms": 0.06950857932679355,
+        "std_ms": 0.006362353273746871
+      },
+      {
+        "size_bytes": 4096,
+        "size_kb": 4.0,
+        "mean_ms": 0.11077627947088331,
+        "std_ms": 0.12949762774574597
+      },
+      {
+        "size_bytes": 16384,
+        "size_kb": 16.0,
+        "mean_ms": 0.0695722401724197,
+        "std_ms": 0.004673851868212266
+      },
+      {
+        "size_bytes": 65536,
+        "size_kb": 64.0,
+        "mean_ms": 0.07378157955827191,
+        "std_ms": 0.008610433771357378
+      },
+      {
+        "size_bytes": 262144,
+        "size_kb": 256.0,
+        "mean_ms": 0.08808318030787632,
+        "std_ms": 0.11077501131343148
+      },
+      {
+        "size_bytes": 614400,
+        "size_kb": 600.0,
+        "mean_ms": 0.07531505834776908,
+        "std_ms": 0.010133785829259388
+      }
+    ]
+  }
+}

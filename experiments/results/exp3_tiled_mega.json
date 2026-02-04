@@ -1,0 +1,38 @@
+{
+  "system_info": {
+    "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+    "gpu": "570.211.01",
+    "backend": "Vulkan"
+  },
+  "hidden_dim": 896,
+  "intermediate_dim": 4864,
+  "experiments": {
+    "unfused": {
+      "name": "unfused_mlp",
+      "dispatches": 7,
+      "mean_ms": 0.7217690598918125,
+      "std_ms": 0.1302171591773123,
+      "n_iterations": 50
+    },
+    "tiled": {
+      "name": "tiled_mlp",
+      "dispatches": 3,
+      "mean_ms": 0.617023799859453,
+      "std_ms": 0.009974122562285288,
+      "n_iterations": 50
+    },
+    "mega_kernel": {
+      "name": "mega_kernel_mlp",
+      "dispatches": 1,
+      "intermediate_dim": 256,
+      "note": "Reduced intermediate_dim to fit in workgroup memory",
+      "mean_ms": 0.32203600072534755,
+      "std_ms": 0.005247037653873217,
+      "n_iterations": 50
+    }
+  },
+  "analysis": {
+    "tiled_speedup_vs_unfused": 1.169758865146237,
+    "mega_slowdown_vs_tiled": 0.5219182806217549
+  }
+}
