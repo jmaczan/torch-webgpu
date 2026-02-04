@@ -267,3 +267,4 @@ bench_summary.json
 
 # Paper directory (kept private)
 paper/
+bench_env/
