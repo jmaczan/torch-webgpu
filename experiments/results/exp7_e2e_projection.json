@@ -1,0 +1,52 @@
+{
+  "system_info": {
+    "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "machine": "x86_64",
+    "python_version": "3.12.3",
+    "gpu_vendor": "NVIDIA",
+    "gpu_device": "NVIDIA GeForce RTX 5090",
+    "gpu_description": "570.211.01",
+    "wgpu_backend": "Vulkan"
+  },
+  "experiments": {
+    "wgpu_sequential": {
+      "name": "wgpu_sequential_dispatches",
+      "n_dispatches": 100,
+      "mean_total_ms": 2.128685761708766,
+      "std_total_ms": 0.38893090140117903,
+      "min_total_ms": 1.751865987898782,
+      "max_total_ms": 2.737121016252786,
+      "per_dispatch_us": 21.286857617087662,
+      "n_iterations": 50
+    },
+    "wgpu_batched": {
+      "name": "wgpu_batched_dispatches",
+      "n_dispatches": 100,
+      "mean_total_ms": 1.1942592408740893,
+      "std_total_ms": 0.07321452279305006,
+      "per_dispatch_us": 11.942592408740893,
+      "n_iterations": 50
+    },
+    "batching_speedup": 1.7824318948964226
+  },
+  "dawn_results": {
+    "name": "dawn_sequential_dispatches",
+    "n_dispatches": 100,
+    "mean_total_ms": 2.380939521244727,
+    "std_total_ms": 0.5496694636115057,
+    "per_dispatch_us": 23.80939521244727,
+    "n_iterations": 50
+  },
+  "projection": {
+    "dawn_e2e_ttft_ms": 42.0,
+    "dawn_dispatches": 560,
+    "dawn_per_dispatch_us": 23.80939521244727,
+    "wgpu_per_dispatch_us": 21.286857617087662,
+    "overhead_diff_per_dispatch_us": 2.5225375953596085,
+    "total_overhead_savings_ms": 1.4126210534013808,
+    "projected_wgpu_ttft_ms": 40.58737894659862,
+    "speedup_factor": 1.034804441431411,
+    "note": "Projection assumes compute time is identical; only dispatch overhead differs"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "system_info": {
+    "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "gpu": "570.211.01",
+    "backend": "Vulkan"
+  },
+  "dimensions": {
+    "hidden_dim": 256,
+    "intermediate_dim": 256,
+    "note": "Same dimensions for all approaches (fair comparison)"
+  },
+  "experiments": {
+    "unfused": {
+      "name": "unfused_mlp_fixed",
+      "dispatches": 6,
+      "hidden_dim": 256,
+      "intermediate_dim": 256,
+      "mean_ms": 0.16539881005883217,
+      "std_ms": 0.11042471551966432,
+      "min_ms": 0.14174802345223725,
+      "max_ms": 0.9359210089314729,
+      "n_iterations": 100
+    },
+    "mega_kernel": {
+      "name": "mega_kernel_fixed",
+      "dispatches": 1,
+      "hidden_dim": 256,
+      "intermediate_dim": 256,
+      "mean_ms": 0.13270896160975099,
+      "std_ms": 0.08118785389227018,
+      "min_ms": 0.11743200593627989,
+      "max_ms": 0.9035900002345443,
+      "n_iterations": 100
+    }
+  },
+  "analysis": {
+    "mega_vs_unfused_speedup": 1.2463273621657156,
+    "dispatch_reduction": 6.0,
+    "conclusion": "mega_faster"
+  }
+}

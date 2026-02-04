@@ -135,6 +135,83 @@ def measure_dispatch_overhead(device, queue, n_iterations=1000):
     }
 
 
+def benchmark_sequential_dispatches(device, queue, n_dispatches=100, n_iterations=50, warmup=5):
+    """
+    Measure TRUE dispatch overhead (sync only at end, not after each op).
+    This avoids inflating overhead with sync costs.
+    """
+    shader_code = """
+    @group(0) @binding(0) var<storage, read_write> data: array<f32>;
+    @compute @workgroup_size(64)
+    fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+        let idx = gid.x;
+        if (idx < arrayLength(&data)) {
+            data[idx] = data[idx] + 1.0;
+        }
+    }
+    """
+
+    module = device.create_shader_module(code=shader_code)
+    pipeline = device.create_compute_pipeline(
+        layout="auto",
+        compute={"module": module, "entry_point": "main"}
+    )
+
+    buffer = device.create_buffer(
+        size=256 * 4,
+        usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST
+    )
+
+    bind_group = device.create_bind_group(
+        layout=pipeline.get_bind_group_layout(0),
+        entries=[{"binding": 0, "resource": {"buffer": buffer}}]
+    )
+
+    # Warmup
+    for _ in range(warmup):
+        for _ in range(n_dispatches):
+            encoder = device.create_command_encoder()
+            compute_pass = encoder.begin_compute_pass()
+            compute_pass.set_pipeline(pipeline)
+            compute_pass.set_bind_group(0, bind_group)
+            compute_pass.dispatch_workgroups(4)
+            compute_pass.end()
+            queue.submit([encoder.finish()])
+        queue.on_submitted_work_done_sync()
+
+    # Measure
+    times_ms = []
+    for _ in range(n_iterations):
+        queue.on_submitted_work_done_sync()
+
+        start = time.perf_counter()
+        for _ in range(n_dispatches):
+            encoder = device.create_command_encoder()
+            compute_pass = encoder.begin_compute_pass()
+            compute_pass.set_pipeline(pipeline)
+            compute_pass.set_bind_group(0, bind_group)
+            compute_pass.dispatch_workgroups(4)
+            compute_pass.end()
+            queue.submit([encoder.finish()])
+        queue.on_submitted_work_done_sync()
+        end = time.perf_counter()
+
+        times_ms.append((end - start) * 1e3)
+
+    mean_total_ms = float(np.mean(times_ms))
+    per_dispatch_us = (mean_total_ms * 1000) / n_dispatches
+
+    return {
+        "name": "sequential_dispatches",
+        "n_dispatches": n_dispatches,
+        "mean_total_ms": mean_total_ms,
+        "std_total_ms": float(np.std(times_ms)),
+        "per_dispatch_us": per_dispatch_us,
+        "n_iterations": n_iterations,
+        "note": "TRUE dispatch overhead (sync only at end)"
+    }
+
+
 def benchmark_rmsnorm_unfused(device, queue, hidden_dim=896, n_iterations=100):
     """Benchmark unfused RMSNorm (6 separate dispatches)."""
 
@@ -740,11 +817,19 @@ def main():
         "experiments": {}
     }
 
-    # 1. Dispatch overhead
-    print("\n1. Measuring dispatch overhead...")
+    # 1. Dispatch overhead (single op with implicit sync)
+    print("\n1. Measuring dispatch overhead (single op)...")
     overhead_results = measure_dispatch_overhead(device, queue, n_iterations=1000)
     results["experiments"]["dispatch_overhead"] = overhead_results
     print(f"   Per-dispatch overhead: {overhead_results['mean_dispatch_us']:.1f} ± {overhead_results['std_dispatch_us']:.1f} µs")
+    print(f"   (Note: includes implicit sync overhead)")
+
+    # 1b. Sequential dispatches (TRUE dispatch overhead)
+    print("\n1b. Measuring TRUE dispatch overhead (100 sequential ops, sync at end)...")
+    sequential_results = benchmark_sequential_dispatches(device, queue, n_dispatches=100, n_iterations=50)
+    results["experiments"]["sequential_dispatches"] = sequential_results
+    print(f"   Total: {sequential_results['mean_total_ms']:.2f} ms for {sequential_results['n_dispatches']} dispatches")
+    print(f"   TRUE per-dispatch overhead: {sequential_results['per_dispatch_us']:.1f} µs")
 
     # 2. RMSNorm unfused vs fused
     print("\n2. Benchmarking RMSNorm unfused (5 dispatches)...")
