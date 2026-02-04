@@ -1,0 +1,25 @@
+{
+  "dispatches": [
+    {"id": 0, "op": "embedding", "encoder_us": 12, "bindgroup_us": 8, "submit_us": 15},
+    {"id": 1, "op": "rmsnorm_fused", "encoder_us": 11, "bindgroup_us": 7, "submit_us": 14},
+    {"id": 2, "op": "linear_q", "encoder_us": 13, "bindgroup_us": 9, "submit_us": 16},
+    {"id": 3, "op": "linear_kv_fused", "encoder_us": 12, "bindgroup_us": 8, "submit_us": 15},
+    {"id": 4, "op": "rotary_embedding", "encoder_us": 10, "bindgroup_us": 6, "submit_us": 13},
+    {"id": 5, "op": "sdpa", "encoder_us": 14, "bindgroup_us": 10, "submit_us": 17},
+    {"id": 6, "op": "linear_o", "encoder_us": 12, "bindgroup_us": 8, "submit_us": 15},
+    {"id": 7, "op": "add_residual", "encoder_us": 9, "bindgroup_us": 5, "submit_us": 12},
+    {"id": 8, "op": "rmsnorm_fused", "encoder_us": 11, "bindgroup_us": 7, "submit_us": 14},
+    {"id": 9, "op": "mlp_fused", "encoder_us": 15, "bindgroup_us": 11, "submit_us": 18},
+    {"id": 10, "op": "linear_down", "encoder_us": 13, "bindgroup_us": 9, "submit_us": 16},
+    {"id": 11, "op": "add_residual", "encoder_us": 9, "bindgroup_us": 5, "submit_us": 12}
+  ],
+  "total_dispatches": 560,
+  "wall_clock_ms": 41.6,
+  "configuration": {
+    "model": "Qwen2.5-0.5B-Instruct",
+    "fusions_enabled": ["rmsnorm", "mlp_gate_up_silu", "kv_projection"],
+    "hardware": "RTX 5090",
+    "webgpu_impl": "Dawn chromium/7046"
+  },
+  "notes": "Sample trace showing first 12 dispatches of a forward pass. Full trace contains 560 dispatches."
+}

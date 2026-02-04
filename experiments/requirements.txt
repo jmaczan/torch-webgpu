@@ -1,0 +1,7 @@
+# Requirements for reviewer experiments
+numpy>=1.24.0
+scipy>=1.10.0
+wgpu>=0.15.0  # For cross-platform WebGPU (Experiment 1)
+torch>=2.0.0
+transformers>=4.35.0
+matplotlib>=3.7.0  # For timeline visualization
