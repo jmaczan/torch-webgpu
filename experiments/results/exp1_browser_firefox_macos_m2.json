@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-02-04T13:32:06.553Z",
+  "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:147.0) Gecko/20100101 Firefox/147.0",
+  "adapter_info": {},
+  "experiments": {
+    "dispatch_overhead_single_op": {
+      "name": "dispatch_overhead_single_op",
+      "mean_us": 103490,
+      "std_us": 1637.6507564190847,
+      "min_us": 99000,
+      "max_us": 107000,
+      "iterations": 500,
+      "note": "Includes sync overhead (await onSubmittedWorkDone per op)"
+    },
+    "sequential_dispatches": {
+      "name": "sequential_dispatches",
+      "n_dispatches": 100,
+      "mean_total_ms": 103.86666666666666,
+      "std_total_ms": 1.627540748764494,
+      "per_dispatch_us": 1038.6666666666665,
+      "iterations": 30,
+      "note": "TRUE dispatch overhead (sync only at end)"
+    },
+    "rmsnorm_unfused": {
+      "name": "rmsnorm_unfused",
+      "dispatches": 5,
+      "mean_ms": 103.38,
+      "std_ms": 1.809861873182591,
+      "iterations": 50
+    },
+    "rmsnorm_fused": {
+      "name": "rmsnorm_fused",
+      "dispatches": 1,
+      "mean_ms": 103.38,
+      "std_ms": 1.809861873182591,
+      "iterations": 50
+    },
+    "rmsnorm_fusion_speedup": 1
+  },
+  "analysis": {
+    "note": "Firefox/macOS appears to throttle WebGPU to ~10 Hz. All operations take ~103ms regardless of complexity, suggesting rate limiting or vsync synchronization.",
+    "comparison_to_safari": "Safari on same hardware shows 31.7 µs dispatch overhead - Firefox is 33x slower",
+    "practical_implication": "Firefox/macOS WebGPU is unusable for ML inference (<1 tok/s expected)"
+  }
+}
