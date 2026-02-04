@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-02-04T15:48:21.078Z",
+  "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+  "adapter_info": {},
+  "platform": "Windows 11",
+  "gpu": "NVIDIA RTX 2000 (laptop)",
+  "experiments": {
+    "dispatch_overhead_single_op": {
+      "name": "dispatch_overhead_single_op",
+      "mean_us": 2728.7999999523163,
+      "std_us": 1085.5462039163554,
+      "min_us": 99.99999403953552,
+      "max_us": 5299.999982118607,
+      "iterations": 500,
+      "note": "Includes sync overhead (await onSubmittedWorkDone per op)"
+    },
+    "sequential_dispatches": {
+      "name": "sequential_dispatches",
+      "n_dispatches": 100,
+      "mean_total_ms": 5.873333336909612,
+      "std_total_ms": 0.7719815762293968,
+      "per_dispatch_us": 58.733333369096115,
+      "iterations": 30,
+      "note": "TRUE dispatch overhead (sync only at end)"
+    },
+    "rmsnorm_unfused": {
+      "name": "rmsnorm_unfused",
+      "dispatches": 5,
+      "mean_ms": 2.4680000001192095,
+      "std_ms": 1.20788078773736,
+      "iterations": 50
+    },
+    "rmsnorm_fused": {
+      "name": "rmsnorm_fused",
+      "dispatches": 1,
+      "mean_ms": 2.6919999998807906,
+      "std_ms": 0.974646603818325,
+      "iterations": 50
+    },
+    "rmsnorm_fusion_speedup": 0.9167904904266343
+  },
+  "analysis": {
+    "note": "Laptop NVIDIA shows 58.7 µs - higher than desktop RTX 5090 (32.8 µs) but reasonable for mobile GPU"
+  }
+}

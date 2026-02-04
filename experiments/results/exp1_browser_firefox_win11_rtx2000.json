@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-02-04T15:31:05.646Z",
+  "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) Gecko/20100101 Firefox/147.0",
+  "adapter_info": {},
+  "platform": "Windows 11",
+  "gpu": "NVIDIA RTX 2000 (laptop)",
+  "experiments": {
+    "dispatch_overhead_single_op": {
+      "name": "dispatch_overhead_single_op",
+      "mean_us": 106520,
+      "std_us": 5741.219382674729,
+      "min_us": 99000,
+      "max_us": 124000,
+      "iterations": 500,
+      "note": "Includes sync overhead (await onSubmittedWorkDone per op)"
+    },
+    "sequential_dispatches": {
+      "name": "sequential_dispatches",
+      "n_dispatches": 100,
+      "mean_total_ms": 103.66666666666667,
+      "std_total_ms": 6.209312003399051,
+      "per_dispatch_us": 1036.6666666666667,
+      "iterations": 30,
+      "note": "TRUE dispatch overhead (sync only at end)"
+    },
+    "rmsnorm_unfused": {
+      "name": "rmsnorm_unfused",
+      "dispatches": 5,
+      "mean_ms": 103.66,
+      "std_ms": 5.850162390908477,
+      "iterations": 50
+    },
+    "rmsnorm_fused": {
+      "name": "rmsnorm_fused",
+      "dispatches": 1,
+      "mean_ms": 103.68,
+      "std_ms": 5.927697698094937,
+      "iterations": 50
+    },
+    "rmsnorm_fusion_speedup": 0.999807098765432
+  },
+  "analysis": {
+    "note": "Firefox shows identical ~103ms throttling on Windows as on macOS - confirms platform-independent 10 Hz rate limiting"
+  }
+}

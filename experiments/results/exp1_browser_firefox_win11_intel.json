@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-02-04T15:36:53.753Z",
+  "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) Gecko/20100101 Firefox/147.0",
+  "adapter_info": {},
+  "platform": "Windows 11",
+  "gpu": "Intel integrated (Core Ultra)",
+  "experiments": {
+    "dispatch_overhead_single_op": {
+      "name": "dispatch_overhead_single_op",
+      "mean_us": 104328,
+      "std_us": 6300.191743113855,
+      "min_us": 99000,
+      "max_us": 117000,
+      "iterations": 500,
+      "note": "Includes sync overhead (await onSubmittedWorkDone per op)"
+    },
+    "sequential_dispatches": {
+      "name": "sequential_dispatches",
+      "n_dispatches": 100,
+      "mean_total_ms": 104.73333333333333,
+      "std_total_ms": 6.536733808936148,
+      "per_dispatch_us": 1047.3333333333333,
+      "iterations": 30,
+      "note": "TRUE dispatch overhead (sync only at end)"
+    },
+    "rmsnorm_unfused": {
+      "name": "rmsnorm_unfused",
+      "dispatches": 5,
+      "mean_ms": 104.3,
+      "std_ms": 6.248999919987196,
+      "iterations": 50
+    },
+    "rmsnorm_fused": {
+      "name": "rmsnorm_fused",
+      "dispatches": 1,
+      "mean_ms": 104.04,
+      "std_ms": 6.0529662150056645,
+      "iterations": 50
+    },
+    "rmsnorm_fusion_speedup": 1.0024990388312187
+  },
+  "analysis": {
+    "note": "Firefox Intel shows same throttling as Firefox NVIDIA - GPU choice doesn't matter under Firefox's rate limiting"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-02-04T15:47:36.732Z",
+  "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+  "adapter_info": {},
+  "platform": "Windows 11",
+  "gpu": "Intel integrated (Core Ultra)",
+  "experiments": {
+    "dispatch_overhead_single_op": {
+      "name": "dispatch_overhead_single_op",
+      "mean_us": 3123.599999964237,
+      "std_us": 736.6430885274932,
+      "min_us": 300.00001192092896,
+      "max_us": 12199.999988079071,
+      "iterations": 500,
+      "note": "Includes sync overhead (await onSubmittedWorkDone per op)"
+    },
+    "sequential_dispatches": {
+      "name": "sequential_dispatches",
+      "n_dispatches": 100,
+      "mean_total_ms": 6.653333338101705,
+      "std_total_ms": 0.7027248544614122,
+      "per_dispatch_us": 66.53333338101704,
+      "iterations": 30,
+      "note": "TRUE dispatch overhead (sync only at end)"
+    },
+    "rmsnorm_unfused": {
+      "name": "rmsnorm_unfused",
+      "dispatches": 5,
+      "mean_ms": 3.1119999998807906,
+      "std_ms": 0.5867333297921327,
+      "iterations": 50
+    },
+    "rmsnorm_fused": {
+      "name": "rmsnorm_fused",
+      "dispatches": 1,
+      "mean_ms": 3.03,
+      "std_ms": 0.4729693422795832,
+      "iterations": 50
+    },
+    "rmsnorm_fusion_speedup": 1.027062706231284
+  },
+  "analysis": {
+    "note": "First Intel GPU WebGPU validation - 66.5 µs overhead is reasonable, slightly higher than NVIDIA laptop"
+  }
+}
