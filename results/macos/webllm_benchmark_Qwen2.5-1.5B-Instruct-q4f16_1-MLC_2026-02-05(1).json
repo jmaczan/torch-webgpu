@@ -1,0 +1,135 @@
+{
+  "timestamp": "2026-02-05T10:42:22.526Z",
+  "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:147.0) Gecko/20100101 Firefox/147.0",
+  "gpu": {
+    "vendor": "",
+    "architecture": "",
+    "device": "",
+    "description": ""
+  },
+  "config": {
+    "model": "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+    "num_tokens": 50,
+    "num_runs": 10,
+    "warmup_runs": 3,
+    "prompt": "The capital of France is"
+  },
+  "results": {
+    "tokens_per_second": {
+      "mean": 6.104658669329049,
+      "std": 0.03534576418833339,
+      "ci95": [
+        6.079375589477752,
+        6.129941749180346
+      ],
+      "cv_percent": 0.5789965680786896,
+      "all_values": [
+        6.081668114682884,
+        6.134969325153374,
+        6.081668114682884,
+        6.11353711790393,
+        6.097560975609756,
+        6.145741878841089,
+        6.029285099052541,
+        6.102877070619006,
+        6.145741878841089,
+        6.11353711790393
+      ]
+    },
+    "total_time_ms": {
+      "mean": 1146.7,
+      "std": 6.667499947923176,
+      "ci95": [
+        1141.9306892363782,
+        1151.469310763622
+      ],
+      "all_values": [
+        1151,
+        1141,
+        1151,
+        1145,
+        1148,
+        1139,
+        1161,
+        1147,
+        1139,
+        1145
+      ]
+    },
+    "prefill_tokens_per_second": null,
+    "decode_tokens_per_second": null,
+    "model_load_time_seconds": 129.059
+  },
+  "all_runs": [
+    {
+      "run": 1,
+      "tokens_generated": 7,
+      "total_time_ms": 1151,
+      "tokens_per_second": 6.081668114682884,
+      "runtime_stats": "prefill: 57.4163 tokens/sec, decoding: 9.5628 tokens/sec"
+    },
+    {
+      "run": 2,
+      "tokens_generated": 7,
+      "total_time_ms": 1141,
+      "tokens_per_second": 6.134969325153374,
+      "runtime_stats": "prefill: 57.8313 tokens/sec, decoding: 9.6685 tokens/sec"
+    },
+    {
+      "run": 3,
+      "tokens_generated": 7,
+      "total_time_ms": 1151,
+      "tokens_per_second": 6.081668114682884,
+      "runtime_stats": "prefill: 57.4163 tokens/sec, decoding: 9.5628 tokens/sec"
+    },
+    {
+      "run": 4,
+      "tokens_generated": 7,
+      "total_time_ms": 1145,
+      "tokens_per_second": 6.11353711790393,
+      "runtime_stats": "prefill: 57.5540 tokens/sec, decoding: 9.6154 tokens/sec"
+    },
+    {
+      "run": 5,
+      "tokens_generated": 7,
+      "total_time_ms": 1148,
+      "tokens_per_second": 6.097560975609756,
+      "runtime_stats": "prefill: 57.4163 tokens/sec, decoding: 9.6022 tokens/sec"
+    },
+    {
+      "run": 6,
+      "tokens_generated": 7,
+      "total_time_ms": 1139,
+      "tokens_per_second": 6.145741878841089,
+      "runtime_stats": "prefill: 58.2524 tokens/sec, decoding: 9.6286 tokens/sec"
+    },
+    {
+      "run": 7,
+      "tokens_generated": 7,
+      "total_time_ms": 1161,
+      "tokens_per_second": 6.029285099052541,
+      "runtime_stats": "prefill: 57.2792 tokens/sec, decoding: 9.4467 tokens/sec"
+    },
+    {
+      "run": 8,
+      "tokens_generated": 7,
+      "total_time_ms": 1147,
+      "tokens_per_second": 6.102877070619006,
+      "runtime_stats": "prefill: 58.5366 tokens/sec, decoding: 9.4980 tokens/sec"
+    },
+    {
+      "run": 9,
+      "tokens_generated": 7,
+      "total_time_ms": 1139,
+      "tokens_per_second": 6.145741878841089,
+      "runtime_stats": "prefill: 58.1114 tokens/sec, decoding: 9.6685 tokens/sec"
+    },
+    {
+      "run": 10,
+      "tokens_generated": 7,
+      "total_time_ms": 1145,
+      "tokens_per_second": 6.11353711790393,
+      "runtime_stats": "prefill: 57.8313 tokens/sec, decoding: 9.6022 tokens/sec"
+    }
+  ]
+}
