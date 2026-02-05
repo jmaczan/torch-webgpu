@@ -1,6 +1,14 @@
 #!/usr/bin/env python
 """
-Benchmark script for Qwen2.5-0.5B-Instruct on WebGPU backend.
+Benchmark script for Qwen2.5 on WebGPU backend.
+
+Supports both 0.5B and 1.5B model sizes.
+
+Usage:
+    python bench_qwen.py                                  # 0.5B (default)
+    python bench_qwen.py --model 1.5B                     # 1.5B
+    python bench_qwen.py --model 1.5B --output results.json
+    python bench_qwen.py --runs 30 --n-tokens 50          # Paper methodology
 
 Measures:
 - Tokens/second (generation throughput)
@@ -24,7 +32,10 @@ import torch_webgpu  # noqa - registers WebGPU device
 import torch.nn as nn
 
 
-MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
+MODELS = {
+    "0.5B": "Qwen/Qwen2.5-0.5B-Instruct",
+    "1.5B": "Qwen/Qwen2.5-1.5B-Instruct",
+}
 
 
 class FusedRMSNorm(nn.Module):
@@ -285,20 +296,24 @@ def benchmark_inference(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Benchmark Qwen2.5-0.5B-Instruct on WebGPU")
+    parser = argparse.ArgumentParser(description="Benchmark Qwen2.5 on WebGPU")
+    parser.add_argument("--model", type=str, default="0.5B", choices=["0.5B", "1.5B"],
+                        help="Model size (default: 0.5B)")
     parser.add_argument("--output", type=str, default=None, help="Output JSON file path")
     parser.add_argument("--n-tokens", type=int, default=50, help="Number of tokens to generate per run")
-    parser.add_argument("--warmup", type=int, default=3, help="Number of warmup runs")
+    parser.add_argument("--warmup", type=int, default=5, help="Number of warmup runs")
     parser.add_argument("--runs", type=int, default=30, help="Number of benchmark runs (30 for statistical rigor)")
     parser.add_argument("--prompt", type=str, default="The capital of France is", help="Input prompt")
+    parser.add_argument("--no-fusion", action="store_true", help="Disable fused kernels (unfused baseline)")
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
     args = parser.parse_args()
 
+    model_name = MODELS[args.model]
     verbose = not args.quiet
 
     if verbose:
         print("=" * 60)
-        print("Qwen2.5-0.5B-Instruct WebGPU Benchmark")
+        print(f"Qwen2.5-{args.model}-Instruct WebGPU Benchmark")
         print("=" * 60)
         print()
 
@@ -311,18 +326,17 @@ def main():
 
     # Load model and tokenizer
     if verbose:
-        print(f"Loading {MODEL_NAME}...")
+        print(f"Loading {model_name}...")
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
+        model_name,
         torch_dtype=torch.float32,
         trust_remote_code=True,
     )
     model.eval()
 
     if verbose:
-        # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
         print(f"Model loaded: {total_params/1e9:.2f}B parameters")
         print()
@@ -334,12 +348,17 @@ def main():
     model = model.to(webgpu_device)
 
     # Optimize model by replacing decomposed ops with fused WebGPU kernels
-    if verbose:
-        print("Optimizing model with fused WebGPU kernels...")
-    model, replaced = optimize_model_for_webgpu(model)
-    if verbose:
-        print(f"  Replaced {replaced} layers with fused versions (RMSNorm + MLP + K/V)")
-        print()
+    if not args.no_fusion:
+        if verbose:
+            print("Optimizing model with fused WebGPU kernels...")
+        model, replaced = optimize_model_for_webgpu(model)
+        if verbose:
+            print(f"  Replaced {replaced} layers with fused versions (RMSNorm + MLP + K/V)")
+            print()
+    else:
+        if verbose:
+            print("Running WITHOUT fusion (unfused baseline)")
+            print()
 
     # Run benchmark
     results = benchmark_inference(
@@ -354,8 +373,9 @@ def main():
     )
 
     # Add metadata
-    results["model"] = MODEL_NAME
-    results["backend"] = "torch-webgpu"
+    results["model"] = model_name
+    results["model_size"] = args.model
+    results["backend"] = "torch-webgpu" + ("-unfused" if args.no_fusion else "-fused")
     results["hardware"] = hw_info
     results["prompt"] = args.prompt
 
