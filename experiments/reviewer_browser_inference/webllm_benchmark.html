@@ -355,7 +355,6 @@
                         messages: [{ role: "user", content: prompt }],
                         max_tokens: numTokens,
                         temperature: 0,
-                        stream_options: { include_usage: true }
                     });
 
                     const endTime = performance.now();
