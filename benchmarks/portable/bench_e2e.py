@@ -43,6 +43,7 @@ def get_system_info():
 
     try:
         import cpuinfo
+
         cpu = cpuinfo.get_cpu_info()
         info["cpu_brand"] = cpu.get("brand_raw", "Unknown")
     except ImportError:
@@ -50,6 +51,7 @@ def get_system_info():
 
     try:
         import psutil
+
         info["ram_gb"] = round(psutil.virtual_memory().total / (1024**3), 1)
     except ImportError:
         info["ram_gb"] = "Unknown"
@@ -58,13 +60,16 @@ def get_system_info():
         info["cuda_version"] = torch.version.cuda
         info["gpu_name"] = torch.cuda.get_device_name(0)
         info["gpu_memory_gb"] = round(
-            torch.cuda.get_device_properties(0).total_mem / (1024**3), 1
+            torch.cuda.get_device_properties(0).total_memory / (1024**3), 1
         )
         try:
             import subprocess
+
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             info["nvidia_driver"] = result.stdout.strip()
         except Exception:
@@ -89,6 +94,7 @@ def calculate_confidence_interval(data, confidence=0.95):
 
     try:
         from scipy import stats
+
         t_value = stats.t.ppf((1 + confidence) / 2, n - 1)
     except ImportError:
         t_value = 2.045 if n == 30 else (2.0 if n < 30 else 1.96)
@@ -155,7 +161,7 @@ def load_model(model_name, backend, verbose=True):
 
     if verbose:
         total_params = sum(p.numel() for p in model.parameters())
-        print(f"  Model loaded: {total_params/1e9:.2f}B parameters on {backend}")
+        print(f"  Model loaded: {total_params / 1e9:.2f}B parameters on {backend}")
 
     return model, tokenizer
 
@@ -200,7 +206,7 @@ def benchmark_inference(
                 generated_ids = torch.cat([generated_ids, next_token], dim=1)
         sync_device(device_type)
         if verbose:
-            print(f"    Warmup {i+1}/{warmup} done")
+            print(f"    Warmup {i + 1}/{warmup} done")
 
     # Timed runs
     times = []
@@ -246,7 +252,9 @@ def benchmark_inference(
 
         if verbose:
             tps = tokens_this_run / run_time
-            print(f"    Run {run_idx+1}/{runs}: {tokens_this_run} tok in {run_time:.3f}s = {tps:.2f} tok/s (TTFT: {ttft*1000:.1f}ms)")
+            print(
+                f"    Run {run_idx + 1}/{runs}: {tokens_this_run} tok in {run_time:.3f}s = {tps:.2f} tok/s (TTFT: {ttft * 1000:.1f}ms)"
+            )
 
     # Calculate statistics
     tps_per_run = [t / tm for t, tm in zip(tokens_generated, times)]
@@ -304,15 +312,17 @@ def run_backend(model_name, backend, args, system_info):
 
     # Print summary
     print()
-    print(f"  {'='*50}")
+    print(f"  {'=' * 50}")
     print(f"  RESULTS ({backend.upper()})")
-    print(f"  {'='*50}")
-    print(f"  Tokens/second:       {results['tokens_per_second']:.2f} +/- {results['tokens_per_second_std']:.2f}")
+    print(f"  {'=' * 50}")
+    print(
+        f"  Tokens/second:       {results['tokens_per_second']:.2f} +/- {results['tokens_per_second_std']:.2f}"
+    )
     ci = results["tokens_per_second_ci95"]
     print(f"    95% CI:            [{ci[0]:.2f}, {ci[1]:.2f}]")
     print(f"  CV:                  {results['coefficient_of_variation']:.1f}%")
     print(f"  Time to first token: {results['time_to_first_token_ms']:.2f} ms")
-    print(f"  {'='*50}")
+    print(f"  {'=' * 50}")
 
     # Clean up GPU memory
     del model
@@ -358,8 +368,12 @@ Examples:
         default=".",
         help="Output directory for JSON results (default: current dir)",
     )
-    parser.add_argument("--n-tokens", type=int, default=50, help="Tokens per run (default: 50)")
-    parser.add_argument("--runs", type=int, default=30, help="Benchmark runs (default: 30)")
+    parser.add_argument(
+        "--n-tokens", type=int, default=50, help="Tokens per run (default: 50)"
+    )
+    parser.add_argument(
+        "--runs", type=int, default=30, help="Benchmark runs (default: 30)"
+    )
     parser.add_argument("--prompt", type=str, default="The capital of France is")
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
 
@@ -405,9 +419,9 @@ Examples:
     all_results = {}
 
     for backend in backends:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Benchmarking: {backend.upper()}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         results = run_backend(model_name, backend, args, system_info)
         all_results[backend] = results
@@ -419,9 +433,9 @@ Examples:
         print(f"\n  Saved to: {output_file}")
 
     # Print comparison summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("COMPARISON SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"{'Backend':<15} {'Tok/s':>10} {'95% CI':>20} {'CV':>8} {'TTFT (ms)':>12}")
     print("-" * 65)
 
@@ -433,7 +447,7 @@ Examples:
             f"{results['coefficient_of_variation']:>7.1f}% "
             f"{results['time_to_first_token_ms']:>11.1f}"
         )
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Save combined summary
     summary_file = output_dir / f"summary_{model_tag}.json"
