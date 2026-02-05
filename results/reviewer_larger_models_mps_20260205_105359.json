@@ -1,0 +1,740 @@
+{
+  "timestamp": "2026-02-05T10:48:05.571352",
+  "system_info": {
+    "platform": "macOS-26.2-arm64-arm-64bit",
+    "python_version": "3.10.12",
+    "torch_version": "2.10.0",
+    "cuda_available": false,
+    "mps_available": true,
+    "device": "mps",
+    "gpu_name": "Apple Silicon (MPS)"
+  },
+  "benchmark_config": {
+    "num_tokens": 50,
+    "num_runs": 30,
+    "warmup_runs": 5,
+    "device": "mps"
+  },
+  "models": {
+    "Qwen/Qwen2.5-0.5B-Instruct": {
+      "model": "Qwen/Qwen2.5-0.5B-Instruct",
+      "num_parameters": 494032768,
+      "num_parameters_billions": 0.494032768,
+      "device": "mps",
+      "dtype": "torch.float16",
+      "config": {
+        "prompt": "The capital of France is",
+        "input_tokens": 5,
+        "max_new_tokens": 50,
+        "num_runs": 30,
+        "warmup_runs": 5,
+        "do_sample": false
+      },
+      "results": {
+        "tokens_per_second": {
+          "mean": 47.82292846829865,
+          "std": 0.4222118204950526,
+          "sem": 0.07708497937682078,
+          "ci95_lower": 47.66527198351399,
+          "ci95_upper": 47.98058495308331,
+          "cv_percent": 0.8828648391428658,
+          "n": 30,
+          "min": 46.68415299804376,
+          "max": 48.473248234362934,
+          "all_values": [
+            47.73834802523784,
+            48.06388070929444,
+            47.7590745832702,
+            47.825063551433296,
+            48.376832320337186,
+            48.473248234362934,
+            47.70765322279021,
+            46.976092194637005,
+            47.922530366940926,
+            47.930718986822264,
+            48.02419265202727,
+            47.44010053307845,
+            47.99669203609159,
+            46.68415299804376,
+            47.968960213929066,
+            48.289481910986,
+            48.062529320520284,
+            47.995709215737975,
+            48.25017525891826,
+            48.221273928474126,
+            47.63296515694332,
+            47.09776506697003,
+            48.255689527733594,
+            47.637548730348875,
+            47.53009468491022,
+            47.71434944349395,
+            47.328174652750405,
+            48.10884144725347,
+            48.17622669573327,
+            47.49948837988911
+          ]
+        },
+        "total_time_seconds": {
+          "mean": 1.045602973694137,
+          "std": 0.009301896714133728,
+          "sem": 0.0016982862193047421,
+          "ci95_lower": 1.0421295883775894,
+          "ci95_upper": 1.0490763590106846,
+          "cv_percent": 0.8896203385181598,
+          "n": 30,
+          "min": 1.0314967909362167,
+          "max": 1.0710272499127313,
+          "all_values": [
+            1.0473759999731556,
+            1.040282209054567,
+            1.0469214580953121,
+            1.0454769170610234,
+            1.0335525829577819,
+            1.0314967909362167,
+            1.0480498750694096,
+            1.064371208078228,
+            1.043350583058782,
+            1.0431723340880126,
+            1.0411419169977307,
+            1.0539606669917703,
+            1.0417384590255097,
+            1.0710272499127313,
+            1.042340709012933,
+            1.035422166925855,
+            1.0403114589862525,
+            1.0417597909690812,
+            1.0362656660145149,
+            1.036886749905534,
+            1.0496932079549879,
+            1.0616215000627562,
+            1.036147249978967,
+            1.0495922089321539,
+            1.0519650829955935,
+            1.0479027919936925,
+            1.0564531669951975,
+            1.0393099999055266,
+            1.0378562919795513,
+            1.0526429169112816
+          ]
+        },
+        "estimated_ttft_ms": {
+          "mean": 20.91205947388274,
+          "std": 0.18603793428267457,
+          "sem": 0.033965724386094846,
+          "ci95_lower": 20.842591767551788,
+          "ci95_upper": 20.98152718021369,
+          "cv_percent": 0.88962033851816,
+          "n": 30,
+          "min": 20.629935818724334,
+          "max": 21.420544998254627,
+          "all_values": [
+            20.94751999946311,
+            20.80564418109134,
+            20.938429161906242,
+            20.90953834122047,
+            20.671051659155637,
+            20.629935818724334,
+            20.960997501388192,
+            21.28742416156456,
+            20.86701166117564,
+            20.86344668176025,
+            20.822838339954615,
+            21.079213339835405,
+            20.834769180510193,
+            21.420544998254627,
+            20.84681418025866,
+            20.7084433385171,
+            20.80622917972505,
+            20.835195819381624,
+            20.725313320290297,
+            20.73773499811068,
+            20.993864159099758,
+            21.232430001255125,
+            20.72294499957934,
+            20.991844178643078,
+            21.03930165991187,
+            20.95805583987385,
+            21.12906333990395,
+            20.786199998110533,
+            20.757125839591026,
+            21.052858338225633
+          ]
+        },
+        "model_load_time_seconds": 3.868658624938689
+      },
+      "sample_output": "The capital of France is Paris. It was founded in 789 AD by Charlemagne, the last king of the Carolingian dynasty. The city has a long and rich history dating back to the Roman Empire. In fact, it was...",
+      "all_runs": [
+        {
+          "run": 1,
+          "total_time_s": 1.0473759999731556,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.73834802523784,
+          "estimated_ttft_ms": 20.94751999946311
+        },
+        {
+          "run": 2,
+          "total_time_s": 1.040282209054567,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.06388070929444,
+          "estimated_ttft_ms": 20.80564418109134
+        },
+        {
+          "run": 3,
+          "total_time_s": 1.0469214580953121,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.7590745832702,
+          "estimated_ttft_ms": 20.938429161906242
+        },
+        {
+          "run": 4,
+          "total_time_s": 1.0454769170610234,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.825063551433296,
+          "estimated_ttft_ms": 20.90953834122047
+        },
+        {
+          "run": 5,
+          "total_time_s": 1.0335525829577819,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.376832320337186,
+          "estimated_ttft_ms": 20.671051659155637
+        },
+        {
+          "run": 6,
+          "total_time_s": 1.0314967909362167,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.473248234362934,
+          "estimated_ttft_ms": 20.629935818724334
+        },
+        {
+          "run": 7,
+          "total_time_s": 1.0480498750694096,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.70765322279021,
+          "estimated_ttft_ms": 20.960997501388192
+        },
+        {
+          "run": 8,
+          "total_time_s": 1.064371208078228,
+          "tokens_generated": 50,
+          "tokens_per_second": 46.976092194637005,
+          "estimated_ttft_ms": 21.28742416156456
+        },
+        {
+          "run": 9,
+          "total_time_s": 1.043350583058782,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.922530366940926,
+          "estimated_ttft_ms": 20.86701166117564
+        },
+        {
+          "run": 10,
+          "total_time_s": 1.0431723340880126,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.930718986822264,
+          "estimated_ttft_ms": 20.86344668176025
+        },
+        {
+          "run": 11,
+          "total_time_s": 1.0411419169977307,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.02419265202727,
+          "estimated_ttft_ms": 20.822838339954615
+        },
+        {
+          "run": 12,
+          "total_time_s": 1.0539606669917703,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.44010053307845,
+          "estimated_ttft_ms": 21.079213339835405
+        },
+        {
+          "run": 13,
+          "total_time_s": 1.0417384590255097,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.99669203609159,
+          "estimated_ttft_ms": 20.834769180510193
+        },
+        {
+          "run": 14,
+          "total_time_s": 1.0710272499127313,
+          "tokens_generated": 50,
+          "tokens_per_second": 46.68415299804376,
+          "estimated_ttft_ms": 21.420544998254627
+        },
+        {
+          "run": 15,
+          "total_time_s": 1.042340709012933,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.968960213929066,
+          "estimated_ttft_ms": 20.84681418025866
+        },
+        {
+          "run": 16,
+          "total_time_s": 1.035422166925855,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.289481910986,
+          "estimated_ttft_ms": 20.7084433385171
+        },
+        {
+          "run": 17,
+          "total_time_s": 1.0403114589862525,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.062529320520284,
+          "estimated_ttft_ms": 20.80622917972505
+        },
+        {
+          "run": 18,
+          "total_time_s": 1.0417597909690812,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.995709215737975,
+          "estimated_ttft_ms": 20.835195819381624
+        },
+        {
+          "run": 19,
+          "total_time_s": 1.0362656660145149,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.25017525891826,
+          "estimated_ttft_ms": 20.725313320290297
+        },
+        {
+          "run": 20,
+          "total_time_s": 1.036886749905534,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.221273928474126,
+          "estimated_ttft_ms": 20.73773499811068
+        },
+        {
+          "run": 21,
+          "total_time_s": 1.0496932079549879,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.63296515694332,
+          "estimated_ttft_ms": 20.993864159099758
+        },
+        {
+          "run": 22,
+          "total_time_s": 1.0616215000627562,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.09776506697003,
+          "estimated_ttft_ms": 21.232430001255125
+        },
+        {
+          "run": 23,
+          "total_time_s": 1.036147249978967,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.255689527733594,
+          "estimated_ttft_ms": 20.72294499957934
+        },
+        {
+          "run": 24,
+          "total_time_s": 1.0495922089321539,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.637548730348875,
+          "estimated_ttft_ms": 20.991844178643078
+        },
+        {
+          "run": 25,
+          "total_time_s": 1.0519650829955935,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.53009468491022,
+          "estimated_ttft_ms": 21.03930165991187
+        },
+        {
+          "run": 26,
+          "total_time_s": 1.0479027919936925,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.71434944349395,
+          "estimated_ttft_ms": 20.95805583987385
+        },
+        {
+          "run": 27,
+          "total_time_s": 1.0564531669951975,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.328174652750405,
+          "estimated_ttft_ms": 21.12906333990395
+        },
+        {
+          "run": 28,
+          "total_time_s": 1.0393099999055266,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.10884144725347,
+          "estimated_ttft_ms": 20.786199998110533
+        },
+        {
+          "run": 29,
+          "total_time_s": 1.0378562919795513,
+          "tokens_generated": 50,
+          "tokens_per_second": 48.17622669573327,
+          "estimated_ttft_ms": 20.757125839591026
+        },
+        {
+          "run": 30,
+          "total_time_s": 1.0526429169112816,
+          "tokens_generated": 50,
+          "tokens_per_second": 47.49948837988911,
+          "estimated_ttft_ms": 21.052858338225633
+        }
+      ]
+    },
+    "Qwen/Qwen2.5-1.5B-Instruct": {
+      "model": "Qwen/Qwen2.5-1.5B-Instruct",
+      "num_parameters": 1543714304,
+      "num_parameters_billions": 1.543714304,
+      "device": "mps",
+      "dtype": "torch.float16",
+      "config": {
+        "prompt": "The capital of France is",
+        "input_tokens": 5,
+        "max_new_tokens": 50,
+        "num_runs": 30,
+        "warmup_runs": 5,
+        "do_sample": false
+      },
+      "results": {
+        "tokens_per_second": {
+          "mean": 20.645937670257016,
+          "std": 0.5968180459248819,
+          "sem": 0.10896356882640398,
+          "ci95_lower": 20.423082149380686,
+          "ci95_upper": 20.868793191133346,
+          "cv_percent": 2.8907287014852843,
+          "n": 30,
+          "min": 19.63352134224922,
+          "max": 21.261967963053607,
+          "all_values": [
+            19.74697834877829,
+            19.752724857564516,
+            20.048878162894013,
+            19.971734675443678,
+            19.708788195975078,
+            20.108771020970188,
+            20.155139827578846,
+            19.63352134224922,
+            20.05813919031086,
+            20.07061343530214,
+            20.081275613817372,
+            20.0511987304012,
+            21.086453878017736,
+            21.13661625495321,
+            21.060809087415464,
+            20.842560872978076,
+            21.134839430419586,
+            21.13269371815773,
+            20.815805774244822,
+            21.126534045471605,
+            21.213583124627085,
+            21.14685156762096,
+            21.18806157442674,
+            21.07806245170842,
+            21.220126504753843,
+            21.003414317409867,
+            21.261967963053607,
+            21.175382677736824,
+            21.204374178448905,
+            21.162229284980576
+          ]
+        },
+        "total_time_seconds": {
+          "mean": 2.423767929043,
+          "std": 0.07100705222315487,
+          "sem": 0.01296405474818976,
+          "ci95_lower": 2.3972534599897712,
+          "ci95_upper": 2.450282398096229,
+          "cv_percent": 2.929614315475792,
+          "n": 30,
+          "min": 2.3516167500056326,
+          "max": 2.5466649170266464,
+          "all_values": [
+            2.5320329579990357,
+            2.5312963330652565,
+            2.4939051249530166,
+            2.503538165939972,
+            2.5369393340079114,
+            2.4864771669963375,
+            2.4807567909592763,
+            2.5466649170266464,
+            2.4927536660106853,
+            2.4912043750518933,
+            2.4898816669592634,
+            2.493616500054486,
+            2.371190542005934,
+            2.3655631250003353,
+            2.374077833024785,
+            2.398937458056025,
+            2.3657619999721646,
+            2.3660022080875933,
+            2.402020875015296,
+            2.36669204197824,
+            2.3569804170401767,
+            2.364418165991083,
+            2.3598194589139894,
+            2.372134541044943,
+            2.3562536250101402,
+            2.380565333063714,
+            2.3516167500056326,
+            2.361232416005805,
+            2.358004041016102,
+            2.362700041034259
+          ]
+        },
+        "estimated_ttft_ms": {
+          "mean": 48.47535858086,
+          "std": 1.4201410444630975,
+          "sem": 0.2592810949637952,
+          "ci95_lower": 47.94506919979542,
+          "ci95_upper": 49.00564796192457,
+          "cv_percent": 2.9296143154757925,
+          "n": 30,
+          "min": 47.03233500011265,
+          "max": 50.93329834053293,
+          "all_values": [
+            50.640659159980714,
+            50.62592666130513,
+            49.87810249906033,
+            50.070763318799436,
+            50.73878668015823,
+            49.72954333992675,
+            49.615135819185525,
+            50.93329834053293,
+            49.855073320213705,
+            49.824087501037866,
+            49.79763333918527,
+            49.87233000108972,
+            47.423810840118676,
+            47.311262500006706,
+            47.4815566604957,
+            47.978749161120504,
+            47.31523999944329,
+            47.320044161751866,
+            48.04041750030592,
+            47.3338408395648,
+            47.139608340803534,
+            47.288363319821656,
+            47.19638917827979,
+            47.44269082089886,
+            47.125072500202805,
+            47.611306661274284,
+            47.03233500011265,
+            47.2246483201161,
+            47.16008082032204,
+            47.25400082068518
+          ]
+        },
+        "model_load_time_seconds": 222.6400210839929
+      },
+      "sample_output": "The capital of France is Paris. The capital of Italy is Rome. What is the capital of Spain?\nA) Madrid\nB) Barcelona\nC) Seville\nD) Valencia\n\nTo determine the capital of Spain, we need to recall the info...",
+      "all_runs": [
+        {
+          "run": 1,
+          "total_time_s": 2.5320329579990357,
+          "tokens_generated": 50,
+          "tokens_per_second": 19.74697834877829,
+          "estimated_ttft_ms": 50.640659159980714
+        },
+        {
+          "run": 2,
+          "total_time_s": 2.5312963330652565,
+          "tokens_generated": 50,
+          "tokens_per_second": 19.752724857564516,
+          "estimated_ttft_ms": 50.62592666130513
+        },
+        {
+          "run": 3,
+          "total_time_s": 2.4939051249530166,
+          "tokens_generated": 50,
+          "tokens_per_second": 20.048878162894013,
+          "estimated_ttft_ms": 49.87810249906033
+        },
+        {
+          "run": 4,
+          "total_time_s": 2.503538165939972,
+          "tokens_generated": 50,
+          "tokens_per_second": 19.971734675443678,
+          "estimated_ttft_ms": 50.070763318799436
+        },
+        {
+          "run": 5,
+          "total_time_s": 2.5369393340079114,
+          "tokens_generated": 50,
+          "tokens_per_second": 19.708788195975078,
+          "estimated_ttft_ms": 50.73878668015823
+        },
+        {
+          "run": 6,
+          "total_time_s": 2.4864771669963375,
+          "tokens_generated": 50,
+          "tokens_per_second": 20.108771020970188,
+          "estimated_ttft_ms": 49.72954333992675
+        },
+        {
+          "run": 7,
+          "total_time_s": 2.4807567909592763,
+          "tokens_generated": 50,
+          "tokens_per_second": 20.155139827578846,
+          "estimated_ttft_ms": 49.615135819185525
+        },
+        {
+          "run": 8,
+          "total_time_s": 2.5466649170266464,
+          "tokens_generated": 50,
+          "tokens_per_second": 19.63352134224922,
+          "estimated_ttft_ms": 50.93329834053293
+        },
+        {
+          "run": 9,
+          "total_time_s": 2.4927536660106853,
+          "tokens_generated": 50,
+          "tokens_per_second": 20.05813919031086,
+          "estimated_ttft_ms": 49.855073320213705
+        },
+        {
+          "run": 10,
+          "total_time_s": 2.4912043750518933,
+          "tokens_generated": 50,
+          "tokens_per_second": 20.07061343530214,
+          "estimated_ttft_ms": 49.824087501037866
+        },
+        {
+          "run": 11,
+          "total_time_s": 2.4898816669592634,
+          "tokens_generated": 50,
+          "tokens_per_second": 20.081275613817372,
+          "estimated_ttft_ms": 49.79763333918527
+        },
+        {
+          "run": 12,
+          "total_time_s": 2.493616500054486,
+          "tokens_generated": 50,
+          "tokens_per_second": 20.0511987304012,
+          "estimated_ttft_ms": 49.87233000108972
+        },
+        {
+          "run": 13,
+          "total_time_s": 2.371190542005934,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.086453878017736,
+          "estimated_ttft_ms": 47.423810840118676
+        },
+        {
+          "run": 14,
+          "total_time_s": 2.3655631250003353,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.13661625495321,
+          "estimated_ttft_ms": 47.311262500006706
+        },
+        {
+          "run": 15,
+          "total_time_s": 2.374077833024785,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.060809087415464,
+          "estimated_ttft_ms": 47.4815566604957
+        },
+        {
+          "run": 16,
+          "total_time_s": 2.398937458056025,
+          "tokens_generated": 50,
+          "tokens_per_second": 20.842560872978076,
+          "estimated_ttft_ms": 47.978749161120504
+        },
+        {
+          "run": 17,
+          "total_time_s": 2.3657619999721646,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.134839430419586,
+          "estimated_ttft_ms": 47.31523999944329
+        },
+        {
+          "run": 18,
+          "total_time_s": 2.3660022080875933,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.13269371815773,
+          "estimated_ttft_ms": 47.320044161751866
+        },
+        {
+          "run": 19,
+          "total_time_s": 2.402020875015296,
+          "tokens_generated": 50,
+          "tokens_per_second": 20.815805774244822,
+          "estimated_ttft_ms": 48.04041750030592
+        },
+        {
+          "run": 20,
+          "total_time_s": 2.36669204197824,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.126534045471605,
+          "estimated_ttft_ms": 47.3338408395648
+        },
+        {
+          "run": 21,
+          "total_time_s": 2.3569804170401767,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.213583124627085,
+          "estimated_ttft_ms": 47.139608340803534
+        },
+        {
+          "run": 22,
+          "total_time_s": 2.364418165991083,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.14685156762096,
+          "estimated_ttft_ms": 47.288363319821656
+        },
+        {
+          "run": 23,
+          "total_time_s": 2.3598194589139894,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.18806157442674,
+          "estimated_ttft_ms": 47.19638917827979
+        },
+        {
+          "run": 24,
+          "total_time_s": 2.372134541044943,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.07806245170842,
+          "estimated_ttft_ms": 47.44269082089886
+        },
+        {
+          "run": 25,
+          "total_time_s": 2.3562536250101402,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.220126504753843,
+          "estimated_ttft_ms": 47.125072500202805
+        },
+        {
+          "run": 26,
+          "total_time_s": 2.380565333063714,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.003414317409867,
+          "estimated_ttft_ms": 47.611306661274284
+        },
+        {
+          "run": 27,
+          "total_time_s": 2.3516167500056326,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.261967963053607,
+          "estimated_ttft_ms": 47.03233500011265
+        },
+        {
+          "run": 28,
+          "total_time_s": 2.361232416005805,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.175382677736824,
+          "estimated_ttft_ms": 47.2246483201161
+        },
+        {
+          "run": 29,
+          "total_time_s": 2.358004041016102,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.204374178448905,
+          "estimated_ttft_ms": 47.16008082032204
+        },
+        {
+          "run": 30,
+          "total_time_s": 2.362700041034259,
+          "tokens_generated": 50,
+          "tokens_per_second": 21.162229284980576,
+          "estimated_ttft_ms": 47.25400082068518
+        }
+      ]
+    }
+  }
+}
