@@ -1,0 +1,34 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "model_size": "0.5B",
+  "system_info": {
+    "platform": "macOS-26.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.10.12",
+    "torch_version": "2.10.0",
+    "cpu_count": 4,
+    "cpu_brand": "arm",
+    "ram_gb": "Unknown",
+    "mps_available": true
+  },
+  "backends": {
+    "cpu": {
+      "tokens_per_second": 6.22212033635184,
+      "tokens_per_second_ci95": [
+        6.1139545530354,
+        6.33028611966828
+      ],
+      "coefficient_of_variation": 4.655539786006018,
+      "time_to_first_token_ms": 141.08452916843817
+    },
+    "mps": {
+      "tokens_per_second": 12.89822576241444,
+      "tokens_per_second_ci95": [
+        12.632380958825985,
+        13.164070566002893
+      ],
+      "coefficient_of_variation": 5.519716219460377,
+      "time_to_first_token_ms": 52.20609027116249
+    }
+  }
+}

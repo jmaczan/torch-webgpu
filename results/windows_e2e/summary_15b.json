@@ -1,0 +1,37 @@
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "model_size": "1.5B",
+  "system_info": {
+    "platform": "Windows-11-10.0.26100-SP0",
+    "processor": "Intel64 Family 6 Model 197 Stepping 2, GenuineIntel",
+    "python_version": "3.12.10",
+    "torch_version": "2.10.0+cu128",
+    "cpu_count": 16,
+    "cpu_brand": "Intel64 Family 6 Model 197 Stepping 2, GenuineIntel",
+    "ram_gb": 63.5,
+    "cuda_version": "12.8",
+    "gpu_name": "NVIDIA RTX PRO 2000 Blackwell Generation Laptop GPU",
+    "gpu_memory_gb": 8.0,
+    "nvidia_driver": "581.95"
+  },
+  "backends": {
+    "cpu": {
+      "tokens_per_second": 3.115030700254761,
+      "tokens_per_second_ci95": [
+        3.0701072496323416,
+        3.15995415087718
+      ],
+      "coefficient_of_variation": 3.8621516728733276,
+      "time_to_first_token_ms": 188.40972333176373
+    },
+    "cuda": {
+      "tokens_per_second": 17.719441875051196,
+      "tokens_per_second_ci95": [
+        17.649954181891882,
+        17.78892956821051
+      ],
+      "coefficient_of_variation": 1.0502106178303603,
+      "time_to_first_token_ms": 45.11695666199861
+    }
+  }
+}
