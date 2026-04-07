@@ -8,7 +8,7 @@
 ![PyPI version](https://img.shields.io/pypi/v/torch-webgpu)
 ![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)
 
-See also: the WebGPU benchmark paper - [Characterizing WebGPU Dispatch Overhead for LLM Inference Across Four GPU Vendors, Three Backends, and Three Browsers](https://arxiv.org/abs/2604.02344)
+See also the WebGPU benchmark paper: [Characterizing WebGPU Dispatch Overhead for LLM Inference Across Four GPU Vendors, Three Backends, and Three Browsers](https://arxiv.org/abs/2604.02344)
 
 ## Example: Compile and run an LLM
 
