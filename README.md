@@ -181,21 +181,6 @@ Note: This project is unrelated to [webgpu-torch](https://github.com/praeclarum/
 0. Remember to rebuild your code before testing - `./build.sh`
 1. `pytest tests` to run all tests. `pytest tests/ops/test_cos.py` to run a chosen test file, like here we test cosinus
 
-## Cite
-
-If you use this software, please cite it as below.
-
-```bibtex
-@software{Maczan_torch-webgpu_2025,
-author = {Maczan, Jędrzej Paweł},
-month = oct,
-title = {{torch-webgpu - PyTorch compiler and WebGPU runtime}},
-url = {https://github.com/jmaczan/torch-webgpu},
-version = {1.0.0},
-year = {2025}
-}
-```
-
 ## Credits
 
 [Jędrzej Maczan, 2025 - ∞](https://jedrzej.maczan.pl/)
