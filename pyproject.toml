@@ -31,7 +31,7 @@ dev = ["pytest", "mkdocs", "mkdocs-material", "ruff"]
 
 [project.urls]
 Homepage = "https://github.com/jmaczan/torch-webgpu"
-Documentation = "https://jmaczan.github.io/torch-webgpu"
+Documentation = "https://torch-webgpu.maczan.pl"
 Repository = "https://github.com/jmaczan/torch-webgpu"
 Issues = "https://github.com/jmaczan/torch-webgpu/issues"
 
