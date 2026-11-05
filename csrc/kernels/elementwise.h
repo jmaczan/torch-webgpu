@@ -36,6 +36,9 @@ namespace torch_webgpu::kernels
         std::string helpers;
         // Bit-exact copy (1 input, same element size); `code` is ignored.
         bool raw_copy = false;
+        // Expose the linear iteration index to `code` as `idx: u32`. Only
+        // meaningful for 1-D iterators (where it equals the element index).
+        bool pass_index = false;
     };
 
     void run_elementwise(at::TensorIteratorBase &iter, const ElementwiseOp &op);

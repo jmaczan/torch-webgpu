@@ -43,6 +43,29 @@ namespace torch_webgpu::core
         desc.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
         desc.size = arena_capacity_;
         arena_ = ctx.device().CreateBuffer(&desc);
+
+        wgpu::BufferDescriptor fdesc{};
+        fdesc.label = "torch_webgpu index error flag";
+        fdesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+        fdesc.size = 16;
+        error_flag_ = ctx.device().CreateBuffer(&fdesc);
+    }
+
+    const wgpu::Buffer &Stream::index_error_flag()
+    {
+        error_flag_dirty_ = true;
+        return error_flag_;
+    }
+
+    void Stream::raise_index_error_if_set(uint32_t flag)
+    {
+        if (flag == 0)
+            return;
+        static const uint32_t zero[4] = {0, 0, 0, 0};
+        Context::get().queue().WriteBuffer(error_flag_, 0, zero, sizeof(zero));
+        TORCH_CHECK_INDEX(false, "torch_webgpu: index out of bounds in an indexing kernel (e.g. index_select, gather, "
+                                 "advanced indexing or embedding). The error is reported asynchronously at the next "
+                                 "synchronization point, so the failing op ran before this call.");
     }
 
     wgpu::CommandEncoder &Stream::encoder()
@@ -161,22 +184,26 @@ namespace torch_webgpu::core
         uint64_t end = align_up(src_offset + size, 4);
         TORCH_INTERNAL_ASSERT(end <= src.GetSize(), "read_buffer out of bounds");
         uint64_t n = end - begin;
+        const bool check_flag = error_flag_dirty_;
+        const uint64_t total = n + (check_flag ? 4 : 0);
 
         wgpu::BufferDescriptor desc{};
         desc.label = "torch_webgpu readback";
         desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead;
-        desc.size = n;
+        desc.size = total;
         wgpu::Buffer staging = ctx.device().CreateBuffer(&desc);
         TORCH_CHECK(staging, "torch_webgpu: failed to allocate a readback buffer of ", n, " bytes");
 
         end_pass();
         encoder().CopyBufferToBuffer(src, begin, staging, 0, n);
+        if (check_flag)
+            encoder().CopyBufferToBuffer(error_flag_, 0, staging, n, 4);
         ++pending_commands_;
         flush_locked();
 
         bool ok = false;
         std::string err;
-        ctx.wait(staging.MapAsync(wgpu::MapMode::Read, 0, n, wgpu::CallbackMode::WaitAnyOnly,
+        ctx.wait(staging.MapAsync(wgpu::MapMode::Read, 0, total, wgpu::CallbackMode::WaitAnyOnly,
                                   [&](wgpu::MapAsyncStatus status, wgpu::StringView msg)
                                   {
                                       ok = status == wgpu::MapAsyncStatus::Success;
@@ -185,9 +212,17 @@ namespace torch_webgpu::core
                                   }));
         ctx.check_errors();
         TORCH_CHECK(ok, "torch_webgpu: failed to map readback buffer: ", err);
-        const uint8_t *mapped = static_cast<const uint8_t *>(staging.GetConstMappedRange(0, n));
+        const uint8_t *mapped = static_cast<const uint8_t *>(staging.GetConstMappedRange(0, total));
         std::memcpy(dst, mapped + (src_offset - begin), size);
+        uint32_t flag = 0;
+        if (check_flag)
+            std::memcpy(&flag, mapped + n, 4);
         staging.Unmap();
+        if (check_flag)
+        {
+            error_flag_dirty_ = false;
+            raise_index_error_if_set(flag);
+        }
     }
 
     void Stream::flush_locked()
@@ -232,5 +267,10 @@ namespace torch_webgpu::core
                                                  { result = status; }));
         ctx.check_errors();
         TORCH_CHECK(result == wgpu::QueueWorkDoneStatus::Success, "torch_webgpu: queue synchronization failed");
+        if (error_flag_dirty_)
+        {
+            uint32_t flag = 0;
+            read_buffer(error_flag_, 0, &flag, 4); // also clears the dirty bit and raises
+        }
     }
 }

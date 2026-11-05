@@ -54,6 +54,13 @@ namespace torch_webgpu::core
         // Submits recorded work and waits for the GPU to finish it.
         void synchronize();
 
+        // Device-side error flag for indexing kernels (bind as
+        // array<atomic<u32>>; kernels atomicOr a non-zero code on
+        // out-of-bounds indices). Calling this marks the flag as "maybe set";
+        // it is checked at the next host synchronization and raised as an
+        // IndexError there (like CUDA device-side asserts).
+        const wgpu::Buffer &index_error_flag();
+
         size_t pending_dispatches() const { return pending_dispatches_; }
         uint64_t total_dispatches() const { return total_dispatches_; }
         uint64_t total_submits() const { return total_submits_; }
@@ -64,6 +71,7 @@ namespace torch_webgpu::core
         wgpu::ComputePassEncoder &pass();
         void end_pass();
         void flush_locked();
+        void raise_index_error_if_set(uint32_t flag);
 
         wgpu::CommandEncoder encoder_;
         wgpu::ComputePassEncoder pass_;
@@ -73,6 +81,9 @@ namespace torch_webgpu::core
         size_t max_batch_;
         uint64_t total_dispatches_ = 0;
         uint64_t total_submits_ = 0;
+
+        wgpu::Buffer error_flag_;
+        bool error_flag_dirty_ = false;
 
         // Uniform arena
         wgpu::Buffer arena_;

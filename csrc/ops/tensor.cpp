@@ -20,7 +20,9 @@
 #include "kernels/elementwise.h"
 #include "ops/common.h"
 
+#include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace torch_webgpu::core
 {
@@ -370,6 +372,70 @@ namespace torch_webgpu::ops
         }
 
         at::Tensor &zero_(at::Tensor &self) { return fill_scalar(self, 0); }
+
+        // ----------------------------------------------------- ranges
+        void affine_fill(const at::Tensor &out, const char *name, const char *code_f, const char *code_i,
+                         std::vector<std::pair<at::Scalar, CT>> scalars)
+        {
+            if (out.numel() == 0)
+                return;
+            at::Tensor o = out.is_contiguous() ? out : at::empty(out.sizes(), out.options());
+            auto iter = at::TensorIteratorConfig().add_output(o).resize_outputs(false).check_all_same_dtype(false).build();
+            ElementwiseOp op;
+            op.name = name;
+            op.in_ct = wgsl::compute_type(out.scalar_type());
+            op.out_ct = op.in_ct == CT::Bool ? CT::I32 : op.in_ct;
+            op.code = op.out_ct == CT::F32 ? code_f : code_i;
+            op.pass_index = true;
+            op.scalars = std::move(scalars);
+            kernels::run_elementwise(iter, op);
+            if (!o.is_same(out))
+                out.copy_(o);
+        }
+
+        at::Tensor &arange_out(const at::Scalar &start, const at::Scalar &end, const at::Scalar &step, at::Tensor &out)
+        {
+            if (!wgsl::is_compute_dtype(out.scalar_type()) || out.scalar_type() == at::kBool)
+                return WEBGPU_FALLBACK(arange, start_out)(start, end, step, out);
+            const bool fp = at::isFloatingType(out.scalar_type());
+            double xs = start.toDouble(), xe = end.toDouble(), xst = step.toDouble();
+            TORCH_CHECK(xst > 0 || xst < 0, "step must be nonzero");
+            TORCH_CHECK(std::isfinite(xs) && std::isfinite(xe), "unsupported range: ", xs, " -> ", xe);
+            TORCH_CHECK(((xst > 0) && (xe >= xs)) || ((xst < 0) && (xe <= xs)),
+                        "upper bound and larger bound inconsistent with step sign");
+            double size_d = fp ? std::ceil((xe - xs) / xst)
+                               : std::ceil(static_cast<double>(end.toLong() - start.toLong()) / step.toLong());
+            TORCH_CHECK(size_d >= 0 && size_d <= static_cast<double>(std::numeric_limits<int64_t>::max()),
+                        "invalid size, possible overflow?");
+            int64_t size = static_cast<int64_t>(size_d);
+            if (out.numel() != size)
+                out.resize_({size});
+            CT ct = fp ? CT::F32 : CT::I32;
+            affine_fill(out, "arange", "s0 + f32(idx) * s1", "s0 + i32(idx) * s1", {{start, ct}, {step, ct}});
+            return out;
+        }
+
+        at::Tensor &linspace_out(const at::Scalar &start, const at::Scalar &end, int64_t steps, at::Tensor &out)
+        {
+            TORCH_CHECK(steps >= 0, "number of steps must be non-negative");
+            if (!wgsl::is_compute_dtype(out.scalar_type()) || out.scalar_type() == at::kBool || out.is_complex())
+                return WEBGPU_FALLBACK(linspace, out)(start, end, steps, out);
+            if (out.numel() != steps)
+                out.resize_({steps});
+            if (steps == 0)
+                return out;
+            if (steps == 1)
+                return out.fill_(start);
+            double s = start.toDouble(), e = end.toDouble();
+            double step = (e - s) / static_cast<double>(steps - 1);
+            const int64_t half = steps / 2;
+            // Symmetric evaluation, as in PyTorch's linspace kernel.
+            affine_fill(out, "linspace",
+                        "select(s1 - s2 * f32(u32(s3) - 1u - idx), s0 + s2 * f32(idx), idx < u32(s4))",
+                        "i32(select(s1 - s2 * f32(u32(s3) - 1u - idx), s0 + s2 * f32(idx), idx < u32(s4)))",
+                        {{s, CT::F32}, {e, CT::F32}, {step, CT::F32}, {at::Scalar(steps), CT::I32}, {at::Scalar(half), CT::I32}});
+            return out;
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
@@ -398,5 +464,7 @@ namespace torch_webgpu::ops
         m.impl("fill_.Scalar", TORCH_FN(fill_scalar));
         m.impl("fill_.Tensor", TORCH_FN(fill_tensor));
         m.impl("zero_", TORCH_FN(zero_));
+        m.impl("arange.start_out", TORCH_FN(arange_out));
+        m.impl("linspace.out", TORCH_FN(linspace_out));
     }
 }
