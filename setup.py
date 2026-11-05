@@ -82,42 +82,20 @@ class BuildExtWithDawn(BuildExtension):
             print("Using static Dawn library, skipping library copy")
             return
 
-        # Find the built extension directory
-        for output in self.get_outputs():
-            output_dir = Path(output).parent
-            break
-        else:
-            output_dir = Path(self.build_lib) / "torch_webgpu"
+        # Copy next to every built extension. get_ext_fullpath honours
+        # --inplace / editable installs, unlike get_outputs().
+        output_dirs = {
+            Path(self.get_ext_fullpath(ext.name)).parent for ext in self.extensions
+        }
+        for output_dir in output_dirs:
+            libs_dir = output_dir / "libs"
+            libs_dir.mkdir(parents=True, exist_ok=True)
+            dst = libs_dir / lib_path.name
+            print(f"Copying {lib_path} -> {dst}")
+            shutil.copy2(lib_path, dst)
 
-        # Create libs directory in the package
-        libs_dir = output_dir / "libs"
-        libs_dir.mkdir(exist_ok=True)
-
-        # Copy the Dawn library
-        dst = libs_dir / lib_path.name
-        print(f"Copying {lib_path} -> {dst}")
-        shutil.copy2(lib_path, dst)
-
-        # On Linux, we need to set the RPATH so the extension can find the library
-        system = platform.system()
-        if system == "Linux":
-            import subprocess
-            for output in self.get_outputs():
-                if output.endswith(".so"):
-                    # Set RPATH to look in the libs directory
-                    subprocess.run([
-                        "patchelf", "--set-rpath", "$ORIGIN/libs",
-                        output
-                    ], check=False)
-        elif system == "Darwin":
-            import subprocess
-            for output in self.get_outputs():
-                if output.endswith(".so") or output.endswith(".dylib"):
-                    # Update the library path
-                    subprocess.run([
-                        "install_name_tool", "-add_rpath", "@loader_path/libs",
-                        output
-                    ], check=False)
+        # RPATH ($ORIGIN/libs, @loader_path/libs) is set at link time via
+        # extra_link_args, so no post-processing of the binary is needed.
 
 
 # Determine extra compile/link args based on platform
@@ -126,13 +104,13 @@ extra_link_args = []
 system = platform.system()
 
 if system == "Linux":
-    extra_compile_args = ["-std=c++17", "-O2"]
+    extra_compile_args = ["-std=c++20", "-O2"]
     extra_link_args = ["-Wl,-rpath,$ORIGIN/libs"]
 elif system == "Darwin":
-    extra_compile_args = ["-std=c++17", "-O2"]
+    extra_compile_args = ["-std=c++20", "-O2"]
     extra_link_args = ["-Wl,-rpath,@loader_path/libs"]
 elif system == "Windows":
-    extra_compile_args = ["/std:c++17", "/O2"]
+    extra_compile_args = ["/std:c++20", "/O2"]
 
 setup(
     name="torch-webgpu",

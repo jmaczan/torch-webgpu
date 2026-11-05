@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export CUDA_HOME=/usr/local/cuda
-export CUDACXX=/usr/local/cuda/bin/nvcc
-export CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
-export DAWN_PREFIX=/home/jedrzej/dev/dawn/install/Release
+DAWN_PREFIX=${DAWN_PREFIX:-$PWD/dawn-install}
 TORCH_CMAKE_PREFIX_PATH=${TORCH_CMAKE_PREFIX_PATH:-$(python -c "import torch, sys; sys.stdout.write(torch.utils.cmake_prefix_path)")}
 
 cmake -S benchmarks -B build/benchmarks \
@@ -12,8 +9,7 @@ cmake -S benchmarks -B build/benchmarks \
   -DDAWN_PREFIX="$DAWN_PREFIX" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
-  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-  -DCMAKE_CUDA_ARCHITECTURES=120
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 cmake --build build/benchmarks -j
 
