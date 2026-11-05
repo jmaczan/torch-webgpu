@@ -616,11 +616,13 @@ namespace torch_webgpu::ops
                K("hardsigmoid_backward", {"select(0.0, x0 / 6.0, x1 > -3.0 && x1 < 3.0)"}), P1(const Tensor &, self),
                A1(self), WEBGPU_FALLBACK0(hardsigmoid_backward), WEBGPU_FALLBACK(hardsigmoid_backward, grad_input))
         WG_BWD(threshold_backward, structured_threshold_backward,
-               K("threshold_backward", {"select(x0, 0.0, x1 <= s0)", "select(x0, 0, x1 <= s0)"}, Opts{.scalars = {threshold}}),
+               // The meta puts `self` before `grad` (it reuses the threshold kernel).
+               K("threshold_backward", {"select(x1, 0.0, x0 <= s0)", "select(x1, 0, x0 <= s0)"}, Opts{.scalars = {threshold}}),
                P2(const Tensor &, self, const Scalar &, threshold), A2(self, threshold),
                WEBGPU_FALLBACK0(threshold_backward), WEBGPU_FALLBACK(threshold_backward, grad_input))
         WG_BWD(leaky_relu_backward, structured_leaky_relu_backward,
-               K("leaky_relu_backward", {"select(x0 * s0, x0, x1 > 0.0)"}, Opts{.scalars = {negative_slope}}),
+               // The meta orders the inputs (self, grad_output).
+               K("leaky_relu_backward", {"select(x1 * s0, x1, x0 > 0.0)"}, Opts{.scalars = {negative_slope}}),
                P3(const Tensor &, self, const Scalar &, negative_slope, bool, self_is_result),
                A3(self, negative_slope, self_is_result), WEBGPU_FALLBACK0(leaky_relu_backward),
                WEBGPU_FALLBACK(leaky_relu_backward, grad_input))
