@@ -33,8 +33,9 @@ namespace torch_webgpu::ops
             op.in_ct = kernels::common_ct(iter);
             op.out_ct = op.in_ct;
             TORCH_CHECK(op.in_ct != kernels::CT::Bool, "fused_add_relu does not support bool tensors");
-            op.code = op.in_ct == kernels::CT::F32 ? "select(max(x0 + x1, 0.0), x0 + x1, isnan_f(x0 + x1))"
-                                                   : "max(x0 + x1, 0)";
+            op.code = op.in_ct == kernels::CT::F32   ? "select(max(x0 + x1, 0.0), x0 + x1, isnan_f(x0 + x1))"
+                      : op.in_ct == kernels::CT::I64 ? "i64_max(i64_add(x0, x1), i64(0u, 0u))"
+                                                     : "max(x0 + x1, 0)";
             op.helpers = kernels::math_wgsl();
             kernels::run_elementwise(iter, op);
             return iter.output();

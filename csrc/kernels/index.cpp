@@ -181,8 +181,16 @@ namespace torch_webgpu::kernels
                 for (int j = 0; j < nidx; ++j)
                 {
                     int k = 2 + j, js = nidx + j;
-                    s << "    {\n"
-                      << "        var v = ld" << k << "(o" << k << ");\n"
+                    const bool long_idx = L.ops[k].dtype == c10::kLong;
+                s << "    {\n";
+                if (long_idx)
+                    // int64 index: out of bounds unless it fits in int32.
+                    s << "        let w = ld" << k << "(o" << k << ");\n"
+                      << "        var v = i64_to_i32(w);\n"
+                      << "        if (!i64_eq(w, i64_from_i32(v))) { atomicOr(&buf" << flag_b << "[0], 1u); return; }\n";
+                else
+                    s << "        var v = ld" << k << "(o" << k << ");\n";
+                s
                       << "        let sz = i32(P.extra[" << j / 4 << "][" << j % 4 << "]);\n"
                       << (wrap ? "        if (v < 0) { v = v + sz; }\n" : "")
                       << "        if (v < 0 || v >= sz) { atomicOr(&buf" << flag_b << "[0], 1u); return; }\n"
@@ -265,11 +273,12 @@ namespace torch_webgpu::kernels
               << "    let i = gid.x + gid.y * P.row_stride;\n"
               << "    if (i >= P.n) { return; }\n"
               << "    if (!" << wgsl::convert("ld_m(P.off[0] + i)", wgsl::compute_type(mask.scalar_type()), wgsl::CT::Bool) << ") { return; }\n"
-              << "    let pos = u32(ld_p(P.off[1] + i) - 1);\n"
+              << "    let pos = u32(" << wgsl::convert("ld_p(P.off[1] + i)", wgsl::compute_type(positions.scalar_type()), wgsl::CT::I32) << " - 1);\n"
               << "    var rem = i;\n";
             for (int d = nd - 1; d >= 0; --d)
                 s << "    { let sz = P.sizes[" << d / 4 << "][" << d % 4 << "]; st_o(P.off[2] + pos * " << nd << "u + "
-                  << d << "u, i32(rem % sz)); rem = rem / sz; }\n";
+                  << d << "u, " << wgsl::convert("i32(rem % sz)", wgsl::CT::I32, wgsl::compute_type(out.scalar_type()))
+                  << "); rem = rem / sz; }\n";
             s << "}\n";
             return s.str();
         };

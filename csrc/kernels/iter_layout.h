@@ -30,7 +30,7 @@ namespace torch_webgpu::kernels
         int binding = -1;
         uint32_t offset = 0;                 // element offset
         uint32_t strides[kIterMaxDims] = {}; // element strides
-        int scalar_slot = -1;                // cpu scalars: slot in scalar_words
+        int scalar_slot = -1;                // cpu scalars: scalar slot
     };
 
     struct IterBinding
@@ -50,14 +50,16 @@ namespace torch_webgpu::kernels
         uint32_t shape[kIterMaxDims] = {};
         std::vector<IterOperand> ops;
         std::vector<IterBinding> bindings;
-        std::vector<uint32_t> scalar_words;
-        std::vector<CT> scalar_cts;
+        std::vector<uint32_t> scalar_words; // two words per slot
+        std::vector<CT> scalar_cts;          // one per slot
         int extra_words = 0; // user words appended to Params as `extra: array<vec4<u32>, N>`
 
         // `scalars` become s0, s1, ... (CPU-scalar operands are appended
         // after them). atomic_outputs forces output bindings to atomic<u32>.
+        // cpu_scalar_cts[j] (if given) is the compute type CPU-scalar input j
+        // is encoded in, so no conversion is needed in the shader.
         static IterLayout build(at::TensorIteratorBase &iter, const std::vector<std::pair<c10::Scalar, CT>> &scalars,
-                                bool atomic_outputs = false);
+                                bool atomic_outputs = false, const std::vector<CT> &cpu_scalar_cts = {});
 
         void write_key(std::ostream &os) const;
         // WGSL: Params struct + bindings + `var<uniform> P`.

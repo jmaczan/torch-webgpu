@@ -19,6 +19,17 @@ namespace torch_webgpu::ops
 
     namespace
     {
+        // GEMM supports f32/f16/bf16 and 32-bit-or-narrower ints; int64 and
+        // others use the CPU fallback.
+        bool mm_dtypes_ok(std::initializer_list<std::reference_wrapper<const Tensor>> ts)
+        {
+            for (const Tensor &t : ts)
+                if (is_webgpu(t) && (!wgsl::is_compute_dtype(t.scalar_type()) || t.scalar_type() == at::kLong ||
+                                     t.scalar_type() == at::kBool))
+                    return false;
+            return true;
+        }
+
         bool overlaps(const Tensor &out, std::initializer_list<std::reference_wrapper<const Tensor>> ins)
         {
             for (const Tensor &t : ins)
@@ -51,7 +62,7 @@ namespace torch_webgpu::ops
         {
             Functional<at::meta::structured_mm> op;
             op.meta(self, mat2);
-            if (!gpu_dtypes_ok({self, mat2}))
+            if (!mm_dtypes_ok({self, mat2}))
                 return WEBGPU_FALLBACK0(mm)(self, mat2);
             mm_impl(self, mat2, op.outputs_[0]);
             return std::move(op.outputs_[0]);
@@ -60,7 +71,7 @@ namespace torch_webgpu::ops
         {
             Out<at::meta::structured_mm> op(out);
             op.meta(self, mat2);
-            if (!gpu_dtypes_ok({self, mat2, out}))
+            if (!mm_dtypes_ok({self, mat2, out}))
                 return WEBGPU_FALLBACK(mm, out)(self, mat2, out);
             mm_impl(self, mat2, op.maybe_get_output(0));
             op.finish();
@@ -77,7 +88,7 @@ namespace torch_webgpu::ops
         {
             Functional<at::meta::structured_addmm> op;
             op.meta(self, m1, m2, beta, alpha);
-            if (!gpu_dtypes_ok({self, m1, m2}))
+            if (!mm_dtypes_ok({self, m1, m2}))
                 return WEBGPU_FALLBACK0(addmm)(self, m1, m2, beta, alpha);
             addmm_impl(self, m1, m2, beta, alpha, op.outputs_[0]);
             return std::move(op.outputs_[0]);
@@ -87,7 +98,7 @@ namespace torch_webgpu::ops
         {
             Out<at::meta::structured_addmm> op(out);
             op.meta(self, m1, m2, beta, alpha);
-            if (!gpu_dtypes_ok({self, m1, m2, out}))
+            if (!mm_dtypes_ok({self, m1, m2, out}))
                 return WEBGPU_FALLBACK(addmm, out)(self, m1, m2, beta, alpha, out);
             addmm_impl(self, m1, m2, beta, alpha, op.maybe_get_output(0));
             op.finish();
@@ -97,7 +108,7 @@ namespace torch_webgpu::ops
         {
             Inplace<at::meta::structured_addmm> op(self);
             op.meta(self, m1, m2, beta, alpha);
-            if (!gpu_dtypes_ok({self, m1, m2}))
+            if (!mm_dtypes_ok({self, m1, m2}))
                 return WEBGPU_FALLBACK0(addmm_)(self, m1, m2, beta, alpha);
             addmm_impl(self, m1, m2, beta, alpha, op.maybe_get_output(0));
             op.finish();
@@ -108,7 +119,7 @@ namespace torch_webgpu::ops
         {
             Functional<at::meta::structured_bmm> op;
             op.meta(self, mat2);
-            if (!gpu_dtypes_ok({self, mat2}))
+            if (!mm_dtypes_ok({self, mat2}))
                 return WEBGPU_FALLBACK0(bmm)(self, mat2);
             gemm(self, mat2, op.outputs_[0], Tensor(), 0, 1);
             return std::move(op.outputs_[0]);
@@ -117,7 +128,7 @@ namespace torch_webgpu::ops
         {
             Out<at::meta::structured_bmm> op(out);
             op.meta(self, mat2);
-            if (!gpu_dtypes_ok({self, mat2, out}))
+            if (!mm_dtypes_ok({self, mat2, out}))
                 return WEBGPU_FALLBACK(bmm, out)(self, mat2, out);
             gemm(self, mat2, op.maybe_get_output(0), Tensor(), 0, 1);
             op.finish();
@@ -134,7 +145,7 @@ namespace torch_webgpu::ops
         {
             Functional<at::meta::structured_baddbmm> op;
             op.meta(self, b1, b2, beta, alpha);
-            if (!gpu_dtypes_ok({self, b1, b2}))
+            if (!mm_dtypes_ok({self, b1, b2}))
                 return WEBGPU_FALLBACK0(baddbmm)(self, b1, b2, beta, alpha);
             baddbmm_impl(self, b1, b2, beta, alpha, op.outputs_[0]);
             return std::move(op.outputs_[0]);
@@ -144,7 +155,7 @@ namespace torch_webgpu::ops
         {
             Out<at::meta::structured_baddbmm> op(out);
             op.meta(self, b1, b2, beta, alpha);
-            if (!gpu_dtypes_ok({self, b1, b2, out}))
+            if (!mm_dtypes_ok({self, b1, b2, out}))
                 return WEBGPU_FALLBACK(baddbmm, out)(self, b1, b2, beta, alpha, out);
             baddbmm_impl(self, b1, b2, beta, alpha, op.maybe_get_output(0));
             op.finish();
@@ -155,7 +166,7 @@ namespace torch_webgpu::ops
         {
             Inplace<at::meta::structured_baddbmm> op(self);
             op.meta(self, b1, b2, beta, alpha);
-            if (!gpu_dtypes_ok({self, b1, b2}))
+            if (!mm_dtypes_ok({self, b1, b2}))
                 return WEBGPU_FALLBACK0(baddbmm_)(self, b1, b2, beta, alpha);
             baddbmm_impl(self, b1, b2, beta, alpha, op.maybe_get_output(0));
             op.finish();
@@ -172,7 +183,7 @@ namespace torch_webgpu::ops
         {
             Functional<at::meta::structured_addmv> op;
             op.meta(self, mat, vec, beta, alpha);
-            if (!gpu_dtypes_ok({self, mat, vec}))
+            if (!mm_dtypes_ok({self, mat, vec}))
                 return WEBGPU_FALLBACK0(addmv)(self, mat, vec, beta, alpha);
             addmv_impl(self, mat, vec, beta, alpha, op.outputs_[0]);
             return std::move(op.outputs_[0]);
@@ -182,7 +193,7 @@ namespace torch_webgpu::ops
         {
             Out<at::meta::structured_addmv> op(out);
             op.meta(self, mat, vec, beta, alpha);
-            if (!gpu_dtypes_ok({self, mat, vec, out}))
+            if (!mm_dtypes_ok({self, mat, vec, out}))
                 return WEBGPU_FALLBACK(addmv, out)(self, mat, vec, beta, alpha, out);
             addmv_impl(self, mat, vec, beta, alpha, op.maybe_get_output(0));
             op.finish();
@@ -199,7 +210,7 @@ namespace torch_webgpu::ops
             TORCH_CHECK(self.numel() == other.numel(), "inconsistent tensor size, expected tensor [", self.numel(),
                         "] and src [", other.numel(), "] to have the same number of elements, but got ", self.numel(),
                         " and ", other.numel(), " elements respectively");
-            if (!gpu_dtypes_ok({self, other}))
+            if (!mm_dtypes_ok({self, other}))
                 return WEBGPU_FALLBACK0(dot)(self, other);
             Tensor out = at::empty({}, self.options());
             gemm(self.unsqueeze(0).unsqueeze(0), other.unsqueeze(1).unsqueeze(0), out.view({1, 1, 1}), Tensor(), 0, 1);

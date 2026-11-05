@@ -49,6 +49,9 @@ def to_cpu(x):
 
 def compare(actual, expected, atol, rtol, path="out"):
     if isinstance(expected, torch.Tensor):
+        # Tolerance follows the result dtype (e.g. exp(int) -> float32).
+        if expected.dtype in TOLERANCES:
+            atol, rtol = max(atol, TOLERANCES[expected.dtype][0]), max(rtol, TOLERANCES[expected.dtype][1])
         if not isinstance(actual, torch.Tensor):
             raise AssertionError(f"{path}: expected tensor, got {type(actual)}")
         actual = actual.cpu()
@@ -79,13 +82,33 @@ def nondeterministic(op):
         "empty_like", "empty_strided", "new_empty", "new_empty_strided", "empty_permuted",
         "uniform", "exponential", "geometric", "cauchy", "log_normal", "randint", "randn", "rand",
         "nn.functional.rrelu", "torch._refs.empty", "torch._refs.empty_like",
+        "nn.functional.fractional_max_pool2d", "nn.functional.fractional_max_pool3d",
+        "svd_lowrank", "pca_lowrank",
     }
+
+
+def random_sample(op, sample):
+    # Samples that draw random numbers (dropout) can't match the CPU.
+    kw = sample.kwargs
+    if kw.get("dropout_p", 0) or kw.get("p", 0) and "dropout" in op.name:
+        return True
+    return op.name == "nn.functional.multi_head_attention_forward" and kw.get("training", False)
+
+
+def harness_limited(op):
+    # Samples that can't be reproduced by moving inputs to another device:
+    # as_strided on partial views depends on the original storage layout;
+    # tensor_split takes CPU index tensors; sparse layouts aren't supported.
+    return (op.name, op.variant_test_name) in {("as_strided", "partial_views"), ("tensor_split", "")} or \
+        op.name.startswith("sparse.") or op.name == "to_sparse"
 
 
 def run_op(op, dtype, max_samples=None):
     """Returns (status, message). status in {pass, fail, error, skip}."""
     if nondeterministic(op):
         return "skip", "nondeterministic"
+    if harness_limited(op):
+        return "skip", "not reproducible on another device"
     if dtype not in op.supported_dtypes("cpu"):
         return "skip", "dtype unsupported on cpu"
     atol, rtol = TOLERANCES.get(dtype, (0, 0))
@@ -96,6 +119,8 @@ def run_op(op, dtype, max_samples=None):
     if max_samples:
         samples = samples[:max_samples]
     for k, s in enumerate(samples):
+        if random_sample(op, s):
+            continue
         try:
             expected = op(s.input, *s.args, **s.kwargs)
         except Exception:  # noqa: BLE001

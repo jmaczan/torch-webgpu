@@ -22,7 +22,10 @@ namespace torch_webgpu::kernels
         void launch_one(at::TensorIteratorBase &iter, const ElementwiseOp &op)
         {
             TORCH_CHECK(iter.noutputs() == 1, "torch_webgpu: elementwise kernels support a single output");
-            IterLayout L = IterLayout::build(iter, op.scalars);
+            std::vector<CT> want;
+            for (int j = 0; j < iter.ntensors() - iter.noutputs(); ++j)
+                want.push_back(input_ct(op, j));
+            IterLayout L = IterLayout::build(iter, op.scalars, false, op.raw_copy ? std::vector<CT>{} : want);
             const int nt = L.ntensors, nout = L.noutputs;
 
             std::ostringstream key;
@@ -75,14 +78,15 @@ namespace torch_webgpu::kernels
                   << L.prologue();
                 if (op.raw_copy && nt == 1)
                 {
-                    // Raw fill: the value's bits are in the first scalar words.
+                    // Raw fill: value word j is the low word of scalar slot j
+                    // (each slot is two words).
                     size_t es = c10::elementSize(L.ops[0].dtype);
                     if (es <= 4)
                         s << "    st0(o0, P.scalars[0][0]);\n";
                     else if (es == 8)
-                        s << "    st0(o0, vec2<u32>(P.scalars[0][0], P.scalars[0][1]));\n";
+                        s << "    st0(o0, vec2<u32>(P.scalars[0][0], P.scalars[0][2]));\n";
                     else
-                        s << "    st0(o0, P.scalars[0]);\n";
+                        s << "    st0(o0, vec4<u32>(P.scalars[0][0], P.scalars[0][2], P.scalars[1][0], P.scalars[1][2]));\n";
                 }
                 else if (op.raw_copy)
                 {
@@ -122,31 +126,10 @@ namespace torch_webgpu::kernels
 
     uint32_t scalar_word(const c10::Scalar &s, CT ct)
     {
-        uint32_t w = 0;
-        switch (ct)
-        {
-        case CT::F32:
-        {
-            float f = s.isComplex() ? static_cast<float>(s.toComplexDouble().real())
-                      : s.isBoolean() ? (s.toBool() ? 1.0f : 0.0f)
-                                      : static_cast<float>(s.toDouble());
-            std::memcpy(&w, &f, 4);
-            break;
-        }
-        case CT::I32:
-        {
-            int64_t v = s.isFloatingPoint() ? static_cast<int64_t>(s.toDouble())
-                        : s.isBoolean()     ? (s.toBool() ? 1 : 0)
-                                            : s.toLong();
-            int32_t i = static_cast<int32_t>(v);
-            std::memcpy(&w, &i, 4);
-            break;
-        }
-        case CT::Bool:
-            w = s.isFloatingPoint() ? (s.toDouble() != 0.0) : s.isBoolean() ? s.toBool() : (s.toLong() != 0);
-            break;
-        }
-        return w;
+        TORCH_INTERNAL_ASSERT(ct != CT::I64, "scalar_word: int64 scalars need two words");
+        uint32_t w[2];
+        wgsl::encode_scalar(s, ct, w);
+        return w[0];
     }
 
     void run_elementwise(at::TensorIteratorBase &iter, const ElementwiseOp &op)

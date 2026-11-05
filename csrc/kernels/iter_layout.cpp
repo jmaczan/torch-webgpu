@@ -17,7 +17,7 @@ namespace torch_webgpu::kernels
     }
 
     IterLayout IterLayout::build(at::TensorIteratorBase &iter, const std::vector<std::pair<c10::Scalar, CT>> &scalars,
-                                 bool atomic_outputs)
+                                 bool atomic_outputs, const std::vector<CT> &cpu_scalar_cts)
     {
         IterLayout L;
         L.ntensors = iter.ntensors();
@@ -29,11 +29,17 @@ namespace torch_webgpu::kernels
         for (int d = 0; d < kIterMaxDims; ++d)
             L.shape[d] = d < iter.ndim() ? checked_u32(iter.shape()[d], "size") : 1u;
 
-        for (auto &[s, ct] : scalars)
+        auto add_scalar = [&](const c10::Scalar &s, CT ct)
         {
-            L.scalar_words.push_back(scalar_word(s, ct));
+            uint32_t w[2];
+            wgsl::encode_scalar(s, ct, w);
+            L.scalar_words.push_back(w[0]);
+            L.scalar_words.push_back(w[1]);
             L.scalar_cts.push_back(ct);
-        }
+            return static_cast<int>(L.scalar_cts.size() - 1);
+        };
+        for (auto &[s, ct] : scalars)
+            add_scalar(s, ct);
 
         L.ops.resize(L.ntensors);
         for (int k = 0; k < L.ntensors; ++k)
@@ -52,10 +58,16 @@ namespace torch_webgpu::kernels
                             "torch_webgpu: unsupported scalar dtype ", o.dtype);
                 if (!wgsl::is_compute_dtype(o.dtype))
                     o.dtype = c10::kFloat;
-                CT own = wgsl::compute_type(o.dtype);
-                o.scalar_slot = static_cast<int>(L.scalar_words.size());
-                L.scalar_words.push_back(scalar_word(at::Tensor(iter.tensor_base(k)).item(), own));
-                L.scalar_cts.push_back(own);
+                CT ct = wgsl::compute_type(o.dtype);
+                const size_t j = static_cast<size_t>(k - L.noutputs);
+                if (j < cpu_scalar_cts.size())
+                {
+                    // Encode directly in the requested type; record a dtype
+                    // with that compute type so codegen sees no conversion.
+                    ct = cpu_scalar_cts[j];
+                    o.dtype = ct == CT::F32 ? c10::kFloat : ct == CT::I32 ? c10::kInt : ct == CT::I64 ? c10::kLong : c10::kBool;
+                }
+                o.scalar_slot = add_scalar(at::Tensor(iter.tensor_base(k)).item(), ct);
                 continue;
             }
             const auto &t = iter.tensor_base(k);
@@ -159,8 +171,7 @@ namespace torch_webgpu::kernels
 
     std::string IterLayout::scalar_expr(int slot) const
     {
-        std::string w = "P.scalars[" + std::to_string(slot / 4) + "][" + std::to_string(slot % 4) + "]";
-        return wgsl::scalar_from_word(w, scalar_cts[slot]);
+        return wgsl::scalar_slot_expr(slot, scalar_cts[slot]);
     }
 
     void IterLayout::fill_params(core::Params &p, uint32_t row_stride, const std::vector<uint32_t> &extra) const

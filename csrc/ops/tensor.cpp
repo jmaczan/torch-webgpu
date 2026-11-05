@@ -407,7 +407,7 @@ namespace torch_webgpu::ops
 
         // ----------------------------------------------------- ranges
         void affine_fill(const at::Tensor &out, const char *name, const char *code_f, const char *code_i,
-                         std::vector<std::pair<at::Scalar, CT>> scalars)
+                         const char *code_l, std::vector<std::pair<at::Scalar, CT>> scalars)
         {
             if (out.numel() == 0)
                 return;
@@ -417,7 +417,7 @@ namespace torch_webgpu::ops
             op.name = name;
             op.in_ct = wgsl::compute_type(out.scalar_type());
             op.out_ct = op.in_ct == CT::Bool ? CT::I32 : op.in_ct;
-            op.code = op.out_ct == CT::F32 ? code_f : code_i;
+            op.code = op.out_ct == CT::F32 ? code_f : op.out_ct == CT::I64 ? code_l : code_i;
             op.pass_index = true;
             op.scalars = std::move(scalars);
             kernels::run_elementwise(iter, op);
@@ -442,8 +442,9 @@ namespace torch_webgpu::ops
             int64_t size = static_cast<int64_t>(size_d);
             if (out.numel() != size)
                 out.resize_({size});
-            CT ct = fp ? CT::F32 : CT::I32;
-            affine_fill(out, "arange", "s0 + f32(idx) * s1", "s0 + i32(idx) * s1", {{start, ct}, {step, ct}});
+            CT ct = fp ? CT::F32 : wgsl::compute_type(out.scalar_type());
+            affine_fill(out, "arange", "s0 + f32(idx) * s1", "s0 + i32(idx) * s1", "i64_add(s0, i64_mul(i64_from_u32(idx), s1))",
+                        {{start, ct}, {step, ct}});
             return out;
         }
 
@@ -465,6 +466,7 @@ namespace torch_webgpu::ops
             affine_fill(out, "linspace",
                         "select(s1 - s2 * f32(u32(s3) - 1u - idx), s0 + s2 * f32(idx), idx < u32(s4))",
                         "i32(select(s1 - s2 * f32(u32(s3) - 1u - idx), s0 + s2 * f32(idx), idx < u32(s4)))",
+                        "i64_from_f32(select(s1 - s2 * f32(u32(s3) - 1u - idx), s0 + s2 * f32(idx), idx < u32(s4)))",
                         {{s, CT::F32}, {e, CT::F32}, {step, CT::F32}, {at::Scalar(steps), CT::I32}, {at::Scalar(half), CT::I32}});
             return out;
         }

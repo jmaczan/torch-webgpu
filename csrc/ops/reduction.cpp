@@ -51,6 +51,8 @@ namespace torch_webgpu::ops
         }
 
         // ----------------------------------------------------- op builders
+        // Generic accumulators use the typed helpers (t_add, t_mul, ...) so
+        // they work for every compute type, including emulated int64.
         ReduceOp sum_like(const char *name, CT ct, const char *step, const char *out)
         {
             ReduceOp op;
@@ -58,17 +60,17 @@ namespace torch_webgpu::ops
             op.in_ct = ct;
             op.out0_ct = ct;
             op.acc_struct = std::string("struct Acc { v: ") + tname(ct) + ", };";
-            op.init = std::string("    return Acc(") + tname(ct) + "(0));";
+            op.init = "    return Acc(t_zero());";
             op.step = step;
-            op.combine = "    return Acc(a.v + b.v);";
+            op.combine = "    return Acc(t_add(a.v, b.v));";
             op.out0 = out;
             return op;
         }
 
-        ReduceOp sum_op(CT ct) { return sum_like("sum", ct, "    return Acc(a.v + x);", "    return a.v;"); }
+        ReduceOp sum_op(CT ct) { return sum_like("sum", ct, "    return Acc(t_add(a.v, x));", "    return a.v;"); }
         ReduceOp nansum_op(CT ct)
         {
-            return sum_like("nansum", ct, ct == CT::F32 ? "    return Acc(select(a.v + x, a.v, isnan_f(x)));" : "    return Acc(a.v + x);",
+            return sum_like("nansum", ct, ct == CT::F32 ? "    return Acc(select(a.v + x, a.v, isnan_f(x)));" : "    return Acc(t_add(a.v, x));",
                             "    return a.v;");
         }
         ReduceOp mean_op() { return sum_like("mean", CT::F32, "    return Acc(a.v + x);", "    return a.v / f32(n);"); }
@@ -80,9 +82,9 @@ namespace torch_webgpu::ops
             op.in_ct = ct;
             op.out0_ct = ct;
             op.acc_struct = std::string("struct Acc { v: ") + tname(ct) + ", };";
-            op.init = ct == CT::Bool ? "    return Acc(true);" : std::string("    return Acc(") + tname(ct) + "(1));";
-            op.step = ct == CT::Bool ? "    return Acc(a.v && x);" : "    return Acc(a.v * x);";
-            op.combine = ct == CT::Bool ? "    return Acc(a.v && b.v);" : "    return Acc(a.v * b.v);";
+            op.init = "    return Acc(t_one());";
+            op.step = "    return Acc(t_mul(a.v, x));";
+            op.combine = "    return Acc(t_mul(a.v, b.v));";
             op.out0 = "    return a.v;";
             return op;
         }
@@ -106,6 +108,12 @@ namespace torch_webgpu::ops
                 op.init = is_max ? "    return Acc(-2147483647 - 1);" : "    return Acc(2147483647);";
                 op.step = is_max ? "    return Acc(max(a.v, x));" : "    return Acc(min(a.v, x));";
                 op.combine = is_max ? "    return Acc(max(a.v, b.v));" : "    return Acc(min(a.v, b.v));";
+            }
+            else if (ct == CT::I64)
+            {
+                op.init = is_max ? "    return Acc(i64(0u, 0x80000000u));" : "    return Acc(i64(0xffffffffu, 0x7fffffffu));";
+                op.step = is_max ? "    return Acc(i64_max(a.v, x));" : "    return Acc(i64_min(a.v, x));";
+                op.combine = is_max ? "    return Acc(i64_max(a.v, b.v));" : "    return Acc(i64_min(a.v, b.v));";
             }
             else
             {
@@ -137,6 +145,11 @@ namespace torch_webgpu::ops
                 better = is_max ? "(x > y)" : "(x < y)";
                 eq = "(x == y)";
             }
+            else if (ct == CT::I64)
+            {
+                better = is_max ? "i64_gt(x, y)" : "i64_lt(x, y)";
+                eq = "i64_eq(x, y)";
+            }
             else
             {
                 better = is_max ? "(x && !y)" : "(!x && y)";
@@ -144,7 +157,7 @@ namespace torch_webgpu::ops
             }
             op.acc_struct += std::string("fn arg_better(x: ") + T + ", y: " + T + ") -> bool { return " + better + "; }\n" +
                              "fn arg_eq(x: " + T + ", y: " + T + ") -> bool { return " + eq + "; }\n";
-            op.init = std::string("    return Acc(") + T + "(0), 0xffffffffu);";
+            op.init = "    return Acc(t_zero(), 0xffffffffu);";
             op.step = "    if (a.i == 0xffffffffu || arg_better(x, a.v)) { return Acc(x, r); }\n    return a;";
             op.combine = "    if (b.i == 0xffffffffu) { return a; }\n"
                          "    if (a.i == 0xffffffffu) { return b; }\n"
@@ -798,24 +811,24 @@ namespace torch_webgpu::ops
 
         // ------------------------------------------------- cumsum/cumprod
         const char *kScan = R"(
-    var carry = T(0);
+    var carry = t_zero();
     for (var t0 = 0u; t0 < n; t0 = t0 + 256u) {
         let j = t0 + lid;
-        var v = T(0);
+        var v = t_zero();
         if (j < n) { v = ld0(j); }
         let sc = wg_scan(v);
-        if (j < n) { st0(j, sc + carry); }
-        carry = carry + wg_bcast(sc, 255u);
+        if (j < n) { st0(j, t_add(sc, carry)); }
+        carry = t_add(carry, wg_bcast(sc, 255u));
     })";
         const char *kScanMul = R"(
-    var carry = T(1);
+    var carry = t_one();
     for (var t0 = 0u; t0 < n; t0 = t0 + 256u) {
         let j = t0 + lid;
-        var v = T(1);
+        var v = t_one();
         if (j < n) { v = ld0(j); }
         let sc = wg_scan_mul(v);
-        if (j < n) { st0(j, sc * carry); }
-        carry = carry * wg_bcast(sc, 255u);
+        if (j < n) { st0(j, t_mul(sc, carry)); }
+        carry = t_mul(carry, wg_bcast(sc, 255u));
     })";
 
         void scan_impl(const Tensor &self, int64_t dim, const Tensor &out, bool mul)

@@ -27,18 +27,7 @@ namespace torch_webgpu::ops
         const std::string &philox_wgsl()
         {
             static const std::string s = R"(
-fn mulhilo(a: u32, b: u32) -> vec2<u32> {
-    let a_lo = a & 0xffffu; let a_hi = a >> 16u;
-    let b_lo = b & 0xffffu; let b_hi = b >> 16u;
-    let lolo = a_lo * b_lo;
-    let lohi = a_lo * b_hi;
-    let hilo = a_hi * b_lo;
-    let hihi = a_hi * b_hi;
-    let mid = (lolo >> 16u) + (lohi & 0xffffu) + (hilo & 0xffffu);
-    let hi = hihi + (lohi >> 16u) + (hilo >> 16u) + (mid >> 16u);
-    let lo = (mid << 16u) | (lolo & 0xffffu);
-    return vec2<u32>(hi, lo);
-}
+// mulhilo comes from the WGSL prelude.
 fn philox(ctr0: vec4<u32>, key0: vec2<u32>) -> vec4<u32> {
     var c = ctr0;
     var k = key0;

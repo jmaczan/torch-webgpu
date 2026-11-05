@@ -38,10 +38,22 @@ namespace torch_webgpu::kernels
             std::string s;
             for (size_t j = 0; j < scalars.size(); ++j)
                 s += "    let s" + std::to_string(j) + " = " +
-                     wgsl::scalar_from_word("P.scalars[" + std::to_string(j / 4) + "][" + std::to_string(j % 4) + "]",
-                                            scalars[j].second) +
-                     ";\n";
+                     wgsl::scalar_slot_expr(static_cast<int>(j), scalars[j].second) + ";\n";
             return s;
+        }
+
+        void put_scalars(core::Params &p, const std::vector<std::pair<c10::Scalar, CT>> &scalars, int nsv)
+        {
+            std::vector<uint32_t> words;
+            for (auto &[sc, ct] : scalars)
+            {
+                uint32_t w[2];
+                wgsl::encode_scalar(sc, ct, w);
+                words.push_back(w[0]);
+                words.push_back(w[1]);
+            }
+            for (int j = 0; j < nsv * 4; ++j)
+                p.u32(j < static_cast<int>(words.size()) ? words[j] : 0u);
         }
 
         uint32_t elem_offset(const at::Tensor &t)
@@ -139,7 +151,7 @@ namespace torch_webgpu::kernels
         TORCH_CHECK(!has_out1 || core::buffer_of(out0).Get() != core::buffer_of(out1).Get(),
                     "torch_webgpu: reduction outputs must not alias");
 
-        const int nsv = (static_cast<int>(op.scalars.size()) + 3) / 4;
+        const int nsv = (2 * static_cast<int>(op.scalars.size()) + 3) / 4;
         std::ostringstream key;
         key << "red|" << op.name << '|' << op.acc_struct << op.init << op.step << op.combine << op.out0 << op.out1
             << '|' << int(op.in_ct) << int(op.out0_ct) << int(op.out1_ct) << '|' << int(in_t) << ',' << int(o0_t)
@@ -175,6 +187,7 @@ namespace torch_webgpu::kernels
                 s << wgsl::store_fn("st_o1", "bo1", o1_t);
             const char *IT = wgsl::type_name(op.in_ct);
             std::string lets = scalar_lets(op.scalars);
+            s << wgsl::typed_ops(op.in_ct);
             s << op.acc_struct << "\n";
             s << "fn acc_init() -> Acc {\n" << lets << op.init << "\n}\n";
             s << "fn acc_step(a: Acc, x: " << IT << ", r: u32) -> Acc {\n" << lets << op.step << "\n}\n";
@@ -279,8 +292,7 @@ namespace torch_webgpu::kernels
         put([&](size_t d) { return u32_of(kept[d].out1_stride, "stride"); }, kept.size());
         put([&](size_t d) { return u32_of(red[d].size, "size"); }, red.size());
         put([&](size_t d) { return u32_of(red[d].stride, "stride"); }, red.size());
-        for (int j = 0; j < nsv * 4; ++j)
-            p.u32(j < static_cast<int>(op.scalars.size()) ? scalar_word(op.scalars[j].first, op.scalars[j].second) : 0u);
+        put_scalars(p, op.scalars, nsv);
 
         std::vector<core::BufferBinding> bufs{{core::buffer_of(input)}, {core::buffer_of(out0)}};
         if (has_out1)
@@ -354,7 +366,7 @@ namespace torch_webgpu::kernels
         for (size_t k = 0; k < row_outputs.size(); ++k)
             bind[nt + k] = bind_of(row_outputs[k], true);
 
-        const int nsv = (static_cast<int>(op.scalars.size()) + 3) / 4;
+        const int nsv = (2 * static_cast<int>(op.scalars.size()) + 3) / 4;
         const int nin = static_cast<int>(inputs.size());
         std::ostringstream key;
         key << "rows|" << op.name << '|' << op.body << '|' << NO << '|' << nsv << '|' << int(op.ct);
@@ -420,6 +432,7 @@ namespace torch_webgpu::kernels
                 s << "fn rst" << k << "(v: T) { if (lid == 0u) { raw_rst" << k << "(base" << idx << " + row, "
                   << wgsl::convert("v", op.ct, wgsl::compute_type(row_outputs[k].scalar_type())) << "); } }\n";
             }
+            s << wgsl::typed_ops(op.ct);
             auto wg_red = [&](const char *name, const char *combine)
             {
                 s << "fn " << name << "(v: T) -> T {\n"
@@ -436,15 +449,15 @@ namespace torch_webgpu::kernels
             }
             else
             {
-                wg_red("wg_sum", "a + b");
-                wg_red("wg_max", op.ct == CT::F32 ? "max_nan(a, b)" : "max(a, b)");
-                wg_red("wg_min", op.ct == CT::F32 ? "min_nan(a, b)" : "min(a, b)");
+                wg_red("wg_sum", "t_add(a, b)");
+                wg_red("wg_max", "t_max(a, b)");
+                wg_red("wg_min", "t_min(a, b)");
                 // Hillis-Steele inclusive scan across the workgroup.
                 s << "fn wg_scan(v: T) -> T {\n"
                   << "    red_f[lid] = v;\n    workgroupBarrier();\n"
                   << "    for (var st = 1u; st < " << kWG << "u; st = st << 1u) {\n"
                   << "        var t = red_f[lid];\n"
-                  << "        if (lid >= st) { t = t + red_f[lid - st]; }\n"
+                  << "        if (lid >= st) { t = t_add(t, red_f[lid - st]); }\n"
                   << "        workgroupBarrier();\n"
                   << "        red_f[lid] = t;\n"
                   << "        workgroupBarrier();\n    }\n"
@@ -453,7 +466,7 @@ namespace torch_webgpu::kernels
                   << "    red_f[lid] = v;\n    workgroupBarrier();\n"
                   << "    for (var st = 1u; st < " << kWG << "u; st = st << 1u) {\n"
                   << "        var t = red_f[lid];\n"
-                  << "        if (lid >= st) { t = t * red_f[lid - st]; }\n"
+                  << "        if (lid >= st) { t = t_mul(t, red_f[lid - st]); }\n"
                   << "        workgroupBarrier();\n"
                   << "        red_f[lid] = t;\n"
                   << "        workgroupBarrier();\n    }\n"
@@ -508,8 +521,7 @@ namespace torch_webgpu::kernels
                 off = elem_offset(row_outputs[k - nt]);
             p.u32(off);
         }
-        for (int j = 0; j < nsv * 4; ++j)
-            p.u32(j < static_cast<int>(op.scalars.size()) ? scalar_word(op.scalars[j].first, op.scalars[j].second) : 0u);
+        put_scalars(p, op.scalars, nsv);
 
         const uint32_t R = u32_of(rows, "rows");
         const uint32_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;

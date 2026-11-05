@@ -125,6 +125,7 @@ namespace torch_webgpu::ops
             const char *f = nullptr;
             const char *i = nullptr;
             const char *b = nullptr;
+            const char *l = nullptr; // int64 (emulated i64)
         };
 
         struct Opts
@@ -136,14 +137,16 @@ namespace torch_webgpu::ops
             std::optional<CT> in_ct;      // default: compute type of common dtype
         };
 
-        void run(TensorIteratorBase &it, const char *name, const Expr &e, Opts o = {})
+        // Returns false (without launching) when the expression has no
+        // variant for the compute type; callers then use the CPU fallback.
+        bool run(TensorIteratorBase &it, const char *name, const Expr &e, Opts o = {})
         {
             CT ct = o.in_ct ? *o.in_ct : kernels::common_ct(it);
             const char *code = ct == CT::F32 ? e.f : ct == CT::I32 ? e.i
+                                                 : ct == CT::I64   ? e.l
                                                                    : e.b;
-            TORCH_CHECK(code != nullptr, "torch_webgpu: '", name, "' is not implemented for dtype ",
-                        ct == CT::Bool ? "bool" : ct == CT::I32 ? "integral"
-                                                                : "floating");
+            if (code == nullptr)
+                return false;
             ElementwiseOp op;
             op.name = name;
             op.code = code;
@@ -155,6 +158,7 @@ namespace torch_webgpu::ops
                 op.scalars.push_back({s, sct});
             op.helpers = kernels::math_wgsl();
             kernels::run_elementwise(it, op);
+            return true;
         }
 
         // True when all iterator operands (except CPU scalars) and the common
@@ -181,18 +185,16 @@ namespace torch_webgpu::ops
     {                                                                                     \
         Functional<at::meta::structured_##NAME> op;                                       \
         op.meta(self);                                                                    \
-        if (!iter_ok(op))                                                                 \
+        if (!iter_ok(op) || !KERNEL(op))                                                  \
             return WEBGPU_FALLBACK0(NAME)(self);                                          \
-        KERNEL(op);                                                                       \
         return std::move(op.outputs_[0]);                                                 \
     }                                                                                     \
     Tensor &NAME##_out_fn(const Tensor &self, Tensor &out)                                \
     {                                                                                     \
         Out<at::meta::structured_##NAME> op(out);                                         \
         op.meta(self);                                                                    \
-        if (!iter_ok(op))                                                                 \
+        if (!iter_ok(op) || !KERNEL(op))                                                  \
             return WEBGPU_FALLBACK(NAME, out)(self, out);                                 \
-        KERNEL(op);                                                                       \
         op.finish();                                                                      \
         return out;                                                                       \
     }                                                                                     \
@@ -200,9 +202,8 @@ namespace torch_webgpu::ops
     {                                                                                     \
         Inplace<at::meta::structured_##NAME> op(self);                                    \
         op.meta(self);                                                                    \
-        if (!iter_ok(op))                                                                 \
+        if (!iter_ok(op) || !KERNEL(op))                                                  \
             return WEBGPU_FALLBACK0(NAME##_)(self);                                       \
-        KERNEL(op);                                                                       \
         op.finish();                                                                      \
         return self;                                                                      \
     }
@@ -218,18 +219,16 @@ namespace torch_webgpu::ops
     {                                                                                    \
         Functional<at::meta::META> op;                                                   \
         op.meta(self ARGS);                                                              \
-        if (!iter_ok(op))                                                                \
-            return FB_F(self ARGS);                                                      \
-        KERNEL(op);                                                                      \
+        if (!iter_ok(op) || !KERNEL(op))                                                                \
+            return FB_F(self ARGS);                                                                      \
         return std::move(op.outputs_[0]);                                                \
     }                                                                                    \
     Tensor &ID##_out_fn(const Tensor &self PARAMS, Tensor &out)                          \
     {                                                                                    \
         Out<at::meta::META> op(out);                                                     \
         op.meta(self ARGS);                                                              \
-        if (!iter_ok(op))                                                                \
-            return FB_O(self ARGS, out);                                                 \
-        KERNEL(op);                                                                      \
+        if (!iter_ok(op) || !KERNEL(op))                                                                \
+            return FB_O(self ARGS, out);                                                                      \
         op.finish();                                                                     \
         return out;                                                                      \
     }                                                                                    \
@@ -237,9 +236,8 @@ namespace torch_webgpu::ops
     {                                                                                    \
         Inplace<at::meta::META> op(self);                                                \
         op.meta(self ARGS);                                                              \
-        if (!iter_ok(op))                                                                \
-            return FB_I(self ARGS);                                                      \
-        KERNEL(op);                                                                      \
+        if (!iter_ok(op) || !KERNEL(op))                                                                \
+            return FB_I(self ARGS);                                                                      \
         op.finish();                                                                     \
         return self;                                                                     \
     }
@@ -249,18 +247,16 @@ namespace torch_webgpu::ops
     {                                                                                    \
         Functional<at::meta::META> op;                                                   \
         op.meta(self ARGS);                                                              \
-        if (!iter_ok(op))                                                                \
-            return FB_F(self ARGS);                                                      \
-        KERNEL(op);                                                                      \
+        if (!iter_ok(op) || !KERNEL(op))                                                                \
+            return FB_F(self ARGS);                                                                      \
         return std::move(op.outputs_[0]);                                                \
     }                                                                                    \
     Tensor &ID##_out_fn(const Tensor &self PARAMS, Tensor &out)                          \
     {                                                                                    \
         Out<at::meta::META> op(out);                                                     \
         op.meta(self ARGS);                                                              \
-        if (!iter_ok(op))                                                                \
-            return FB_O(self ARGS, out);                                                 \
-        KERNEL(op);                                                                      \
+        if (!iter_ok(op) || !KERNEL(op))                                                                \
+            return FB_O(self ARGS, out);                                                                      \
         op.finish();                                                                     \
         return out;                                                                      \
     }
@@ -279,7 +275,7 @@ namespace torch_webgpu::ops
     namespace
     {
         // ----------------------------------------------------------- unary
-#define K(NAME, ...) [&](TensorIteratorBase &it) { run(it, NAME, __VA_ARGS__); }
+#define K(NAME, ...) [&](TensorIteratorBase &it) { return run(it, NAME, __VA_ARGS__); }
         WG_UNARY(sin, K("sin", {"sin_f(x0)"}))
         WG_UNARY(cos, K("cos", {"cos_f(x0)"}))
         WG_UNARY(tan, K("tan", {"tan_f(x0)"}))
@@ -307,15 +303,15 @@ namespace torch_webgpu::ops
         WG_UNARY(erfc, K("erfc", {"erfc_f(x0)"}))
         WG_UNARY(erfinv, K("erfinv", {"erfinv_f(x0)"}))
         WG_UNARY(sinc, K("sinc", {"select(sin_f(3.14159265358979 * x0) / (3.14159265358979 * x0), 1.0, x0 == 0.0)"}))
-        WG_UNARY(neg, K("neg", {"-x0", "-x0"}))
-        WG_UNARY(floor, K("floor", {"floor(x0)", "x0", "x0"}))
-        WG_UNARY(ceil, K("ceil", {"ceil(x0)", "x0", "x0"}))
-        WG_UNARY(trunc, K("trunc", {"trunc(x0)", "x0", "x0"}))
-        WG_UNARY(round, K("round", {"round(x0)", "x0", "x0"}))
+        WG_UNARY(neg, K("neg", {"-x0", "-x0", nullptr, "i64_neg(x0)"}))
+        WG_UNARY(floor, K("floor", {"floor(x0)", "x0", "x0", "x0"}))
+        WG_UNARY(ceil, K("ceil", {"ceil(x0)", "x0", "x0", "x0"}))
+        WG_UNARY(trunc, K("trunc", {"trunc(x0)", "x0", "x0", "x0"}))
+        WG_UNARY(round, K("round", {"round(x0)", "x0", "x0", "x0"}))
         WG_UNARY(frac, K("frac", {"x0 - trunc(x0)"}))
-        WG_UNARY(sign, K("sign", {"select(sign(x0), x0, isnan_f(x0))", "sign(x0)", "x0"}))
-        WG_UNARY(sgn, K("sgn", {"select(sign(x0), x0, isnan_f(x0))", "sign(x0)", "x0"}))
-        WG_UNARY(bitwise_not, K("bitwise_not", {nullptr, "~x0", "!x0"}))
+        WG_UNARY(sign, K("sign", {"select(sign(x0), x0, isnan_f(x0))", "sign(x0)", "x0", "i64_sign(x0)"}))
+        WG_UNARY(sgn, K("sgn", {"select(sign(x0), x0, isnan_f(x0))", "sign(x0)", "x0", "i64_sign(x0)"}))
+        WG_UNARY(bitwise_not, K("bitwise_not", {nullptr, "~x0", "!x0", "~x0"}))
         WG_UNARY(silu, K("silu", {"x0 / (1.0 + exp(-x0))"}))
         WG_UNARY(mish, K("mish", {"x0 * tanh_f(select(log1p_f(exp(x0)), x0, x0 > 20.0))"}))
         WG_UNARY(hardsigmoid, K("hardsigmoid", {"clamp(x0 / 6.0 + 0.5, 0.0, 1.0)"}))
@@ -332,14 +328,13 @@ namespace torch_webgpu::ops
                WEBGPU_FALLBACK0(isneginf), WEBGPU_FALLBACK(isneginf, out))
 
         // gelu(self, approximate)
-        void gelu_kernel(TensorIteratorBase &it, c10::string_view approximate)
+        bool gelu_kernel(TensorIteratorBase &it, c10::string_view approximate)
         {
             if (approximate == "tanh")
-                run(it, "gelu_tanh", {"gelu_tanh(x0)"});
-            else
-                run(it, "gelu", {"gelu_erf(x0)"});
+                return run(it, "gelu_tanh", {"gelu_tanh(x0)"});
+            return run(it, "gelu", {"gelu_erf(x0)"});
         }
-        WG_OP3(gelu, structured_gelu, [&](TensorIteratorBase &it) { gelu_kernel(it, approximate); },
+        WG_OP3(gelu, structured_gelu, [&](TensorIteratorBase &it) { return gelu_kernel(it, approximate); },
                P1(c10::string_view, approximate), A1(approximate), WEBGPU_FALLBACK0(gelu),
                WEBGPU_FALLBACK(gelu, out), WEBGPU_FALLBACK0(gelu_))
 
@@ -360,7 +355,7 @@ namespace torch_webgpu::ops
                P2(const Scalar &, beta, const Scalar &, threshold), A2(beta, threshold), WEBGPU_FALLBACK0(softplus),
                WEBGPU_FALLBACK(softplus, out))
         WG_OP3(threshold, structured_threshold,
-               K("threshold", {"select(x0, s1, x0 <= s0)", "select(x0, s1, x0 <= s0)"}, Opts{.scalars = {threshold, value}}),
+               K("threshold", {"select(x0, s1, x0 <= s0)", "select(x0, s1, x0 <= s0)", nullptr, "select(x0, s1, i64_le(x0, s0))"}, Opts{.scalars = {threshold, value}}),
                P2(const Scalar &, threshold, const Scalar &, value), A2(threshold, value), WEBGPU_FALLBACK0(threshold),
                WEBGPU_FALLBACK(threshold, out), WEBGPU_FALLBACK0(threshold_))
         WG_OP3(elu, structured_elu,
@@ -371,47 +366,49 @@ namespace torch_webgpu::ops
                WEBGPU_FALLBACK0(elu_))
 
         // ---------------------------------------------------------- binary
-        void add_kernel(TensorIteratorBase &it, const Scalar &alpha, const char *name, bool subtract)
+        bool add_kernel(TensorIteratorBase &it, const Scalar &alpha, const char *name, bool subtract)
         {
+            const bool unit = !alpha.isComplex() && alpha.toDouble() == 1.0;
             if (subtract)
-                run(it, name, {"x0 - s0 * x1", "x0 - s0 * x1", nullptr}, Opts{.scalars = {alpha}});
-            else
-                run(it, name, {"x0 + s0 * x1", "x0 + s0 * x1", "x0 || (s0 && x1)"}, Opts{.scalars = {alpha}});
+                return unit ? run(it, name, {"x0 - x1", "x0 - x1", nullptr, "i64_sub(x0, x1)"})
+                            : run(it, name, {"x0 - s0 * x1", "x0 - s0 * x1", nullptr, "i64_sub(x0, i64_mul(s0, x1))"},
+                                  Opts{.scalars = {alpha}});
+            return unit ? run(it, name, {"x0 + x1", "x0 + x1", "x0 || x1", "i64_add(x0, x1)"})
+                        : run(it, name, {"x0 + s0 * x1", "x0 + s0 * x1", "x0 || (s0 && x1)", "i64_add(x0, i64_mul(s0, x1))"},
+                              Opts{.scalars = {alpha}});
         }
-        WG_OP3(add, structured_add_Tensor, [&](TensorIteratorBase &it) { add_kernel(it, alpha, "add", false); },
+        WG_OP3(add, structured_add_Tensor, [&](TensorIteratorBase &it) { return add_kernel(it, alpha, "add", false); },
                P2(const Tensor &, other, const Scalar &, alpha), A2(other, alpha), WEBGPU_FALLBACK(add, Tensor),
                WEBGPU_FALLBACK(add, out), WEBGPU_FALLBACK(add_, Tensor))
-        WG_OP3(sub, structured_sub_Tensor, [&](TensorIteratorBase &it) { add_kernel(it, alpha, "sub", true); },
+        WG_OP3(sub, structured_sub_Tensor, [&](TensorIteratorBase &it) { return add_kernel(it, alpha, "sub", true); },
                P2(const Tensor &, other, const Scalar &, alpha), A2(other, alpha), WEBGPU_FALLBACK(sub, Tensor),
                WEBGPU_FALLBACK(sub, out), WEBGPU_FALLBACK(sub_, Tensor))
-        WG_OP3(mul, structured_mul_Tensor, K("mul", {"x0 * x1", "x0 * x1", "x0 && x1"}), P1(const Tensor &, other),
+        WG_OP3(mul, structured_mul_Tensor, K("mul", {"x0 * x1", "x0 * x1", "x0 && x1", "i64_mul(x0, x1)"}), P1(const Tensor &, other),
                A1(other), WEBGPU_FALLBACK(mul, Tensor), WEBGPU_FALLBACK(mul, out), WEBGPU_FALLBACK(mul_, Tensor))
         WG_OP3(div, structured_div_Tensor, K("div", {"x0 / x1"}), P1(const Tensor &, other), A1(other),
                WEBGPU_FALLBACK(div, Tensor), WEBGPU_FALLBACK(div, out), WEBGPU_FALLBACK(div_, Tensor))
 
-        void div_mode_kernel(TensorIteratorBase &it, std::optional<c10::string_view> mode)
+        bool div_mode_kernel(TensorIteratorBase &it, std::optional<c10::string_view> mode)
         {
             if (!mode.has_value())
-                run(it, "div", {"x0 / x1"});
-            else if (*mode == "trunc")
-                run(it, "div_trunc", {"trunc(x0 / x1)", "select(x0 / x1, 0, x1 == 0)", nullptr});
-            else if (*mode == "floor")
-                run(it, "div_floor", {"div_floor_f(x0, x1)", "div_floor_i(x0, x1)", nullptr});
-            else
-                TORCH_CHECK(false, "div expected rounding_mode to be one of None, 'trunc', or 'floor' but found '",
-                            *mode, "'");
+                return run(it, "div", {"x0 / x1"});
+            if (*mode == "trunc")
+                return run(it, "div_trunc", {"trunc(x0 / x1)", "select(x0 / x1, 0, x1 == 0)", nullptr, "i64_div_trunc(x0, x1)"});
+            if (*mode == "floor")
+                return run(it, "div_floor", {"div_floor_f(x0, x1)", "div_floor_i(x0, x1)", nullptr, "i64_div_floor(x0, x1)"});
+            TORCH_CHECK(false, "div expected rounding_mode to be one of None, 'trunc', or 'floor' but found '", *mode, "'");
         }
-        WG_OP3(div_mode, structured_div_Tensor_mode, [&](TensorIteratorBase &it) { div_mode_kernel(it, rounding_mode); },
+        WG_OP3(div_mode, structured_div_Tensor_mode, [&](TensorIteratorBase &it) { return div_mode_kernel(it, rounding_mode); },
                P2(const Tensor &, other, std::optional<c10::string_view>, rounding_mode), A2(other, rounding_mode),
                WEBGPU_FALLBACK(div, Tensor_mode), WEBGPU_FALLBACK(div, out_mode), WEBGPU_FALLBACK(div_, Tensor_mode))
 
-        WG_OP2(maximum, structured_maximum, K("maximum", {"max_nan(x0, x1)", "max(x0, x1)", "x0 || x1"}),
+        WG_OP2(maximum, structured_maximum, K("maximum", {"max_nan(x0, x1)", "max(x0, x1)", "x0 || x1", "i64_max(x0, x1)"}),
                P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK0(maximum), WEBGPU_FALLBACK(maximum, out))
-        WG_OP2(minimum, structured_minimum, K("minimum", {"min_nan(x0, x1)", "min(x0, x1)", "x0 && x1"}),
+        WG_OP2(minimum, structured_minimum, K("minimum", {"min_nan(x0, x1)", "min(x0, x1)", "x0 && x1", "i64_min(x0, x1)"}),
                P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK0(minimum), WEBGPU_FALLBACK(minimum, out))
-        WG_OP2(fmax, structured_fmax, K("fmax", {"fmax_f(x0, x1)", "max(x0, x1)", "x0 || x1"}), P1(const Tensor &, other),
+        WG_OP2(fmax, structured_fmax, K("fmax", {"fmax_f(x0, x1)", "max(x0, x1)", "x0 || x1", "i64_max(x0, x1)"}), P1(const Tensor &, other),
                A1(other), WEBGPU_FALLBACK0(fmax), WEBGPU_FALLBACK(fmax, out))
-        WG_OP2(fmin, structured_fmin, K("fmin", {"fmin_f(x0, x1)", "min(x0, x1)", "x0 && x1"}), P1(const Tensor &, other),
+        WG_OP2(fmin, structured_fmin, K("fmin", {"fmin_f(x0, x1)", "min(x0, x1)", "x0 && x1", "i64_min(x0, x1)"}), P1(const Tensor &, other),
                A1(other), WEBGPU_FALLBACK0(fmin), WEBGPU_FALLBACK(fmin, out))
         WG_OP3(atan2, structured_atan2, K("atan2", {"atan2(x0, x1)"}), P1(const Tensor &, other), A1(other),
                WEBGPU_FALLBACK0(atan2), WEBGPU_FALLBACK(atan2, out), WEBGPU_FALLBACK0(atan2_))
@@ -430,20 +427,20 @@ namespace torch_webgpu::ops
                WEBGPU_FALLBACK(xlogy_, Tensor))
         WG_OP3(heaviside, structured_heaviside,
                K("heaviside", {"select(select(0.0, 1.0, x0 > 0.0), x1, x0 == 0.0)", "select(select(0, 1, x0 > 0), x1, x0 == 0)",
-                               "select(x0, x1, !x0)"}),
+                               "select(x0, x1, !x0)", "select(select(i64(0u, 0u), i64(1u, 0u), i64_gt(x0, i64(0u, 0u))), x1, i64_is_zero(x0))"}),
                P1(const Tensor &, values), A1(values), WEBGPU_FALLBACK0(heaviside), WEBGPU_FALLBACK(heaviside, out),
                WEBGPU_FALLBACK0(heaviside_))
-        WG_OP3(remainder, structured_remainder_Tensor, K("remainder", {"remainder_f(x0, x1)", "remainder_i(x0, x1)"}),
+        WG_OP3(remainder, structured_remainder_Tensor, K("remainder", {"remainder_f(x0, x1)", "remainder_i(x0, x1)", nullptr, "i64_remainder(x0, x1)"}),
                P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK(remainder, Tensor),
                WEBGPU_FALLBACK(remainder, Tensor_out), WEBGPU_FALLBACK(remainder_, Tensor))
-        WG_OP3(fmod, structured_fmod_Tensor, K("fmod", {"fmod_f(x0, x1)", "select(x0 % x1, 0, x1 == 0)"}),
+        WG_OP3(fmod, structured_fmod_Tensor, K("fmod", {"fmod_f(x0, x1)", "select(x0 % x1, 0, x1 == 0)", nullptr, "i64_rem_trunc(x0, x1)"}),
                P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK(fmod, Tensor), WEBGPU_FALLBACK(fmod, Tensor_out),
                WEBGPU_FALLBACK(fmod_, Tensor))
-        WG_OP3(pow_tt, structured_pow_Tensor_Tensor, K("pow", {"pow_f(x0, x1)", "ipow(x0, x1)"}),
+        WG_OP3(pow_tt, structured_pow_Tensor_Tensor, K("pow", {"pow_f(x0, x1)", "ipow(x0, x1)", nullptr, "i64_pow(x0, x1)"}),
                P1(const Tensor &, exponent), A1(exponent), WEBGPU_FALLBACK(pow, Tensor_Tensor),
                WEBGPU_FALLBACK(pow, Tensor_Tensor_out), WEBGPU_FALLBACK(pow_, Tensor))
 
-        void pow_scalar_kernel(TensorIteratorBase &it, const Scalar &e)
+        bool pow_scalar_kernel(TensorIteratorBase &it, const Scalar &e)
         {
             if (kernels::common_ct(it) == CT::F32 && !e.isComplex())
             {
@@ -461,63 +458,65 @@ namespace torch_webgpu::ops
                 if (v == -2.0)
                     return run(it, "pow_m2", {"1.0 / (x0 * x0)"});
             }
-            run(it, "pow_s", {"pow_f(x0, s0)", "ipow(x0, s0)"}, Opts{.scalars = {e}});
+            return run(it, "pow_s", {"pow_f(x0, s0)", "ipow(x0, s0)", nullptr, "i64_pow(x0, s0)"}, Opts{.scalars = {e}});
         }
-        WG_OP3(pow_ts, structured_pow_Tensor_Scalar, [&](TensorIteratorBase &it) { pow_scalar_kernel(it, exponent); },
+        WG_OP3(pow_ts, structured_pow_Tensor_Scalar, [&](TensorIteratorBase &it) { return pow_scalar_kernel(it, exponent); },
                P1(const Scalar &, exponent), A1(exponent), WEBGPU_FALLBACK(pow, Tensor_Scalar),
                WEBGPU_FALLBACK(pow, Tensor_Scalar_out), WEBGPU_FALLBACK(pow_, Scalar))
 
-        WG_OP3(bitwise_and, structured_bitwise_and_Tensor, K("bitwise_and", {nullptr, "x0 & x1", "x0 & x1"}),
+        WG_OP3(bitwise_and, structured_bitwise_and_Tensor, K("bitwise_and", {nullptr, "x0 & x1", "x0 & x1", "x0 & x1"}),
                P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK(bitwise_and, Tensor),
                WEBGPU_FALLBACK(bitwise_and, Tensor_out), WEBGPU_FALLBACK(bitwise_and_, Tensor))
-        WG_OP3(bitwise_or, structured_bitwise_or_Tensor, K("bitwise_or", {nullptr, "x0 | x1", "x0 | x1"}),
+        WG_OP3(bitwise_or, structured_bitwise_or_Tensor, K("bitwise_or", {nullptr, "x0 | x1", "x0 | x1", "x0 | x1"}),
                P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK(bitwise_or, Tensor),
                WEBGPU_FALLBACK(bitwise_or, Tensor_out), WEBGPU_FALLBACK(bitwise_or_, Tensor))
-        WG_OP3(bitwise_xor, structured_bitwise_xor_Tensor, K("bitwise_xor", {nullptr, "x0 ^ x1", "x0 != x1"}),
+        WG_OP3(bitwise_xor, structured_bitwise_xor_Tensor, K("bitwise_xor", {nullptr, "x0 ^ x1", "x0 != x1", "x0 ^ x1"}),
                P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK(bitwise_xor, Tensor),
                WEBGPU_FALLBACK(bitwise_xor, Tensor_out), WEBGPU_FALLBACK(bitwise_xor_, Tensor))
         WG_OP3(lshift, structured_bitwise_left_shift_Tensor,
-               K("lshift", {nullptr, "select(x0 << u32(x1), 0, x1 < 0 || x1 > 31)"}), P1(const Tensor &, other), A1(other),
+               K("lshift", {nullptr, "select(x0 << u32(x1), 0, x1 < 0 || x1 > 31)", nullptr, "select(i64_shl(x0, x1.x), i64(0u, 0u), i64_is_neg(x1) || x1.y != 0u || x1.x >= 64u)"}), P1(const Tensor &, other), A1(other),
                WEBGPU_FALLBACK(bitwise_left_shift, Tensor), WEBGPU_FALLBACK(bitwise_left_shift, Tensor_out),
                WEBGPU_FALLBACK(bitwise_left_shift_, Tensor))
         WG_OP3(rshift, structured_bitwise_right_shift_Tensor,
-               K("rshift", {nullptr, "select(x0 >> u32(x1), select(0, -1, x0 < 0), x1 < 0 || x1 > 31)"}),
+               K("rshift", {nullptr, "select(x0 >> u32(x1), select(0, -1, x0 < 0), x1 < 0 || x1 > 31)", nullptr, "select(i64_shr(x0, x1.x), i64_shr(x0, 63u), i64_is_neg(x1) || x1.y != 0u || x1.x >= 64u)"}),
                P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK(bitwise_right_shift, Tensor),
                WEBGPU_FALLBACK(bitwise_right_shift, Tensor_out), WEBGPU_FALLBACK(bitwise_right_shift_, Tensor))
-        WG_OP3(gcd, structured_gcd, K("gcd", {nullptr, "gcd_i(x0, x1)"}), P1(const Tensor &, other), A1(other),
+        WG_OP3(gcd, structured_gcd, K("gcd", {nullptr, "gcd_i(x0, x1)", nullptr, "i64_gcd(x0, x1)"}), P1(const Tensor &, other), A1(other),
                WEBGPU_FALLBACK0(gcd), WEBGPU_FALLBACK(gcd, out), WEBGPU_FALLBACK0(gcd_))
         WG_OP3(lcm, structured_lcm,
-               K("lcm", {nullptr, "select(abs(x0 / gcd_i(x0, x1) * x1), 0, gcd_i(x0, x1) == 0)"}),
+               K("lcm", {nullptr, "select(abs(x0 / gcd_i(x0, x1) * x1), 0, gcd_i(x0, x1) == 0)", nullptr, "select(i64_abs(i64_mul(i64_div_trunc(x0, i64_gcd(x0, x1)), x1)), i64(0u, 0u), i64_is_zero(i64_gcd(x0, x1)))"}),
                P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK0(lcm), WEBGPU_FALLBACK(lcm, out),
                WEBGPU_FALLBACK0(lcm_))
 
         // ------------------------------------------------------ comparisons
         const Opts kCmp{.out_ct = CT::Bool};
-#define WG_CMP(NAME, EXPR_F, EXPR_I, EXPR_B)                                                               \
-    WG_OP3(NAME##_t, structured_##NAME##_Tensor, K(#NAME, {EXPR_F, EXPR_I, EXPR_B}, kCmp),                    \
+#define WG_CMP(NAME, EXPR_F, EXPR_I, EXPR_B, EXPR_L)                                                       \
+    WG_OP3(NAME##_t, structured_##NAME##_Tensor, K(#NAME, {EXPR_F, EXPR_I, EXPR_B, EXPR_L}, kCmp),            \
            P1(const Tensor &, other), A1(other), WEBGPU_FALLBACK(NAME, Tensor), WEBGPU_FALLBACK(NAME, Tensor_out), \
            WEBGPU_FALLBACK(NAME##_, Tensor))                                                                  \
-    WG_OP3(NAME##_s, structured_##NAME##_Scalar, K(#NAME, {EXPR_F, EXPR_I, EXPR_B}, kCmp),                    \
+    WG_OP3(NAME##_s, structured_##NAME##_Scalar, K(#NAME, {EXPR_F, EXPR_I, EXPR_B, EXPR_L}, kCmp),            \
            P1(const Scalar &, other), A1(other), WEBGPU_FALLBACK(NAME, Scalar), WEBGPU_FALLBACK(NAME, Scalar_out), \
            WEBGPU_FALLBACK(NAME##_, Scalar))
-        WG_CMP(eq, "x0 == x1", "x0 == x1", "x0 == x1")
-        WG_CMP(ne, "x0 != x1", "x0 != x1", "x0 != x1")
-        WG_CMP(lt, "x0 < x1", "x0 < x1", "!x0 && x1")
-        WG_CMP(le, "x0 <= x1", "x0 <= x1", "!x0 || x1")
-        WG_CMP(gt, "x0 > x1", "x0 > x1", "x0 && !x1")
-        WG_CMP(ge, "x0 >= x1", "x0 >= x1", "x0 || !x1")
+        WG_CMP(eq, "x0 == x1", "x0 == x1", "x0 == x1", "i64_eq(x0, x1)")
+        WG_CMP(ne, "x0 != x1", "x0 != x1", "x0 != x1", "!i64_eq(x0, x1)")
+        WG_CMP(lt, "x0 < x1", "x0 < x1", "!x0 && x1", "i64_lt(x0, x1)")
+        WG_CMP(le, "x0 <= x1", "x0 <= x1", "!x0 || x1", "i64_le(x0, x1)")
+        WG_CMP(gt, "x0 > x1", "x0 > x1", "x0 && !x1", "i64_gt(x0, x1)")
+        WG_CMP(ge, "x0 >= x1", "x0 >= x1", "x0 || !x1", "i64_ge(x0, x1)")
 
         // ---------------------------------------------------------- clamp
         // Inputs: x0 = self, then the optional bounds in order.
-        void clamp_scalar_kernel(TensorIteratorBase &it, const std::optional<Scalar> &lo, const std::optional<Scalar> &hi)
+        bool clamp_scalar_kernel(TensorIteratorBase &it, const std::optional<Scalar> &lo, const std::optional<Scalar> &hi)
         {
             if (lo && hi)
-                run(it, "clamp", {"select(min(max(x0, s0), s1), x0, isnan_f(x0))", "min(max(x0, s0), s1)", "(x0 || s0) && s1"},
-                    Opts{.scalars = {*lo, *hi}});
-            else if (lo)
-                run(it, "clamp_min", {"select(max(x0, s0), x0, isnan_f(x0))", "max(x0, s0)", "x0 || s0"}, Opts{.scalars = {*lo}});
-            else
-                run(it, "clamp_max", {"select(min(x0, s0), x0, isnan_f(x0))", "min(x0, s0)", "x0 && s0"}, Opts{.scalars = {*hi}});
+                return run(it, "clamp", {"select(min(max(x0, s0), s1), x0, isnan_f(x0))", "min(max(x0, s0), s1)", "(x0 || s0) && s1",
+                                         "i64_min(i64_max(x0, s0), s1)"},
+                           Opts{.scalars = {*lo, *hi}});
+            if (lo)
+                return run(it, "clamp_min", {"select(max(x0, s0), x0, isnan_f(x0))", "max(x0, s0)", "x0 || s0", "i64_max(x0, s0)"},
+                           Opts{.scalars = {*lo}});
+            return run(it, "clamp_max", {"select(min(x0, s0), x0, isnan_f(x0))", "min(x0, s0)", "x0 && s0", "i64_min(x0, s0)"},
+                       Opts{.scalars = {*hi}});
         }
 
         Tensor clamp_fn(const Tensor &self, const std::optional<Scalar> &min, const std::optional<Scalar> &max)
@@ -551,22 +550,22 @@ namespace torch_webgpu::ops
         }
 
         WG_OP3(clamp_min_s, structured_clamp_min,
-               [&](TensorIteratorBase &it) { clamp_scalar_kernel(it, min, std::nullopt); }, P1(const Scalar &, min),
+               [&](TensorIteratorBase &it) { return clamp_scalar_kernel(it, min, std::nullopt); }, P1(const Scalar &, min),
                A1(min), WEBGPU_FALLBACK0(clamp_min), WEBGPU_FALLBACK(clamp_min, out), WEBGPU_FALLBACK0(clamp_min_))
         WG_OP3(clamp_max_s, structured_clamp_max,
-               [&](TensorIteratorBase &it) { clamp_scalar_kernel(it, std::nullopt, max); }, P1(const Scalar &, max),
+               [&](TensorIteratorBase &it) { return clamp_scalar_kernel(it, std::nullopt, max); }, P1(const Scalar &, max),
                A1(max), WEBGPU_FALLBACK0(clamp_max), WEBGPU_FALLBACK(clamp_max, out), WEBGPU_FALLBACK0(clamp_max_))
         WG_OP3(clamp_min_t, structured_clamp_min_Tensor,
-               K("clamp_min_t", {"select(max(x0, x1), x0, isnan_f(x0) || isnan_f(x1))", "max(x0, x1)", "x0 || x1"}),
+               K("clamp_min_t", {"select(max(x0, x1), x0, isnan_f(x0) || isnan_f(x1))", "max(x0, x1)", "x0 || x1", "i64_max(x0, x1)"}),
                P1(const Tensor &, min), A1(min), WEBGPU_FALLBACK(clamp_min, Tensor), WEBGPU_FALLBACK(clamp_min, Tensor_out),
                WEBGPU_FALLBACK(clamp_min_, Tensor))
         WG_OP3(clamp_max_t, structured_clamp_max_Tensor,
-               K("clamp_max_t", {"select(min(x0, x1), x0, isnan_f(x0) || isnan_f(x1))", "min(x0, x1)", "x0 && x1"}),
+               K("clamp_max_t", {"select(min(x0, x1), x0, isnan_f(x0) || isnan_f(x1))", "min(x0, x1)", "x0 && x1", "i64_min(x0, x1)"}),
                P1(const Tensor &, max), A1(max), WEBGPU_FALLBACK(clamp_max, Tensor), WEBGPU_FALLBACK(clamp_max, Tensor_out),
                WEBGPU_FALLBACK(clamp_max_, Tensor))
 
         // ------------------------------------------------------- ternary ops
-        WG_OP3(addcmul, structured_addcmul, K("addcmul", {"x0 + s0 * x1 * x2", "x0 + s0 * x1 * x2"}, Opts{.scalars = {value}}),
+        WG_OP3(addcmul, structured_addcmul, K("addcmul", {"x0 + s0 * x1 * x2", "x0 + s0 * x1 * x2", nullptr, "i64_add(x0, i64_mul(s0, i64_mul(x1, x2)))"}, Opts{.scalars = {value}}),
                P3(const Tensor &, tensor1, const Tensor &, tensor2, const Scalar &, value), A3(tensor1, tensor2, value),
                WEBGPU_FALLBACK0(addcmul), WEBGPU_FALLBACK(addcmul, out), WEBGPU_FALLBACK0(addcmul_))
         WG_OP3(addcdiv, structured_addcdiv, K("addcdiv", {"x0 + s0 * x1 / x2"}, Opts{.scalars = {value}}),
@@ -588,18 +587,16 @@ namespace torch_webgpu::ops
     {                                                                          \
         Functional<at::meta::META> op;                                         \
         op.meta(grad ARGS);                                                    \
-        if (!iter_ok(op))                                                      \
-            return FB_F(grad ARGS);                                            \
-        KERNEL(op);                                                            \
+        if (!iter_ok(op) || !KERNEL(op))                                                      \
+            return FB_F(grad ARGS);                                                            \
         return std::move(op.outputs_[0]);                                      \
     }                                                                          \
     Tensor &ID##_out_fn(const Tensor &grad PARAMS, Tensor &grad_input)         \
     {                                                                          \
         Out<at::meta::META> op(grad_input);                                    \
         op.meta(grad ARGS);                                                    \
-        if (!iter_ok(op))                                                      \
-            return FB_O(grad ARGS, grad_input);                                \
-        KERNEL(op);                                                            \
+        if (!iter_ok(op) || !KERNEL(op))                                                      \
+            return FB_O(grad ARGS, grad_input);                                                            \
         op.finish();                                                           \
         return grad_input;                                                     \
     }
@@ -617,7 +614,7 @@ namespace torch_webgpu::ops
                A1(self), WEBGPU_FALLBACK0(hardsigmoid_backward), WEBGPU_FALLBACK(hardsigmoid_backward, grad_input))
         WG_BWD(threshold_backward, structured_threshold_backward,
                // The meta puts `self` before `grad` (it reuses the threshold kernel).
-               K("threshold_backward", {"select(x1, 0.0, x0 <= s0)", "select(x1, 0, x0 <= s0)"}, Opts{.scalars = {threshold}}),
+               K("threshold_backward", {"select(x1, 0.0, x0 <= s0)", "select(x1, 0, x0 <= s0)", nullptr, "select(x1, i64(0u, 0u), i64_le(x0, s0))"}, Opts{.scalars = {threshold}}),
                P2(const Tensor &, self, const Scalar &, threshold), A2(self, threshold),
                WEBGPU_FALLBACK0(threshold_backward), WEBGPU_FALLBACK(threshold_backward, grad_input))
         WG_BWD(leaky_relu_backward, structured_leaky_relu_backward,
@@ -632,10 +629,10 @@ namespace torch_webgpu::ops
                P3(const Tensor &, self, const Scalar &, beta, const Scalar &, threshold), A3(self, beta, threshold),
                WEBGPU_FALLBACK0(softplus_backward), WEBGPU_FALLBACK(softplus_backward, grad_input))
 
-        void gelu_backward_kernel(TensorIteratorBase &it, c10::string_view approximate)
+        bool gelu_backward_kernel(TensorIteratorBase &it, c10::string_view approximate)
         {
             if (approximate == "tanh")
-                run(it, "gelu_backward_tanh", {R"(
+                return run(it, "gelu_backward_tanh", {R"(
     let k_beta = 0.7978845608028654;
     let k_kappa = 0.044715;
     let x = x1;
@@ -646,14 +643,13 @@ namespace torch_webgpu::ops
     let left_d = 0.5 * right;
     let right_d = left * (1.0 - t * t) * k_beta * (1.0 + 3.0 * k_kappa * x * x);
     return x0 * (left_d + right_d);)"});
-            else
-                run(it, "gelu_backward", {R"(
+            return run(it, "gelu_backward", {R"(
     let x = x1;
     let cdf = 0.5 * (1.0 + erf_f(x * 0.7071067811865476));
     let pdf = exp(-0.5 * x * x) * 0.3989422804014327;
     return x0 * (cdf + x * pdf);)"});
         }
-        WG_BWD(gelu_backward, structured_gelu_backward, [&](TensorIteratorBase &it) { gelu_backward_kernel(it, approximate); },
+        WG_BWD(gelu_backward, structured_gelu_backward, [&](TensorIteratorBase &it) { return gelu_backward_kernel(it, approximate); },
                P2(const Tensor &, self, c10::string_view, approximate), A2(self, approximate),
                WEBGPU_FALLBACK0(gelu_backward), WEBGPU_FALLBACK(gelu_backward, grad_input))
 
@@ -664,12 +660,11 @@ namespace torch_webgpu::ops
             op.meta(grad, alpha, scale, input_scale, is_result, self_or_result);
             if (!iter_ok(op))
                 return WEBGPU_FALLBACK0(elu_backward)(grad, alpha, scale, input_scale, is_result, self_or_result);
-            if (is_result)
-                run(op, "elu_backward_r", {"select(x0 * s1, x0 * s2 * (x1 + s0 * s1), x1 <= 0.0)"},
-                    Opts{.scalars = {alpha, scale, input_scale}});
-            else
-                run(op, "elu_backward", {"select(x0 * s1, x0 * s2 * s0 * s1 * exp(x1 * s2), x1 <= 0.0)"},
-                    Opts{.scalars = {alpha, scale, input_scale}});
+            bool ok = is_result ? run(op, "elu_backward_r", {"select(x0 * s1, x0 * s2 * (x1 + s0 * s1), x1 <= 0.0)"},
+                                      Opts{.scalars = {alpha, scale, input_scale}})
+                                : run(op, "elu_backward", {"select(x0 * s1, x0 * s2 * s0 * s1 * exp(x1 * s2), x1 <= 0.0)"},
+                                      Opts{.scalars = {alpha, scale, input_scale}});
+            TORCH_CHECK(ok, "torch_webgpu: kernel variant missing for this dtype");
             return std::move(op.outputs_[0]);
         }
 
@@ -680,7 +675,7 @@ namespace torch_webgpu::ops
             if (!gpu_dtypes_ok({self, out}))
                 return WEBGPU_FALLBACK(abs, out)(self, out);
             auto it = at::TensorIterator::unary_op(out, self);
-            run(it, "abs", {"abs(x0)", "abs(x0)", "x0"});
+            TORCH_CHECK(run(it, "abs", {"abs(x0)", "abs(x0)", "x0", "i64_abs(x0)"}), "torch_webgpu: kernel variant missing for this dtype");
             return out;
         }
         Tensor abs_fn(const Tensor &self)
@@ -697,7 +692,7 @@ namespace torch_webgpu::ops
                 return WEBGPU_FALLBACK0(relu_)(self);
             TORCH_CHECK(self.scalar_type() != at::kBool, "Boolean inputs not supported for relu");
             auto it = at::TensorIterator::unary_op(self, self);
-            run(it, "relu", {"select(max(x0, 0.0), x0, isnan_f(x0))", "max(x0, 0)"});
+            TORCH_CHECK(run(it, "relu", {"select(max(x0, 0.0), x0, isnan_f(x0))", "max(x0, 0)", nullptr, "i64_max(x0, i64(0u, 0u))"}), "torch_webgpu: kernel variant missing for this dtype");
             return self;
         }
         Tensor relu_fn(const Tensor &self)
@@ -707,7 +702,7 @@ namespace torch_webgpu::ops
             TORCH_CHECK(self.scalar_type() != at::kBool, "Boolean inputs not supported for relu");
             Tensor out;
             auto it = at::TensorIterator::unary_op(out, self);
-            run(it, "relu", {"select(max(x0, 0.0), x0, isnan_f(x0))", "max(x0, 0)"});
+            TORCH_CHECK(run(it, "relu", {"select(max(x0, 0.0), x0, isnan_f(x0))", "max(x0, 0)", nullptr, "i64_max(x0, i64(0u, 0u))"}), "torch_webgpu: kernel variant missing for this dtype");
             return it.output();
         }
 
@@ -718,8 +713,8 @@ namespace torch_webgpu::ops
                 return WEBGPU_FALLBACK(hardtanh, out)(self, lo, hi, out);
             TORCH_CHECK(self.scalar_type() != at::kBool, "Bool inputs not supported for hardtanh");
             auto it = at::TensorIterator::unary_op(out, self);
-            run(it, "hardtanh", {"select(min(max(x0, s0), s1), x0, isnan_f(x0))", "min(max(x0, s0), s1)"},
-                Opts{.scalars = {lo, hi}});
+            TORCH_CHECK(run(it, "hardtanh", {"select(min(max(x0, s0), s1), x0, isnan_f(x0))", "min(max(x0, s0), s1)", nullptr, "i64_min(i64_max(x0, s0), s1)"},
+                Opts{.scalars = {lo, hi}}), "torch_webgpu: kernel variant missing for this dtype");
             return out;
         }
         Tensor hardtanh_fn(const Tensor &self, const Scalar &lo, const Scalar &hi)
@@ -737,7 +732,7 @@ namespace torch_webgpu::ops
             if (!gpu_dtypes_ok({grad, self, grad_input}))
                 return WEBGPU_FALLBACK(hardtanh_backward, grad_input)(grad, self, lo, hi, grad_input);
             auto it = at::TensorIterator::borrowing_binary_op(grad_input, grad, self);
-            run(it, "hardtanh_backward", {"select(x0, 0.0, x1 <= s0 || x1 >= s1)"}, Opts{.scalars = {lo, hi}});
+            TORCH_CHECK(run(it, "hardtanh_backward", {"select(x0, 0.0, x1 <= s0 || x1 >= s1)"}, Opts{.scalars = {lo, hi}}), "torch_webgpu: kernel variant missing for this dtype");
             return grad_input;
         }
         Tensor hardtanh_backward_fn(const Tensor &grad, const Tensor &self, const Scalar &lo, const Scalar &hi)
@@ -746,7 +741,7 @@ namespace torch_webgpu::ops
             if (!gpu_dtypes_ok({grad, self}))
                 return WEBGPU_FALLBACK0(hardtanh_backward)(grad, self, lo, hi);
             auto it = at::TensorIterator::borrowing_binary_op(out, grad, self);
-            run(it, "hardtanh_backward", {"select(x0, 0.0, x1 <= s0 || x1 >= s1)"}, Opts{.scalars = {lo, hi}});
+            TORCH_CHECK(run(it, "hardtanh_backward", {"select(x0, 0.0, x1 <= s0 || x1 >= s1)"}, Opts{.scalars = {lo, hi}}), "torch_webgpu: kernel variant missing for this dtype");
             return it.output();
         }
 
@@ -756,7 +751,7 @@ namespace torch_webgpu::ops
             if (!gpu_dtypes_ok({self, out}))
                 return WEBGPU_FALLBACK(hardswish, out)(self, out);
             auto it = at::TensorIterator::unary_op(out, self);
-            run(it, "hardswish", {kHardswish});
+            TORCH_CHECK(run(it, "hardswish", {kHardswish}), "torch_webgpu: kernel variant missing for this dtype");
             return out;
         }
         Tensor hardswish_fn(const Tensor &self)
@@ -771,7 +766,7 @@ namespace torch_webgpu::ops
                 return WEBGPU_FALLBACK0(hardswish_backward)(grad, self);
             Tensor out;
             auto it = at::TensorIterator::borrowing_binary_op(out, grad, self);
-            run(it, "hardswish_backward", {"select(select(x0 * (x1 / 3.0 + 0.5), x0, x1 >= 3.0), 0.0, x1 <= -3.0)"});
+            TORCH_CHECK(run(it, "hardswish_backward", {"select(select(x0 * (x1 / 3.0 + 0.5), x0, x1 >= 3.0), 0.0, x1 <= -3.0)"}), "torch_webgpu: kernel variant missing for this dtype");
             return it.output();
         }
 
@@ -792,8 +787,8 @@ namespace torch_webgpu::ops
                           .add_const_input(other)
                           .build();
             CT ct = wgsl::compute_type(result_type);
-            run(it, "where", {"select(x2, x1, x0)", "select(x2, x1, x0)", "select(x2, x1, x0)"},
-                Opts{.input_cts = {CT::Bool, ct, ct}, .in_ct = ct});
+            TORCH_CHECK(run(it, "where", {"select(x2, x1, x0)", "select(x2, x1, x0)", "select(x2, x1, x0)", "select(x2, x1, x0)"},
+                Opts{.input_cts = {CT::Bool, ct, ct}, .in_ct = ct}), "torch_webgpu: kernel variant missing for this dtype");
             return out;
         }
         Tensor where_fn(const Tensor &cond, const Tensor &self, const Tensor &other)
@@ -823,8 +818,8 @@ namespace torch_webgpu::ops
                           .add_const_input(mask)
                           .build();
             CT ct = wgsl::compute_type(self.scalar_type());
-            run(it, "masked_fill", {"select(x0, s0, x1)", "select(x0, s0, x1)", "select(x0, s0, x1)"},
-                Opts{.scalars = {value}, .input_cts = {ct, CT::Bool}, .in_ct = ct});
+            TORCH_CHECK(run(it, "masked_fill", {"select(x0, s0, x1)", "select(x0, s0, x1)", "select(x0, s0, x1)", "select(x0, s0, x1)"},
+                Opts{.scalars = {value}, .input_cts = {ct, CT::Bool}, .in_ct = ct}), "torch_webgpu: kernel variant missing for this dtype");
             return self;
         }
         Tensor &masked_fill_tensor_fn(Tensor &self, const Tensor &mask, const Tensor &value)
@@ -848,8 +843,8 @@ namespace torch_webgpu::ops
                           .add_const_input(v)
                           .build();
             CT ct = wgsl::compute_type(self.scalar_type());
-            run(it, "masked_fill_t", {"select(x0, x2, x1)", "select(x0, x2, x1)", "select(x0, x2, x1)"},
-                Opts{.input_cts = {ct, CT::Bool, ct}, .in_ct = ct});
+            TORCH_CHECK(run(it, "masked_fill_t", {"select(x0, x2, x1)", "select(x0, x2, x1)", "select(x0, x2, x1)", "select(x0, x2, x1)"},
+                Opts{.input_cts = {ct, CT::Bool, ct}, .in_ct = ct}), "torch_webgpu: kernel variant missing for this dtype");
             return self;
         }
 
@@ -915,6 +910,26 @@ namespace torch_webgpu::ops
         }
         Tensor &logical_not_inplace_fn(Tensor &self) { return logical_not_out_fn(self, self); }
 
+        // floor_divide == div(rounding_mode='floor') with binary_op promotion.
+        Tensor &floor_divide_out_fn(const Tensor &self, const Tensor &other, Tensor &out)
+        {
+            if (!gpu_dtypes_ok({self, other, out}))
+                return WEBGPU_FALLBACK(floor_divide, out)(self, other, out);
+            auto it = at::TensorIterator::binary_op(out, self, other);
+            TORCH_CHECK(run(it, "div_floor", {"div_floor_f(x0, x1)", "div_floor_i(x0, x1)", nullptr, "i64_div_floor(x0, x1)"}), "torch_webgpu: kernel variant missing for this dtype");
+            return out;
+        }
+        Tensor floor_divide_fn(const Tensor &self, const Tensor &other)
+        {
+            if (!gpu_dtypes_ok({self, other}))
+                return WEBGPU_FALLBACK0(floor_divide)(self, other);
+            Tensor out;
+            auto it = at::TensorIterator::binary_op(out, self, other);
+            TORCH_CHECK(run(it, "div_floor", {"div_floor_f(x0, x1)", "div_floor_i(x0, x1)", nullptr, "i64_div_floor(x0, x1)"}), "torch_webgpu: kernel variant missing for this dtype");
+            return it.output();
+        }
+        Tensor &floor_divide_inplace_fn(Tensor &self, const Tensor &other) { return floor_divide_out_fn(self, other, self); }
+
         // isnan: bool output
         Tensor isnan_fn(const Tensor &self)
         {
@@ -924,7 +939,7 @@ namespace torch_webgpu::ops
             if (!self.is_floating_point())
                 return out.fill_(false);
             auto it = at::TensorIteratorConfig().check_all_same_dtype(false).add_output(out).add_const_input(self).build();
-            run(it, "isnan", {"isnan_f(x0)"}, Opts{.out_ct = CT::Bool, .in_ct = CT::F32});
+            TORCH_CHECK(run(it, "isnan", {"isnan_f(x0)"}, Opts{.out_ct = CT::Bool, .in_ct = CT::F32}), "torch_webgpu: kernel variant missing for this dtype");
             return out;
         }
 
@@ -946,8 +961,8 @@ namespace torch_webgpu::ops
                          : self.scalar_type() == at::kBFloat16 ? 3.3895313892515355e38
                                                                : 3.4028234663852886e38;
             auto it = at::TensorIterator::unary_op(out, self);
-            run(it, "nan_to_num", {"select(select(select(x0, s2, x0 == -inf_f()), s1, x0 == inf_f()), s0, isnan_f(x0))"},
-                Opts{.scalars = {nan.value_or(0.0), posinf.value_or(lim), neginf.value_or(-lim)}});
+            TORCH_CHECK(run(it, "nan_to_num", {"select(select(select(x0, s2, x0 == -inf_f()), s1, x0 == inf_f()), s0, isnan_f(x0))"},
+                Opts{.scalars = {nan.value_or(0.0), posinf.value_or(lim), neginf.value_or(-lim)}}), "torch_webgpu: kernel variant missing for this dtype");
             return out;
         }
         Tensor nan_to_num_fn(const Tensor &self, std::optional<double> nan, std::optional<double> posinf,
@@ -1013,6 +1028,9 @@ namespace torch_webgpu::ops
         m.impl("isneginf", TORCH_FN(isneginf_fn));
         m.impl("isneginf.out", TORCH_FN(isneginf_out_fn));
         m.impl("isnan", TORCH_FN(isnan_fn));
+        m.impl("floor_divide", TORCH_FN(floor_divide_fn));
+        m.impl("floor_divide.out", TORCH_FN(floor_divide_out_fn));
+        m.impl("floor_divide_.Tensor", TORCH_FN(floor_divide_inplace_fn));
 
         m.impl("gelu", TORCH_FN(gelu_fn));
         m.impl("gelu.out", TORCH_FN(gelu_out_fn));

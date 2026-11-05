@@ -10,7 +10,7 @@
 //   float16         1/2 word    f32   (unpack2x16float / pack2x16float)
 //   bfloat16        1/2 word    f32   (bit shifts, round-to-nearest-even)
 //   int32           1 word      i32
-//   int64           2 words     i32   (low word; stores sign-extend)
+//   int64           2 words     i64   (emulated: vec2<u32> two's complement)
 //   int16           1/2 word    i32
 //   int8 / uint8    1/4 word    i32
 //   bool            1/4 word    bool
@@ -18,10 +18,10 @@
 // Everything else (float64, complex, uint16/32/64, float8) can be stored and
 // copied bit-exactly (see raw_* helpers) but is computed on the CPU fallback.
 //
-// int64 caveat: arithmetic is performed on the low 32 bits; values outside
-// the int32 range survive copies/views/casts-to-int64 bit-exactly but not
-// arithmetic. This matches the indexing use-cases (positions, token ids).
+// int64 is exact: kernels that have no 64-bit implementation fall back to
+// the CPU rather than truncating.
 
+#include <c10/core/Scalar.h>
 #include <c10/core/ScalarType.h>
 
 #include <string>
@@ -32,7 +32,8 @@ namespace torch_webgpu::wgsl
     {
         F32,
         I32,
-        Bool
+        Bool,
+        I64,
     };
 
     // True if kernels can compute on this dtype on the GPU.
@@ -65,4 +66,13 @@ namespace torch_webgpu::wgsl
 
     // A literal / bitcast expression for a scalar stored as 32-bit word `word_expr`.
     std::string scalar_from_word(const std::string &word_expr, CT ct);
+
+    // Scalars occupy two 32-bit words each (slot k = words 2k, 2k+1) so that
+    // 64-bit values fit. `array` is a WGSL array<vec4<u32>, N> expression.
+    void encode_scalar(const c10::Scalar &s, CT ct, uint32_t out[2]);
+    std::string scalar_slot_expr(int slot, CT ct, const std::string &array = "P.scalars");
+
+    // WGSL helpers for generic code over a compute type: t_zero(), t_one(),
+    // t_add, t_sub, t_mul, t_max, t_min (NaN-propagating for f32), t_lt, t_eq.
+    std::string typed_ops(CT ct);
 }
