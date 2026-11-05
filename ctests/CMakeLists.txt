@@ -31,7 +31,7 @@ target_include_directories(torch_webgpu_core PUBLIC
 )
 target_link_directories(torch_webgpu_core PUBLIC ${DAWN_PREFIX}/lib)
 target_link_libraries(torch_webgpu_core PUBLIC ${TORCH_LIBRARIES} webgpu_dawn)
-target_compile_options(torch_webgpu_core PRIVATE ${TORCH_CXX_FLAGS})
+target_compile_options(torch_webgpu_core PRIVATE ${TORCH_CXX_FLAGS} -fno-strict-aliasing)
 
 enable_testing()
 

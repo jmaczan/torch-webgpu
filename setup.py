@@ -104,10 +104,10 @@ extra_link_args = []
 system = platform.system()
 
 if system == "Linux":
-    extra_compile_args = ["-std=c++20", "-O2"]
+    extra_compile_args = ["-std=c++20", "-O2", "-fno-strict-aliasing"]
     extra_link_args = ["-Wl,-rpath,$ORIGIN/libs"]
 elif system == "Darwin":
-    extra_compile_args = ["-std=c++20", "-O2"]
+    extra_compile_args = ["-std=c++20", "-O2", "-fno-strict-aliasing"]
     extra_link_args = ["-Wl,-rpath,@loader_path/libs"]
 elif system == "Windows":
     extra_compile_args = ["/std:c++20", "/O2"]

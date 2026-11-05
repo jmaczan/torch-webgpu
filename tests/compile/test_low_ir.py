@@ -18,7 +18,11 @@ class TestLowIROpMappings:
             assert op in high_ir_op_to_low_ir_op, f"Missing Low IR mapping for {op}"
             low_ir_ops = high_ir_op_to_low_ir_op[op]
             assert isinstance(low_ir_ops, list), f"Low IR mapping for {op} should be a list"
-            assert len(low_ir_ops) > 0, f"Low IR mapping for {op} should not be empty"
+            if op in (HighIROp.PLACEHOLDER, HighIROp.GETATTR, HighIROp.SET_GRAD_ENABLED):
+                # Bound at call time or no-ops: these emit no Low IR.
+                assert low_ir_ops == []
+            else:
+                assert len(low_ir_ops) > 0, f"Low IR mapping for {op} should not be empty"
 
     def test_compute_ops_map_to_run_shader(self):
         """Compute operations should map to RUN_SHADER."""
