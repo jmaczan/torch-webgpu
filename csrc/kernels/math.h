@@ -223,14 +223,74 @@ fn copysign_f(a: f32, b: f32) -> f32 {
     return bitcast<f32>((bitcast<u32>(a) & 0x7fffffffu) | (bitcast<u32>(b) & 0x80000000u));
 }
 
+// GPUs implement a / b as a * rcp(b); rcp of values > 2^126 is denormal and
+// flushed to zero, so scale by powers of two before dividing.
 fn hypot_f(a: f32, b: f32) -> f32 {
     let x = abs(a);
     let y = abs(b);
     if (isinf_f(x) || isinf_f(y)) { return inf_f(); }
-    let m = max(x, y);
+    if (isnan_f(x) || isnan_f(y)) { return nan_f(); }
+    var m = max(x, y);
+    var n = min(x, y);
     if (m == 0.0) { return 0.0; }
-    let n = min(x, y) / m;
-    return m * sqrt(1.0 + n * n);
+    var s = 1.0;
+    if (m > 1e30) { s = 1.2676506002282294e30; } else if (m < 1e-30) { s = 7.888609052210118e-31; }
+    m = m / s;
+    n = n / s;
+    let r = n / m;
+    return s * (m * sqrt(1.0 + r * r));
+}
+
+// Cody-Waite reduction x = k * pi/2 + r with |r| <= pi/4 (Cephes split of
+// pi/2); the GPU sin/cos built-ins have absolute (not relative) error and
+// lose accuracy for larger arguments.
+fn reduce_pio2(x: f32) -> vec2<f32> {
+    let k = round(x * 0.6366197723675814);
+    // Explicit fma: with plain mul/sub the NVIDIA Vulkan compiler evaluates the
+    // chain as if pi/2 were a single f32 constant, losing the extra precision.
+    let r = fma(-k, 7.54978995489188216e-8, fma(-k, 4.837512969970703125e-4, fma(-k, 1.5703125, x)));
+    return vec2<f32>(r, k);
+}
+// Cephes sinf/cosf minimax polynomials on [-pi/4, pi/4] (~1 ulp). GPU
+// built-ins only guarantee absolute error, i.e. poor relative accuracy for
+// small results.
+fn sin_poly(r: f32) -> f32 {
+    let z = r * r;
+    return ((-1.9515295891e-4 * z + 8.3321608736e-3) * z - 1.6666654611e-1) * z * r + r;
+}
+fn cos_poly(r: f32) -> f32 {
+    let z = r * r;
+    return ((2.443315711809948e-5 * z - 1.388731625493765e-3) * z + 4.166664568298827e-2) * z * z - 0.5 * z + 1.0;
+}
+fn sin_f(x: f32) -> f32 {
+    if (abs(x) > 65536.0 || !isfinite_f(x)) { return sin(x); }
+    let rk = reduce_pio2(x);
+    let q = i32(rk.y) & 3;
+    let sr = sin_poly(rk.x);
+    let cr = cos_poly(rk.x);
+    if (q == 0) { return sr; }
+    if (q == 1) { return cr; }
+    if (q == 2) { return -sr; }
+    return -cr;
+}
+fn cos_f(x: f32) -> f32 {
+    if (abs(x) > 65536.0 || !isfinite_f(x)) { return cos(x); }
+    let rk = reduce_pio2(x);
+    let q = i32(rk.y) & 3;
+    let sr = sin_poly(rk.x);
+    let cr = cos_poly(rk.x);
+    if (q == 0) { return cr; }
+    if (q == 1) { return -sr; }
+    if (q == 2) { return -cr; }
+    return sr;
+}
+fn tan_f(x: f32) -> f32 {
+    if (abs(x) > 65536.0 || !isfinite_f(x)) { return tan(x); }
+    let rk = reduce_pio2(x);
+    let sr = sin_poly(rk.x);
+    let cr = cos_poly(rk.x);
+    if ((i32(rk.y) & 1) == 1) { return -cr / sr; }
+    return sr / cr;
 }
 
 fn logaddexp_f(a: f32, b: f32) -> f32 {

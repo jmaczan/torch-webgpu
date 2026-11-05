@@ -197,7 +197,7 @@ namespace torch_webgpu::ops
             if (with_mean)
             {
                 op.out1_ct = CT::F32;
-                op.out1 = "    return a.mean;";
+                op.out1 = "    return select(a.mean, nan_f(), a.n == 0.0);";
             }
             return op;
         }

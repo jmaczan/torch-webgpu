@@ -121,9 +121,15 @@ namespace torch_webgpu::kernels
             TORCH_INTERNAL_ASSERT(static_cast<int>(sizes.size()) == nidx && static_cast<int>(strides.size()) == nidx);
             const bool rmw = scatter && mode != ScatterMode::Assign;
             IterLayout L = IterLayout::build(iter, {}, rmw);
-            const auto &flag = core::Stream::get().index_error_flag();
-            const int flag_b = static_cast<int>(L.bindings.size());
-            L.bindings.push_back({flag.Get(), flag, true, true});
+            // The error flag is only bound when there are indices to check:
+            // "auto" layouts drop bindings the shader never touches.
+            int flag_b = -1;
+            if (nidx > 0)
+            {
+                const auto &flag = core::Stream::get().index_error_flag();
+                flag_b = static_cast<int>(L.bindings.size());
+                L.bindings.push_back({flag.Get(), flag, true, true});
+            }
             L.extra_words = 2 * nidx;
 
             const auto t0 = L.ops[0].dtype, t1 = L.ops[1].dtype;

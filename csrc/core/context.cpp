@@ -197,13 +197,28 @@ namespace torch_webgpu::core
 
         // ---- Toggles (opt-in, native only) --------------------------------
         // e.g. TORCH_WEBGPU_DAWN_TOGGLES=disable_robustness,skip_validation
+        //      TORCH_WEBGPU_DAWN_DISABLED_TOGGLES=lazy_clear_resource_on_first_use
         std::vector<std::string> toggle_storage = split_csv(std::getenv("TORCH_WEBGPU_DAWN_TOGGLES"));
-        std::vector<const char *> toggles;
+        std::vector<std::string> disabled_storage = split_csv(std::getenv("TORCH_WEBGPU_DAWN_DISABLED_TOGGLES"));
+        std::vector<const char *> toggles, disabled;
         for (auto &t : toggle_storage)
             toggles.push_back(t.c_str());
+        // Dawn zero-initializes buffers lazily on first use by default. With
+        // the Dawn build we ship (Apr 2026) on NVIDIA/Vulkan the lazy clear can
+        // race with a partial copy into a fresh buffer, leaving zeros in the
+        // copied range (reproducible with large uploads after other work).
+        // Clearing eagerly at creation keeps WebGPU's zero-init guarantee
+        // without the race. TORCH_WEBGPU_LAZY_CLEAR=1 restores Dawn's default.
+        const char *lazy = std::getenv("TORCH_WEBGPU_LAZY_CLEAR");
+        if (!(lazy && std::string(lazy) == "1"))
+            disabled_storage.push_back("lazy_clear_resource_on_first_use");
+        for (auto &t : disabled_storage)
+            disabled.push_back(t.c_str());
         wgpu::DawnTogglesDescriptor toggles_desc{};
         toggles_desc.enabledToggleCount = toggles.size();
         toggles_desc.enabledToggles = toggles.data();
+        toggles_desc.disabledToggleCount = disabled.size();
+        toggles_desc.disabledToggles = disabled.data();
 
         // ---- Device --------------------------------------------------------
         wgpu::DeviceDescriptor device_desc{};
@@ -211,7 +226,7 @@ namespace torch_webgpu::core
         device_desc.requiredLimits = &adapter_limits; // ask for everything the adapter offers
         device_desc.requiredFeatureCount = features.size();
         device_desc.requiredFeatures = features.data();
-        if (!toggles.empty())
+        if (!toggles.empty() || !disabled.empty())
             device_desc.nextInChain = &toggles_desc;
 
         device_desc.SetUncapturedErrorCallback(

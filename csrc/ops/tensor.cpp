@@ -268,9 +268,41 @@ namespace torch_webgpu::ops
 
         // _copy_from(self=src, dst): reached from the composite copy_ for any
         // copy involving a webgpu tensor.
+        at::Tensor copy_from(const at::Tensor &src, const at::Tensor &dst, bool non_blocking);
+
+        // Lazy conj/neg views (complex conj(), _neg_view): our kernels copy
+        // raw bits, so resolve the math bits on the CPU, where the arithmetic
+        // for these (complex) dtypes lives.
+        bool resolve_math_bits(const at::Tensor &src, const at::Tensor &dst)
+        {
+            if (src.is_conj() == dst.is_conj() && src.is_neg() == dst.is_neg())
+                return false;
+            at::Tensor raw = src;
+            if (raw.is_conj())
+                raw = raw.conj(); // clears the bit, same data
+            if (raw.is_neg())
+                raw = raw._neg_view();
+            at::Tensor host = at::empty(raw.sizes(), raw.options().device(at::kCPU));
+            copy_from(raw, host, false);
+            if (src.is_conj())
+                host = host.conj();
+            if (src.is_neg())
+                host = host._neg_view();
+            at::Tensor d = dst;
+            if (d.is_conj())
+                d = d.conj(), host = host.conj();
+            if (d.is_neg())
+                d = d._neg_view(), host = host._neg_view();
+            host = host.resolve_conj().resolve_neg();
+            copy_from(host, d, false);
+            return true;
+        }
+
         at::Tensor copy_from(const at::Tensor &src, const at::Tensor &dst, bool non_blocking)
         {
             if (dst.numel() == 0 || src.is_same(dst))
+                return dst;
+            if (resolve_math_bits(src, dst))
                 return dst;
             const bool src_gpu = is_webgpu(src), dst_gpu = is_webgpu(dst);
             if (dst_gpu && src_gpu)
@@ -436,6 +468,19 @@ namespace torch_webgpu::ops
                         {{s, CT::F32}, {e, CT::F32}, {step, CT::F32}, {at::Scalar(steps), CT::I32}, {at::Scalar(half), CT::I32}});
             return out;
         }
+    }
+
+    // copy kernels handle conj/neg bits themselves (see resolve_math_bits);
+    // without this the math-bit fallbacks recurse through clone -> copy_.
+    TORCH_LIBRARY_IMPL(aten, Conjugate, m)
+    {
+        m.impl("_copy_from", torch::CppFunction::makeFallthrough());
+        m.impl("_copy_from_and_resize", torch::CppFunction::makeFallthrough());
+    }
+    TORCH_LIBRARY_IMPL(aten, Negative, m)
+    {
+        m.impl("_copy_from", torch::CppFunction::makeFallthrough());
+        m.impl("_copy_from_and_resize", torch::CppFunction::makeFallthrough());
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)

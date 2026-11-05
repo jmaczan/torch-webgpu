@@ -50,10 +50,19 @@ namespace torch_webgpu::core
     {
         return allocation_of(t.storage());
     }
+    // A small storage buffer bound in place of zero-sized tensors (which have
+    // no allocation). Kernels never access it because they have no elements.
+    const wgpu::Buffer &dummy_buffer();
+
     inline const wgpu::Buffer &buffer_of(const at::TensorBase &t)
     {
         auto *a = allocation_of(t);
-        TORCH_INTERNAL_ASSERT(a != nullptr, "torch_webgpu: tensor has no device buffer");
+        if (a == nullptr)
+        {
+            TORCH_INTERNAL_ASSERT(t.numel() == 0 || t.storage().nbytes() == 0,
+                                  "torch_webgpu: tensor has no device buffer");
+            return dummy_buffer();
+        }
         return a->buffer;
     }
     // Byte offset of the tensor's first element inside its buffer.

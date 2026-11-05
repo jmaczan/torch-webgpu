@@ -5,6 +5,8 @@
 
 #include <c10/util/Exception.h>
 
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <mutex>
 #include <unordered_map>
@@ -19,8 +21,24 @@ namespace torch_webgpu::core
             return *c;
         }
 
+        // TORCH_WEBGPU_DUMP_SHADERS=<dir> writes every compiled shader there.
+        void maybe_dump(const std::string &source, const char *label)
+        {
+            static const char *dir = std::getenv("TORCH_WEBGPU_DUMP_SHADERS");
+            if (!dir || !*dir)
+                return;
+            static int counter = 0;
+            std::string path = std::string(dir) + "/" + std::to_string(counter++) + "_" + label + ".wgsl";
+            if (FILE *f = std::fopen(path.c_str(), "w"))
+            {
+                std::fwrite(source.data(), 1, source.size(), f);
+                std::fclose(f);
+            }
+        }
+
         Pipeline build(const std::string &source, const char *label)
         {
+            maybe_dump(source, label);
             auto &ctx = Context::get();
             const auto &device = ctx.device();
 

@@ -489,6 +489,11 @@ namespace torch_webgpu::ops
             TORCH_CHECK(mask.scalar_type() == at::kBool, "masked_select: expected BoolTensor for mask");
             auto shapes = at::infer_size(self.sizes(), mask.sizes());
             Tensor s = self.expand(shapes), m = mask.expand(shapes);
+            if (shapes.empty())
+            {
+                s = s.view({1});
+                m = m.view({1});
+            }
             c10::List<std::optional<Tensor>> idx;
             idx.push_back(m);
             return at::index(s, idx);

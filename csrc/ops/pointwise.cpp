@@ -280,9 +280,9 @@ namespace torch_webgpu::ops
     {
         // ----------------------------------------------------------- unary
 #define K(NAME, ...) [&](TensorIteratorBase &it) { run(it, NAME, __VA_ARGS__); }
-        WG_UNARY(sin, K("sin", {"sin(x0)"}))
-        WG_UNARY(cos, K("cos", {"cos(x0)"}))
-        WG_UNARY(tan, K("tan", {"tan(x0)"}))
+        WG_UNARY(sin, K("sin", {"sin_f(x0)"}))
+        WG_UNARY(cos, K("cos", {"cos_f(x0)"}))
+        WG_UNARY(tan, K("tan", {"tan_f(x0)"}))
         WG_UNARY(asin, K("asin", {"asin(x0)"}))
         WG_UNARY(acos, K("acos", {"acos(x0)"}))
         WG_UNARY(atan, K("atan", {"atan(x0)"}))
@@ -306,7 +306,7 @@ namespace torch_webgpu::ops
         WG_UNARY(erf, K("erf", {"erf_f(x0)"}))
         WG_UNARY(erfc, K("erfc", {"erfc_f(x0)"}))
         WG_UNARY(erfinv, K("erfinv", {"erfinv_f(x0)"}))
-        WG_UNARY(sinc, K("sinc", {"select(sin(3.14159265358979 * x0) / (3.14159265358979 * x0), 1.0, x0 == 0.0)"}))
+        WG_UNARY(sinc, K("sinc", {"select(sin_f(3.14159265358979 * x0) / (3.14159265358979 * x0), 1.0, x0 == 0.0)"}))
         WG_UNARY(neg, K("neg", {"-x0", "-x0"}))
         WG_UNARY(floor, K("floor", {"floor(x0)", "x0", "x0"}))
         WG_UNARY(ceil, K("ceil", {"ceil(x0)", "x0", "x0"}))

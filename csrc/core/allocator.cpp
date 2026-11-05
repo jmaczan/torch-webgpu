@@ -168,6 +168,19 @@ namespace torch_webgpu::core
     }
 
     c10::Allocator *get_allocator() { return &CachingAllocator::instance(); }
+
+    const wgpu::Buffer &dummy_buffer()
+    {
+        static wgpu::Buffer *b = []
+        {
+            wgpu::BufferDescriptor desc{};
+            desc.label = "torch_webgpu dummy";
+            desc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst;
+            desc.size = 256;
+            return new wgpu::Buffer(Context::get().device().CreateBuffer(&desc));
+        }();
+        return *b;
+    }
     MemoryStats memory_stats() { return CachingAllocator::instance().stats(); }
     void reset_peak_memory_stats() { CachingAllocator::instance().reset_peak(); }
     void empty_cache()

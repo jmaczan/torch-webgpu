@@ -77,6 +77,30 @@ PYBIND11_MODULE(_C, m)
               return d; });
     m.def("_fallback_ops", &ops::fallback_ops_seen);
 
+    // Runs a WGSL compute shader. Tensors are bound as storage buffers at
+    // @binding(0..n-1) (whole buffers; use storage_offset in the shader),
+    // optional uniform words at @binding(n). Entry point must be `main`.
+    m.def(
+        "_run_wgsl",
+        [](const std::string &source, const std::vector<at::Tensor> &tensors, std::vector<uint32_t> uniforms,
+           std::tuple<uint32_t, uint32_t, uint32_t> grid)
+        {
+            const auto &p = core::get_pipeline(source, "user_wgsl");
+            std::vector<core::BufferBinding> bufs;
+            for (auto &t : tensors)
+            {
+                TORCH_CHECK(t.device().type() == c10::DeviceType::PrivateUse1, "_run_wgsl: expected webgpu tensors");
+                bufs.push_back({core::buffer_of(t)});
+            }
+            core::Grid g;
+            g.x = std::get<0>(grid);
+            g.y = std::get<1>(grid);
+            g.z = std::get<2>(grid);
+            core::launch(p, bufs, uniforms.empty() ? nullptr : uniforms.data(), uniforms.size() * 4, g);
+        },
+        py::arg("source"), py::arg("tensors"), py::arg("uniforms") = std::vector<uint32_t>{},
+        py::arg("grid") = std::make_tuple(1u, 1u, 1u));
+
     m.def("_default_generator", []
           { return core::default_generator(); });
 }
