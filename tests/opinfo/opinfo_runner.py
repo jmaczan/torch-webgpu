@@ -182,12 +182,98 @@ def run_op(op, dtype, max_samples=None):
     return "pass", f"{len(samples)} samples"
 
 
+def _leaves(x, out):
+    """Tensors requiring grad in x (nested lists/tuples/dicts), in order."""
+    if isinstance(x, torch.Tensor):
+        if x.requires_grad:
+            out.append(x)
+    elif isinstance(x, (list, tuple)):
+        for v in x:
+            _leaves(v, out)
+    elif isinstance(x, dict):
+        for k in sorted(x):
+            _leaves(x[k], out)
+    return out
+
+
+def _outputs(x, out):
+    """Differentiable tensor outputs, in order."""
+    if isinstance(x, torch.Tensor):
+        if x.requires_grad and (x.is_floating_point() or x.is_complex()):
+            out.append(x)
+    elif isinstance(x, (list, tuple)):
+        for v in x:
+            _outputs(v, out)
+    return out
+
+
+def _weighted_grads(outputs, leaves, weights):
+    loss = sum((o * w).sum() for o, w in zip(outputs, weights))
+    return torch.autograd.grad(loss, leaves, allow_unused=True)
+
+
+# Backward tolerances: gradients chain several kernels and accumulate.
+GRAD_TOLERANCES = (1e-3, 1e-3)
+
+
+def run_op_grad(op, dtype=torch.float32, max_samples=None):
+    """Compares input gradients of a random weighting of the outputs."""
+    if not op.supports_autograd or nondeterministic(op) or harness_limited(op):
+        return "skip", "no autograd / nondeterministic"
+    if dtype not in op.supported_backward_dtypes("cpu"):
+        return "skip", "dtype has no backward on cpu"
+    try:
+        samples = list(op.sample_inputs("cpu", dtype, requires_grad=True))
+    except Exception as e:  # noqa: BLE001
+        return "skip", f"sample generation failed: {e}"
+    if max_samples:
+        samples = samples[:max_samples]
+    atol, rtol = GRAD_TOLERANCES
+    checked = 0
+    for k, s in enumerate(samples):
+        if random_sample(op, s):
+            continue
+        try:
+            cpu_leaves = _leaves([s.input, s.args, s.kwargs], [])
+            expected_out = op(s.input, *s.args, **s.kwargs)
+            outs = _outputs(expected_out, [])
+            if not cpu_leaves or not outs:
+                continue
+            gen = torch.Generator().manual_seed(k)
+            weights = [torch.randn(o.shape, generator=gen, dtype=o.dtype) for o in outs]
+            expected = _weighted_grads(outs, cpu_leaves, weights)
+        except Exception:  # noqa: BLE001
+            continue  # CPU can't differentiate this sample either
+        di = to_device(s.input, DEVICE)
+        da = to_device(s.args, DEVICE)
+        dk = to_device(s.kwargs, DEVICE)
+        try:
+            dev_leaves = _leaves([di, da, dk], [])
+            dev_outs = _outputs(op(di, *da, **dk), [])
+            if len(dev_outs) != len(outs) or len(dev_leaves) != len(cpu_leaves):
+                return "fail", f"sample {k}: differentiable outputs/inputs differ from CPU"
+            actual = _weighted_grads(dev_outs, dev_leaves, [w.to(o.device) for w, o in zip(weights, dev_outs)])
+            for i, (a, e) in enumerate(zip(actual, expected)):
+                if (a is None) != (e is None):
+                    raise AssertionError(f"grad[{i}]: {'None' if a is None else 'defined'} vs CPU "
+                                         f"{'None' if e is None else 'defined'}")
+                if e is not None:
+                    compare(a, e, atol, rtol, f"grad[{i}]")
+            checked += 1
+        except AssertionError as e:
+            return "fail", f"sample {k}: {str(e)[:300]}"
+        except Exception as e:  # noqa: BLE001
+            return "error", f"sample {k}: {type(e).__name__}: {str(e).splitlines()[0][:300] if str(e) else ''}"
+    return ("pass", f"{checked} samples") if checked else ("skip", "no differentiable samples")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dtype", default="float32")
     ap.add_argument("--filter", default=None)
     ap.add_argument("--max-samples", type=int, default=None)
     ap.add_argument("--show", default="fail,error")
+    ap.add_argument("--grad", action="store_true", help="compare input gradients instead of outputs")
     args = ap.parse_args()
     dtype = getattr(torch, args.dtype)
     warnings.filterwarnings("ignore")
@@ -199,7 +285,7 @@ def main():
             continue
         if verbose:
             print("RUN", op.name, op.variant_test_name, flush=True)
-        status, msg = run_op(op, dtype, args.max_samples)
+        status, msg = (run_op_grad if args.grad else run_op)(op, dtype, args.max_samples)
         counts[status] = counts.get(status, 0) + 1
         if status in show:
             print(f"{status.upper():5s} {op.name}{'.' + op.variant_test_name if op.variant_test_name else ''}: {msg}")

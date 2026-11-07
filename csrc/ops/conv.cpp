@@ -233,6 +233,11 @@ namespace torch_webgpu::ops
                 else
                 {
                     gi = conv_forward(go, weight, std::nullopt, stride, padding, dilation, groups);
+                    // With output_padding >= stride (possible when dilation >
+                    // stride) the conv yields trailing positions past the input.
+                    for (size_t d = 0; d < nd; ++d)
+                        if (gi.size(2 + d) > x.size(2 + d))
+                            gi = gi.narrow(2 + static_cast<int64_t>(d), 0, x.size(2 + d));
                 }
                 if (!batched)
                     gi = gi.squeeze(0);

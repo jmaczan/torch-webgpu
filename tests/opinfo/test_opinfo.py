@@ -2,7 +2,8 @@
 on webgpu and compared with the CPU result for the same sample inputs.
 
 float32 covers every OpInfo; other dtypes run on a representative subset to
-keep the suite fast. Set TORCH_WEBGPU_OPINFO_ALL_DTYPES=1 to run every op for
+keep the suite fast. test_opinfo_grad compares input gradients (float32) of
+every differentiable op. Set TORCH_WEBGPU_OPINFO_ALL_DTYPES=1 to run every op for
 every dtype, TORCH_WEBGPU_OPINFO_MAX_SAMPLES to limit samples per op.
 """
 
@@ -12,7 +13,7 @@ import warnings
 import pytest
 import torch
 
-from opinfo_runner import op_db, run_op
+from opinfo_runner import op_db, run_op, run_op_grad
 
 MAX_SAMPLES = int(os.environ.get("TORCH_WEBGPU_OPINFO_MAX_SAMPLES", "20"))
 ALL_DTYPES = os.environ.get("TORCH_WEBGPU_OPINFO_ALL_DTYPES") == "1"
@@ -59,6 +60,22 @@ def test_opinfo(op, dtype):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         status, msg = run_op(op, dtype, MAX_SAMPLES)
+    if status == "skip":
+        pytest.skip(msg)
+    assert status == "pass", msg
+
+
+def _grad_params():
+    for op in op_db:
+        name = op.name + ("." + op.variant_test_name if op.variant_test_name else "")
+        yield pytest.param(op, id=name)
+
+
+@pytest.mark.parametrize("op", list(_grad_params()))
+def test_opinfo_grad(op):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        status, msg = run_op_grad(op, torch.float32, min(MAX_SAMPLES, 10))
     if status == "skip":
         pytest.skip(msg)
     assert status == "pass", msg

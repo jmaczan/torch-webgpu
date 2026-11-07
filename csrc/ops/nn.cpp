@@ -279,8 +279,9 @@ namespace torch_webgpu::ops
             Tensor map = col_index_map(Hp, Wp, k, dil, st, cols.options()); // [KK, L]
             TORCH_CHECK(map.size(1) == cols.size(2), "col2im: expected ", map.size(1), " blocks, got ", cols.size(2));
             Tensor out = at::zeros({N, C, Hp * Wp}, cols.options());
-            Tensor idx = map.reshape({1, 1, -1}).expand({N, C, KK * map.size(1)});
-            out.scatter_add_(2, idx, cols.reshape({N, C, -1}));
+            // Explicit sizes: -1 is ambiguous when N or C is 0.
+            Tensor idx = map.reshape({1, 1, KK * map.size(1)}).expand({N, C, KK * map.size(1)});
+            out.scatter_add_(2, idx, cols.reshape({N, C, KK * map.size(1)}));
             Tensor r = out.view({N, C, Hp, Wp}).slice(2, pad[0], pad[0] + out_size[0]).slice(3, pad[1], pad[1] + out_size[1]);
             r = r.contiguous();
             return batched ? r : r.squeeze(0);
@@ -377,7 +378,8 @@ namespace torch_webgpu::ops
             Tensor x = as4d(self), g = as4d(grad), idx = as4d(indices);
             const int64_t N = x.size(0), C = x.size(1);
             Tensor gi = at::zeros({N, C, x.size(2) * x.size(3)}, grad.options());
-            gi.scatter_add_(2, idx.reshape({N, C, -1}), g.reshape({N, C, -1}));
+            const int64_t L = g.size(2) * g.size(3);
+            gi.scatter_add_(2, idx.reshape({N, C, L}), g.reshape({N, C, L}));
             gi = gi.view(x.sizes());
             return self.dim() == 3 ? gi.squeeze(0) : gi;
         }
@@ -434,7 +436,8 @@ namespace torch_webgpu::ops
             const int64_t Hp = x.size(2) + 2 * g.pad[0] + g.eh, Wp = x.size(3) + 2 * g.pad[1] + g.ew;
             Tensor map = col_index_map(Hp, Wp, g.k, g.dil, g.st, x.options()); // [KK, L]
             Tensor out = at::zeros({N, C, Hp * Wp}, go.options());
-            out.scatter_add_(2, map.reshape({1, 1, -1}).expand({N, C, KK * g.oh * g.ow}), cols.reshape({N, C, -1}));
+            const int64_t L = KK * g.oh * g.ow;
+            out.scatter_add_(2, map.reshape({1, 1, L}).expand({N, C, L}), cols.reshape({N, C, L}));
             Tensor gi = out.view({N, C, Hp, Wp})
                             .slice(2, g.pad[0], g.pad[0] + x.size(2))
                             .slice(3, g.pad[1], g.pad[1] + x.size(3))
