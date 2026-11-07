@@ -140,6 +140,12 @@ class WGSLKernelRunner:
         return kid
 
     def __call__(self, tensors, params, xnumel: int) -> None:
+        # Common case in one C++ call; aliasing and CPU scalars go the slow way.
+        rc = _C._wgsl_run(self.kid, tensors, params, xnumel, self.block, self.error_flag)
+        if rc:
+            self._launch_slow(tensors, params, xnumel)
+
+    def _launch_slow(self, tensors, params, xnumel: int) -> None:
         nwg = -(-int(xnumel) // self.block)
         if nwg <= 0:
             return

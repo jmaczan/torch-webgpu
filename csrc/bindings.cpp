@@ -1,5 +1,6 @@
 // Python bindings (torch_webgpu._C).
 
+#include <algorithm>
 #include <torch/extension.h>
 
 #include "core/allocator.h"
@@ -198,6 +199,56 @@ PYBIND11_MODULE(_C, m)
     // for one binding per tensor; if tensors share buffers the launch is
     // skipped and false returned (the caller then compiles a variant for
     // _wgsl_binding_map(tensors) and launches it with merged=True).
+    // Fast path for WGSLKernelRunner.__call__: computes the 1-D grid
+    // (xnumel / block workgroups, spilling into y) and appends the kernel
+    // constants (P.k: NaN bits, +Inf bits, 0, 0) after the params. Returns
+    // 0 when launched (or nothing to do), 1 when tensors share a buffer (the
+    // caller needs a merged-binding variant), 2 when a tensor is not on the
+    // webgpu device (the caller stages it).
+    m.def(
+        "_wgsl_run",
+        [wgsl_bindings](int64_t id, const std::vector<at::Tensor> &tensors, const std::vector<int64_t> &params,
+                        int64_t xnumel, int64_t block, bool error_flag) -> int
+        {
+            if (xnumel <= 0)
+                return 0;
+            auto *pl = compiled_pipelines();
+            TORCH_CHECK(pl && id >= 0 && id < static_cast<int64_t>(pl->size()), "_wgsl_run: unknown kernel id ", id);
+            const size_t n = tensors.size();
+            for (const auto &t : tensors)
+                if (t.device().type() != c10::DeviceType::PrivateUse1)
+                    return 2;
+            WgslBindings b;
+            wgsl_bindings(tensors, b);
+            for (size_t i = 0; i < n; ++i)
+                if (b.map[i] != static_cast<int>(i))
+                    return 1;
+            std::vector<core::BufferBinding> &bufs = b.buffers;
+            const size_t pbase = (n + 3) / 4 * 4;
+            const size_t kbase = pbase + (params.size() + 3) / 4 * 4;
+            std::vector<uint32_t> words(kbase + 4, 0u);
+            for (size_t i = 0; i < n; ++i)
+                words[i] = b.regs[i] >= 0 ? b.bs.offset(b.regs[i]) : 0u;
+            if (error_flag)
+                bufs.push_back({core::Stream::get().index_error_flag()});
+            for (size_t j = 0; j < params.size(); ++j)
+            {
+                TORCH_CHECK(params[j] >= INT32_MIN && params[j] <= UINT32_MAX, "_wgsl_run: parameter out of 32-bit range");
+                words[pbase + j] = static_cast<uint32_t>(params[j]);
+            }
+            words[kbase] = 0x7FC00000u;
+            words[kbase + 1] = 0x7F800000u;
+            const uint64_t nwg = (static_cast<uint64_t>(xnumel) + block - 1) / block;
+            const uint64_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;
+            core::Grid g;
+            g.x = static_cast<uint32_t>(std::min<uint64_t>(nwg, maxd));
+            g.y = static_cast<uint32_t>((nwg + g.x - 1) / g.x);
+            TORCH_CHECK(g.y <= maxd, "_wgsl_run: launch too large");
+            core::launch(*(*pl)[id], bufs, words.data(), words.size() * 4, g);
+            return 0;
+        },
+        py::arg("id"), py::arg("tensors"), py::arg("params"), py::arg("xnumel"), py::arg("block"),
+        py::arg("error_flag") = false);
     m.def(
         "_wgsl_launch",
         [wgsl_bindings](int64_t id, const std::vector<at::Tensor> &tensors, const std::vector<int64_t> &params,
