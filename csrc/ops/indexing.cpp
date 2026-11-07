@@ -10,6 +10,8 @@
 #include <ATen/ops/index_add_meta.h>
 #include <ATen/ops/index_copy_meta.h>
 #include <ATen/ops/index_meta.h>
+#include <ATen/ops/index_reduce_meta.h>
+#include <ATen/Dispatch.h>
 #include <ATen/ops/scatter_add_meta.h>
 #include <ATen/ops/scatter_meta.h>
 #include <ATen/ops/scatter_reduce_meta.h>
@@ -239,18 +241,110 @@ namespace torch_webgpu::ops
                    WEBGPU_FALLBACK(scatter, value_reduce), WEBGPU_FALLBACK(scatter, value_reduce_out),
                    WEBGPU_FALLBACK(scatter_, value_reduce))
 
-        // scatter_reduce.two(self, dim, index, src, reduce, include_self)
+        // scatter_reduce.two(self, dim, index, src, reduce, include_self), as
+        // CPU/CUDA: without include_self the scattered-to positions start
+        // from the reduction's identity; mean = sum / count (floor for ints).
+        Scalar reduce_identity(c10::string_view reduce, at::ScalarType t)
+        {
+            const bool fp = at::isFloatingType(t);
+            if (reduce == "prod")
+                return 1;
+            if (reduce == "amax")
+                return fp ? Scalar(-std::numeric_limits<double>::infinity())
+                          : AT_DISPATCH_INTEGRAL_TYPES_AND(at::kBool, t, "lowest", [] { return Scalar(std::numeric_limits<scalar_t>::lowest()); });
+            if (reduce == "amin")
+                return fp ? Scalar(std::numeric_limits<double>::infinity())
+                          : AT_DISPATCH_INTEGRAL_TYPES_AND(at::kBool, t, "max", [] { return Scalar(std::numeric_limits<scalar_t>::max()); });
+            return 0;
+        }
+        ScatterMode two_mode(c10::string_view reduce) { return reduce == "mean" ? ScatterMode::Add : reduce_mode(reduce); }
+
+        void scatter_reduce_two_impl(const Tensor &out, int64_t dim, const Tensor &index, const Tensor &src,
+                                     c10::string_view reduce, bool include_self)
+        {
+            if (index.numel() == 0)
+                return;
+            if (!include_self)
+                scatter_impl(out, dim, index, value_tensor(out, reduce_identity(reduce, out.scalar_type())),
+                             ScatterMode::Assign);
+            scatter_impl(out, dim, index, src, two_mode(reduce));
+            if (reduce == "mean")
+            {
+                Tensor count = include_self ? at::ones_like(out) : at::zeros_like(out);
+                scatter_impl(count, dim, index, at::ones_like(src), ScatterMode::Add);
+                count.masked_fill_(count == 0, 1);
+                if (out.is_floating_point())
+                    out.div_(count);
+                else
+                    out.div_(count, "floor");
+            }
+        }
+        bool scatter_two_supported(const Tensor &self, c10::string_view reduce)
+        {
+            return scatter_supported(self, two_mode(reduce)) && self.scalar_type() != at::kBool;
+        }
         Tensor scatter_reduce_two_fn(const Tensor &self, int64_t dim, const Tensor &index, const Tensor &src,
                                      c10::string_view reduce, bool include_self)
         {
-            if (reduce == "mean" || !include_self || !scatter_supported(self, ScatterMode::Add))
+            if (!scatter_two_supported(self, reduce))
                 return WEBGPU_FALLBACK(scatter_reduce, two)(self, dim, index, src, reduce, include_self);
             Functional<at::meta::structured_scatter_reduce_two> op;
             op.meta(self, dim, index, src, reduce, include_self);
             Tensor &out = op.outputs_[0];
             out.copy_(self);
-            scatter_impl(out, dim, index, src, reduce_mode(reduce));
+            scatter_reduce_two_impl(out, dim, index, src, reduce, include_self);
             return std::move(out);
+        }
+        Tensor &scatter_reduce_two_out_fn(const Tensor &self, int64_t dim, const Tensor &index, const Tensor &src,
+                                          c10::string_view reduce, bool include_self, Tensor &out)
+        {
+            if (!scatter_two_supported(self, reduce))
+                return WEBGPU_FALLBACK(scatter_reduce, two_out)(self, dim, index, src, reduce, include_self, out);
+            Out<at::meta::structured_scatter_reduce_two> op(out);
+            op.meta(self, dim, index, src, reduce, include_self);
+            const Tensor &o = op.maybe_get_output(0);
+            if (!o.is_same(self))
+                o.copy_(self);
+            scatter_reduce_two_impl(o, dim, index, src, reduce, include_self);
+            op.finish();
+            return out;
+        }
+        Tensor &scatter_reduce_two_inplace_fn(Tensor &self, int64_t dim, const Tensor &index, const Tensor &src,
+                                              c10::string_view reduce, bool include_self)
+        {
+            if (!scatter_two_supported(self, reduce))
+                return WEBGPU_FALLBACK(scatter_reduce_, two)(self, dim, index, src, reduce, include_self);
+            Inplace<at::meta::structured_scatter_reduce_two> op(self);
+            op.meta(self, dim, index, src, reduce, include_self);
+            scatter_reduce_two_impl(op.maybe_get_output(0), dim, index, src, reduce, include_self);
+            op.finish();
+            return self;
+        }
+
+        // index_reduce(self, dim, index, source, reduce, include_self): the
+        // scatter_reduce of `source` with `index` broadcast along `dim`.
+        Tensor &index_reduce_out_fn(const Tensor &self, int64_t dim, const Tensor &index, const Tensor &source,
+                                    c10::string_view reduce, bool include_self, Tensor &out)
+        {
+            if (!scatter_two_supported(self, reduce))
+                return WEBGPU_FALLBACK(index_reduce, out)(self, dim, index, source, reduce, include_self, out);
+            Out<at::meta::structured_index_reduce> op(out);
+            op.meta(self, dim, index, source, reduce, include_self);
+            const Tensor &o = op.maybe_get_output(0);
+            if (!o.is_same(self))
+                o.copy_(self);
+            if (index.numel() > 0 && source.numel() > 0)
+            {
+                const Tensor src = source.dim() == 0 ? source.reshape({1}) : source;
+                const Tensor dst = o.dim() == 0 ? o.reshape({1}) : o;
+                const int64_t d = at::maybe_wrap_dim(dim, src.dim());
+                std::vector<int64_t> shape(src.dim(), 1);
+                shape[d] = index.numel();
+                Tensor idx = index.reshape(shape).expand(src.sizes());
+                scatter_reduce_two_impl(dst, d, idx, src, reduce, include_self);
+            }
+            op.finish();
+            return out;
         }
 
         // --------------------------------------------- advanced indexing
@@ -675,6 +769,9 @@ namespace torch_webgpu::ops
         m.impl("scatter_add.out", TORCH_FN(scatter_add_out_fn));
         m.impl("scatter_add_", TORCH_FN(scatter_add_inplace_fn));
         m.impl("scatter_reduce.two", TORCH_FN(scatter_reduce_two_fn));
+        m.impl("scatter_reduce.two_out", TORCH_FN(scatter_reduce_two_out_fn));
+        m.impl("scatter_reduce_.two", TORCH_FN(scatter_reduce_two_inplace_fn));
+        m.impl("index_reduce.out", TORCH_FN(index_reduce_out_fn));
         m.impl("index.Tensor", TORCH_FN(index_fn));
         m.impl("index.Tensor_out", TORCH_FN(index_out_fn));
         m.impl("_index_put_impl_", TORCH_FN(index_put_impl_fn));
