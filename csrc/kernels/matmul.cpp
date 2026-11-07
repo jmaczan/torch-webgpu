@@ -27,10 +27,14 @@ namespace torch_webgpu::kernels
 
     namespace
     {
+    // slices > 1: split-K inside the dispatch; `out` is then [slices * B, M, N]
+    // receiving per-slice partial products (no bias).
     void launch_matmul(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
-                       const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias)
+                       const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias, int64_t slices = 1)
     {
-        const int64_t B = out.size(0), M = out.size(1), N = out.size(2), K = a.size(2);
+        const int64_t B = out.size(0) / slices;
+        const int64_t M = out.size(1), N = out.size(2), K = a.size(2);
+        const int64_t kc = (K + slices - 1) / slices;
 
         const CT ct = wgsl::compute_type(out.scalar_type());
         TORCH_CHECK(ct != CT::Bool, "torch_webgpu: matmul is not supported for bool tensors");
@@ -64,10 +68,10 @@ namespace torch_webgpu::kernels
             std::ostringstream s;
             s << wgsl::prelude();
             s << "struct Params {\n"
-                 "  M: u32, N: u32, K: u32, _p: u32,\n"
+                 "  M: u32, N: u32, K: u32, nb: u32,\n"   // nb: batch count (grid z = slice * nb + batch)
                  "  off: vec4<u32>,\n"          // a, w, out, bias
                  "  sa: vec4<u32>, sw: vec4<u32>, so: vec4<u32>, sb: vec4<u32>,\n" // (batch, row, col, -)
-                 "  alpha: u32, beta: u32, _q0: u32, _q1: u32,\n"
+                 "  alpha: u32, beta: u32, kc: u32, _q1: u32,\n" // kc: K-slice length (split-K)
                  "};\n";
             for (size_t i = 0; i < binds.size(); ++i)
             {
@@ -90,13 +94,14 @@ namespace torch_webgpu::kernels
             s << "@compute @workgroup_size(16, 16, 1)\n"
                  "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {\n"
                  "    let tx = lid.x;\n    let ty = lid.y;\n    let tid = ty * 16u + tx;\n"
-                 "    let b = wid.z;\n"
+                 "    let bz = wid.z;\n    let b = bz % P.nb;\n    let sl = bz / P.nb;\n"
+                 "    let kbeg = sl * P.kc;\n    let kend = min(P.K, kbeg + P.kc);\n"
                  "    let m0 = wid.y * " << BM << "u;\n    let n0 = wid.x * " << BN << "u;\n"
                  "    let a_base = P.off[0] + b * P.sa[0];\n"
                  "    let w_base = P.off[1] + b * P.sw[0];\n"
                  "    var acc: array<array<" << T << ", 4>, 4>;\n"
                  "    for (var i = 0u; i < 4u; i++) { for (var j = 0u; j < 4u; j++) { acc[i][j] = " << T << "(0); } }\n"
-                 "    for (var k0 = 0u; k0 < P.K; k0 += " << BK << "u) {\n"
+                 "    for (var k0 = kbeg; k0 < kend; k0 += " << BK << "u) {\n"
                  "        for (var l = 0u; l < 4u; l++) {\n"
                  "            let idx = tid + l * 256u;\n";
             // A tile: BM x BK
@@ -106,7 +111,7 @@ namespace torch_webgpu::kernels
                 s << "            let ar = idx % " << BM << "u;\n            let ac = idx / " << BM << "u;\n";
             s << "            let gm = m0 + ar;\n            let gk = k0 + ac;\n"
                  "            var av = " << T << "(0);\n"
-                 "            if (gm < P.M && gk < P.K) { av = " << cv("ld_a(a_base + gm * P.sa[1] + gk * P.sa[2])", ta) << "; }\n"
+                 "            if (gm < P.M && gk < kend) { av = " << cv("ld_a(a_base + gm * P.sa[1] + gk * P.sa[2])", ta) << "; }\n"
                  "            As[ac][ar] = av;\n";
             // W tile: BK x BN
             if (w_n_contig)
@@ -115,7 +120,7 @@ namespace torch_webgpu::kernels
                 s << "            let wr = idx % " << BK << "u;\n            let wc = idx / " << BK << "u;\n";
             s << "            let gk2 = k0 + wr;\n            let gn = n0 + wc;\n"
                  "            var wv = " << T << "(0);\n"
-                 "            if (gk2 < P.K && gn < P.N) { wv = " << cv("ld_w(w_base + gk2 * P.sw[1] + gn * P.sw[2])", tw) << "; }\n"
+                 "            if (gk2 < kend && gn < P.N) { wv = " << cv("ld_w(w_base + gk2 * P.sw[1] + gn * P.sw[2])", tw) << "; }\n"
                  "            Ws[wr][wc] = wv;\n"
                  "        }\n"
                  "        workgroupBarrier();\n"
@@ -139,7 +144,7 @@ namespace torch_webgpu::kernels
                  "            var v = alpha * acc[i][j];\n";
             if (has_bias)
                 s << "            v += beta * " << cv("ld_b(P.off[3] + b * P.sb[0] + gm * P.sb[1] + gn * P.sb[2])", tb) << ";\n";
-            s << "            st_o(P.off[2] + b * P.so[0] + gm * P.so[1] + gn * P.so[2], "
+            s << "            st_o(P.off[2] + bz * P.so[0] + gm * P.so[1] + gn * P.so[2], "
               << wgsl::convert("v", ct, wgsl::compute_type(to)) << ");\n"
                  "        }\n    }\n}\n";
             return s.str();
@@ -148,7 +153,7 @@ namespace torch_webgpu::kernels
         const auto &pipeline = core::get_pipeline(key.str(), make_source, "matmul");
 
         core::Params p;
-        p.u32(u32_of(M, "M")).u32(u32_of(N, "N")).u32(u32_of(K, "K")).u32(0);
+        p.u32(u32_of(M, "M")).u32(u32_of(N, "N")).u32(u32_of(K, "K")).u32(u32_of(B, "batch"));
         p.u32(bs.offset(a_r)).u32(bs.offset(w_r));
         p.u32(bs.offset(out_r)).u32(has_bias ? bs.offset(bias_r) : 0u);
         auto strides = [&](const at::Tensor &t)
@@ -162,13 +167,13 @@ namespace torch_webgpu::kernels
             strides(bias);
         else
             p.u32(0).u32(0).u32(0).u32(0);
-        p.u32(scalar_word(alpha, ct)).u32(has_bias ? scalar_word(beta, ct) : 0u).u32(0).u32(0);
+        p.u32(scalar_word(alpha, ct)).u32(has_bias ? scalar_word(beta, ct) : 0u).u32(u32_of(kc, "K slice")).u32(0);
 
         const uint32_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;
         core::Grid grid;
         grid.x = static_cast<uint32_t>((N + BN - 1) / BN);
         grid.y = static_cast<uint32_t>((M + BM - 1) / BM);
-        grid.z = static_cast<uint32_t>(B);
+        grid.z = static_cast<uint32_t>(B * slices);
         TORCH_CHECK(grid.x <= maxd && grid.y <= maxd && grid.z <= maxd, "torch_webgpu: matmul too large for one dispatch");
 
         core::launch(pipeline, bs.buffers(), p.data(), p.size(), grid);
@@ -182,7 +187,9 @@ namespace torch_webgpu::kernels
     //  - weight contiguous along N (x @ W): 64 columns per workgroup (one per
     //    thread, coalesced), K split across 4 thread groups and reduced.
     // Returns false when neither layout applies.
-    constexpr int64_t kSkinnyMaxM = 8;
+    // (The shared reduction buffer is 256 * M floats: 16 KiB at M = 16, the
+    // spec's minimum maxComputeWorkgroupStorageSize.)
+    constexpr int64_t kSkinnyMaxM = 16;
     bool launch_skinny(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
                        const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias)
     {
@@ -314,6 +321,36 @@ namespace torch_webgpu::kernels
         return true;
     }
 
+    // Split-K: when the tiled GEMM's grid is too small to fill the GPU (e.g.
+    // M = 16..128 against a large N x K weight), compute K-slices into
+    // partial products and sum them (a column reduction), then apply
+    // alpha / beta / bias.
+    bool launch_split_k(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
+                        const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias)
+    {
+        const int64_t B = out.size(0), M = out.size(1), N = out.size(2), K = a.size(2);
+        const CT ct = wgsl::compute_type(out.scalar_type());
+        if (ct != CT::F32 && ct != CT::I32)
+            return false;
+        const int64_t wgs = B * ((M + BM - 1) / BM) * ((N + BN - 1) / BN);
+        constexpr int64_t kTargetWorkgroups = 512, kMinSlice = 256;
+        if (wgs >= kTargetWorkgroups / 2 || K < 2 * kMinSlice)
+            return false;
+        const int64_t S = std::min((kTargetWorkgroups + wgs - 1) / wgs, K / kMinSlice);
+        if (S < 2)
+            return false;
+        const auto pdt = ct == CT::F32 ? at::kFloat : at::kInt; // partials in the compute type
+        at::Tensor part = at::empty({S, B, M, N}, out.options().dtype(pdt));
+        launch_matmul(a, w, part.view({S * B, M, N}), at::Tensor(), 0, 1, false, S);
+        at::Tensor res = part.sum(0, false, pdt);
+        if (!(alpha.isIntegral(false) ? alpha.toLong() == 1 : alpha.toDouble() == 1.0))
+            res.mul_(alpha);
+        if (has_bias)
+            res.add_(bias.to(pdt), beta);
+        const_cast<at::Tensor &>(out).copy_(res);
+        return true;
+    }
+
     // Splits until every operand's window fits the device's binding limit:
     // batch first, then N (weight column blocks, e.g. an LM head), then M.
     void matmul_fitting(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
@@ -322,7 +359,8 @@ namespace torch_webgpu::kernels
         const at::Tensor no_bias;
         if (core::windows_fit({a, w, out, has_bias ? bias : no_bias}))
         {
-            if (!launch_skinny(a, w, out, bias, beta, alpha, has_bias))
+            if (!launch_skinny(a, w, out, bias, beta, alpha, has_bias) &&
+                !launch_split_k(a, w, out, bias, beta, alpha, has_bias))
                 launch_matmul(a, w, out, bias, beta, alpha, has_bias);
             return;
         }
