@@ -103,6 +103,18 @@ def test_nan_semantics(name):
     compare(NAN_CASES[name], WITH_NAN)
 
 
+@pytest.mark.parametrize("pos", [0, 1, 2, 3, None])
+@pytest.mark.parametrize("op", ["argmax", "argmin"])
+def test_arg_reduction_nan_position(pos, op):
+    """NaN wins arg reductions wherever it sits (it crosses lanes in the
+    workgroup reduction; ordered comparisons with NaN must not decide)."""
+    a = torch.tensor([1.0, 3.0, -2.0, 2.0])
+    if pos is not None:
+        a[pos] = float("nan")
+    compare(lambda t: getattr(t, op)(), a, tol=0)
+    compare(lambda t: getattr(t.repeat(70), op)(), a, tol=0)
+
+
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 def test_half_types(dtype):
     a = X.to(dtype)

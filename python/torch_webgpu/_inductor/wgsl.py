@@ -1018,7 +1018,9 @@ def _arg_better(rtype: str, dtype: torch.dtype, v: str, a: str) -> str:
     t = ct(dtype)
     op = ">" if rtype == "argmax" else "<"
     if t == "f32":
-        return f"(({v} {op} {a}) || (isnan_f({v}) && !isnan_f({a})))"
+        # NaN first: some drivers evaluate ordered comparisons with a NaN
+        # operand as true (a > b compiled as !(a <= b)).
+        return f"(!isnan_f({a}) && (isnan_f({v}) || ({v} {op} {a})))"
     if t == "i64":
         return f"i64_{'gt' if op == '>' else 'lt'}({v}, {a})"
     if t == "bool":
@@ -1029,7 +1031,7 @@ def _arg_better(rtype: str, dtype: torch.dtype, v: str, a: str) -> str:
 def _arg_equal(dtype: torch.dtype, v: str, a: str) -> str:
     t = ct(dtype)
     if t == "f32":
-        return f"(({v} == {a}) || (isnan_f({v}) && isnan_f({a})))"
+        return f"select({v} == {a} && !isnan_f({v}) && !isnan_f({a}), isnan_f({v}), isnan_f({a}))"
     if t == "i64":
         return f"i64_eq({v}, {a})"
     return f"({v} == {a})"
@@ -1254,12 +1256,23 @@ class WGSLKernel(SIMDKernel):
             self.compute.writeline(
                 f"if ({ai} < 0i || {_arg_better(rtype, src_dtype, v, av)}) {{ {av} = {v}; {ai} = {idx}; }}"
             )
-            bv, bi = self._workgroup_array(t), self._workgroup_array("i32")
-            self.stores.writeline(f"{bv}[lidx] = {av}; {bi}[lidx] = {ai};")
-            take = (
-                f"{bi}[i] < 0i || ({bi}[j] >= 0i && ({_arg_better(rtype, src_dtype, f'{bv}[j]', f'{bv}[i]')} || "
-                f"({_arg_equal(src_dtype, f'{bv}[j]', f'{bv}[i]')} && {bi}[j] < {bi}[i])))"
-            )
+            bi = self._workgroup_array("i32")
+            if t == "f32":
+                # Floats cross lanes as bit patterns: some drivers lose NaN
+                # tests on floats read back from workgroup memory.
+                bv = self._workgroup_array("u32")
+                self.stores.writeline(f"{bv}[lidx] = bitcast<u32>({av}); {bi}[lidx] = {ai};")
+                op = ">" if rtype == "argmax" else "<"
+                vj, vi = f"bitcast<f32>({bv}[j])", f"bitcast<f32>({bv}[i])"
+                nj, ni = f"(({bv}[j] & 0x7fffffffu) > 0x7f800000u)", f"(({bv}[i] & 0x7fffffffu) > 0x7f800000u)"
+                better = f"(!{ni} && ({nj} || ({vj} {op} {vi})))"
+                equal = f"select({vj} == {vi} && !{nj} && !{ni}, {nj}, {ni})"
+            else:
+                bv = self._workgroup_array(t)
+                self.stores.writeline(f"{bv}[lidx] = {av}; {bi}[lidx] = {ai};")
+                better = _arg_better(rtype, src_dtype, f"{bv}[j]", f"{bv}[i]")
+                equal = _arg_equal(src_dtype, f"{bv}[j]", f"{bv}[i]")
+            take = f"{bi}[i] < 0i || ({bi}[j] >= 0i && ({better} || ({equal} && {bi}[j] < {bi}[i])))"
             self._tree_reduce(bv, f"if ({take}) {{ {bv}[i] = {bv}[j]; {bi}[i] = {bi}[j]; }}")
             out = self.cse.newvar(dtype=dtype)
             self.stores.writeline(f"let {out} = {convert(f'max({bi}[{seg}], 0i)', torch.int32, dtype)};")
