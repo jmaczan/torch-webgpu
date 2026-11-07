@@ -15,7 +15,21 @@ namespace torch_webgpu::kernels
 {
     namespace
     {
+        // Default tile (also used for split-K grids); large problems use
+        // 128x128 tiles with 8x8 outputs per thread (more reuse per load).
         constexpr int BM = 64, BN = 64, BK = 16;
+        struct Tile
+        {
+            int bm, bn, bk;
+        };
+        Tile pick_tile(int64_t M, int64_t N)
+        {
+            // Big tiles only while they still give enough workgroups to fill
+            // the GPU (a few per compute unit).
+            if (((M + 127) / 128) * ((N + 127) / 128) >= 256)
+                return {128, 128, 8};
+            return {BM, BN, BK};
+        }
 
         uint32_t u32_of(int64_t v, const char *what)
         {
@@ -35,6 +49,8 @@ namespace torch_webgpu::kernels
         const int64_t B = out.size(0) / slices;
         const int64_t M = out.size(1), N = out.size(2), K = a.size(2);
         const int64_t kc = (K + slices - 1) / slices;
+        const Tile tile = slices > 1 ? Tile{BM, BN, BK} : pick_tile(M, N);
+        const int tm = tile.bm / 16, tn = tile.bn / 16, la = tile.bm * tile.bk / 256, lw = tile.bk * tile.bn / 256;
 
         const CT ct = wgsl::compute_type(out.scalar_type());
         TORCH_CHECK(ct != CT::Bool, "torch_webgpu: matmul is not supported for bool tensors");
@@ -60,7 +76,7 @@ namespace torch_webgpu::kernels
 
         std::ostringstream key;
         key << "mm|" << int(ta) << int(tw) << int(to) << int(tb) << has_bias << a_k_contig << w_n_contig << '|'
-            << a_b << w_b << bias_b << out_b << binds.size();
+            << a_b << w_b << bias_b << out_b << binds.size() << '|' << tile.bm << 'x' << tile.bn << 'x' << tile.bk;
 
         auto make_source = [&]()
         {
@@ -85,8 +101,8 @@ namespace torch_webgpu::kernels
             if (has_bias)
                 s << wgsl::load_fn("ld_b", "buf" + std::to_string(bias_b), tb, false);
             s << wgsl::store_fn("st_o", "buf" + std::to_string(out_b), to);
-            s << "var<workgroup> As: array<array<" << T << ", " << BM << ">, " << BK << ">;\n";
-            s << "var<workgroup> Ws: array<array<" << T << ", " << BN << ">, " << BK << ">;\n";
+            s << "var<workgroup> As: array<array<" << T << ", " << tile.bm << ">, " << tile.bk << ">;\n";
+            s << "var<workgroup> Ws: array<array<" << T << ", " << tile.bn << ">, " << tile.bk << ">;\n";
 
             auto cv = [&](const std::string &e, c10::ScalarType t)
             { return wgsl::convert(e, wgsl::compute_type(t), ct); };
@@ -96,49 +112,49 @@ namespace torch_webgpu::kernels
                  "    let tx = lid.x;\n    let ty = lid.y;\n    let tid = ty * 16u + tx;\n"
                  "    let bz = wid.z;\n    let b = bz % P.nb;\n    let sl = bz / P.nb;\n"
                  "    let kbeg = sl * P.kc;\n    let kend = min(P.K, kbeg + P.kc);\n"
-                 "    let m0 = wid.y * " << BM << "u;\n    let n0 = wid.x * " << BN << "u;\n"
+                 "    let m0 = wid.y * " << tile.bm << "u;\n    let n0 = wid.x * " << tile.bn << "u;\n"
                  "    let a_base = P.off[0] + b * P.sa[0];\n"
                  "    let w_base = P.off[1] + b * P.sw[0];\n"
-                 "    var acc: array<array<" << T << ", 4>, 4>;\n"
-                 "    for (var i = 0u; i < 4u; i++) { for (var j = 0u; j < 4u; j++) { acc[i][j] = " << T << "(0); } }\n"
-                 "    for (var k0 = kbeg; k0 < kend; k0 += " << BK << "u) {\n"
-                 "        for (var l = 0u; l < 4u; l++) {\n"
+                 "    var acc: array<array<" << T << ", " << tn << ">, " << tm << ">;\n"
+                 "    for (var i = 0u; i < " << tm << "u; i++) { for (var j = 0u; j < " << tn << "u; j++) { acc[i][j] = " << T << "(0); } }\n"
+                 "    for (var k0 = kbeg; k0 < kend; k0 += " << tile.bk << "u) {\n"
+                 "        for (var l = 0u; l < " << std::max(la, lw) << "u; l++) {\n"
                  "            let idx = tid + l * 256u;\n";
             // A tile: BM x BK
             if (a_k_contig)
-                s << "            let ar = idx / " << BK << "u;\n            let ac = idx % " << BK << "u;\n";
+                s << "            let ar = idx / " << tile.bk << "u;\n            let ac = idx % " << tile.bk << "u;\n";
             else
-                s << "            let ar = idx % " << BM << "u;\n            let ac = idx / " << BM << "u;\n";
+                s << "            let ar = idx % " << tile.bm << "u;\n            let ac = idx / " << tile.bm << "u;\n";
             s << "            let gm = m0 + ar;\n            let gk = k0 + ac;\n"
                  "            var av = " << T << "(0);\n"
                  "            if (gm < P.M && gk < kend) { av = " << cv("ld_a(a_base + gm * P.sa[1] + gk * P.sa[2])", ta) << "; }\n"
                  "            As[ac][ar] = av;\n";
             // W tile: BK x BN
             if (w_n_contig)
-                s << "            let wr = idx / " << BN << "u;\n            let wc = idx % " << BN << "u;\n";
+                s << "            let wr = idx / " << tile.bn << "u;\n            let wc = idx % " << tile.bn << "u;\n";
             else
-                s << "            let wr = idx % " << BK << "u;\n            let wc = idx / " << BK << "u;\n";
+                s << "            let wr = idx % " << tile.bk << "u;\n            let wc = idx / " << tile.bk << "u;\n";
             s << "            let gk2 = k0 + wr;\n            let gn = n0 + wc;\n"
                  "            var wv = " << T << "(0);\n"
                  "            if (gk2 < kend && gn < P.N) { wv = " << cv("ld_w(w_base + gk2 * P.sw[1] + gn * P.sw[2])", tw) << "; }\n"
                  "            Ws[wr][wc] = wv;\n"
                  "        }\n"
                  "        workgroupBarrier();\n"
-                 "        for (var kk = 0u; kk < " << BK << "u; kk++) {\n"
-                 "            var av4: array<" << T << ", 4>;\n            var wv4: array<" << T << ", 4>;\n"
-                 "            for (var i = 0u; i < 4u; i++) { av4[i] = As[kk][ty + 16u * i]; }\n"
-                 "            for (var j = 0u; j < 4u; j++) { wv4[j] = Ws[kk][tx + 16u * j]; }\n"
-                 "            for (var i = 0u; i < 4u; i++) { for (var j = 0u; j < 4u; j++) { acc[i][j] += av4[i] * wv4[j]; } }\n"
+                 "        for (var kk = 0u; kk < " << tile.bk << "u; kk++) {\n"
+                 "            var av4: array<" << T << ", " << tm << ">;\n            var wv4: array<" << T << ", " << tn << ">;\n"
+                 "            for (var i = 0u; i < " << tm << "u; i++) { av4[i] = As[kk][ty + 16u * i]; }\n"
+                 "            for (var j = 0u; j < " << tn << "u; j++) { wv4[j] = Ws[kk][tx + 16u * j]; }\n"
+                 "            for (var i = 0u; i < " << tm << "u; i++) { for (var j = 0u; j < " << tn << "u; j++) { acc[i][j] += av4[i] * wv4[j]; } }\n"
                  "        }\n"
                  "        workgroupBarrier();\n"
                  "    }\n";
             s << "    let alpha = " << wgsl::scalar_from_word("P.alpha", ct) << ";\n";
             if (has_bias)
                 s << "    let beta = " << wgsl::scalar_from_word("P.beta", ct) << ";\n";
-            s << "    for (var i = 0u; i < 4u; i++) {\n"
+            s << "    for (var i = 0u; i < " << tm << "u; i++) {\n"
                  "        let gm = m0 + ty + 16u * i;\n"
                  "        if (gm >= P.M) { continue; }\n"
-                 "        for (var j = 0u; j < 4u; j++) {\n"
+                 "        for (var j = 0u; j < " << tn << "u; j++) {\n"
                  "            let gn = n0 + tx + 16u * j;\n"
                  "            if (gn >= P.N) { continue; }\n"
                  "            var v = alpha * acc[i][j];\n";
@@ -171,8 +187,8 @@ namespace torch_webgpu::kernels
 
         const uint32_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;
         core::Grid grid;
-        grid.x = static_cast<uint32_t>((N + BN - 1) / BN);
-        grid.y = static_cast<uint32_t>((M + BM - 1) / BM);
+        grid.x = static_cast<uint32_t>((N + tile.bn - 1) / tile.bn);
+        grid.y = static_cast<uint32_t>((M + tile.bm - 1) / tile.bm);
         grid.z = static_cast<uint32_t>(B * slices);
         TORCH_CHECK(grid.x <= maxd && grid.y <= maxd && grid.z <= maxd, "torch_webgpu: matmul too large for one dispatch");
 
