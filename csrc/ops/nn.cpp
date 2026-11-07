@@ -12,6 +12,7 @@
 #include <ATen/core/Reduction.h>
 #include <torch/library.h>
 
+#include "kernels/spatial.h"
 #include "ops/common.h"
 
 #include <cmath>
@@ -346,6 +347,16 @@ namespace torch_webgpu::ops
             Tensor x = as4d(self);
             auto g = pool2d_geometry(x, k, st, pad, dil, ceil);
             const int64_t W = x.size(3);
+            if (at::isFloatingType(x.scalar_type()))
+            {
+                // Direct kernel (thread per output), ATen's window / NaN rules.
+                Tensor vals = at::empty({x.size(0), x.size(1), g.oh, g.ow}, x.options());
+                Tensor idx = at::empty({x.size(0), x.size(1), g.oh, g.ow}, x.options().dtype(at::kLong));
+                kernels::run_max_pool2d(x, vals, idx, {g.k[0], g.k[1], g.st[0], g.st[1], g.pad[0], g.pad[1], g.dil[0], g.dil[1]});
+                if (self.dim() == 3)
+                    return {vals.squeeze(0), idx.squeeze(0)};
+                return {vals, idx};
+            }
             // Pad with the dtype's lowest value so padding never wins the max.
             at::Scalar lowest = -std::numeric_limits<double>::infinity();
             switch (x.scalar_type())
@@ -405,6 +416,14 @@ namespace torch_webgpu::ops
             TORCH_CHECK(self.dim() == 3 || self.dim() == 4, "avg_pool2d: expected 3D or 4D input");
             Tensor x = as4d(self);
             auto g = pool2d_geometry(x, k, st, pad, {}, ceil);
+            if (at::isFloatingType(x.scalar_type()))
+            {
+                TORCH_CHECK(!divisor_override.has_value() || *divisor_override != 0, "divisor must be not zero");
+                Tensor out = at::empty({x.size(0), x.size(1), g.oh, g.ow}, x.options());
+                kernels::run_avg_pool2d(x, out, {g.k[0], g.k[1], g.st[0], g.st[1], g.pad[0], g.pad[1], 1, 1},
+                                        count_include_pad, divisor_override);
+                return self.dim() == 3 ? out.squeeze(0) : out;
+            }
             Tensor xp = at::constant_pad_nd(x, {g.pad[1], g.pad[1] + g.ew, g.pad[0], g.pad[0] + g.eh}, 0);
             Tensor out = pool_windows(xp, g).sum(-1) / avg_divisor(x, g, count_include_pad, divisor_override);
             out = out.to(self.scalar_type());
@@ -988,6 +1007,83 @@ namespace torch_webgpu::ops
     }
 
 #undef COMMA
+    namespace
+    {
+        // Direct 2-d upsampling for floating inputs ([N, C, H, W] or [C, H, W]);
+        // scales computed in float like ATen's compute_scales_value /
+        // area_pixel_compute_scale.
+        bool direct_upsample_ok(const Tensor &self) { return at::isFloatingType(self.scalar_type()) && (self.dim() == 4 || self.dim() == 3); }
+        float nearest_scale(int64_t in, int64_t out, std::optional<double> scale)
+        {
+            return scale.has_value() && *scale > 0 ? static_cast<float>(1.0 / *scale)
+                                                   : static_cast<float>(in) / static_cast<float>(out);
+        }
+        float linear_scale(int64_t in, int64_t out, bool align_corners, std::optional<double> scale)
+        {
+            if (align_corners)
+                return out > 1 ? static_cast<float>(in - 1) / static_cast<float>(out - 1) : 0.f;
+            return nearest_scale(in, out, scale);
+        }
+        Tensor upsample2d_direct(const Tensor &self, at::IntArrayRef os, kernels::Upsample mode, bool align_corners,
+                                 std::optional<double> sh, std::optional<double> sw)
+        {
+            Tensor x = self.dim() == 3 ? self.unsqueeze(0) : self;
+            TORCH_CHECK(os.size() == 2 && os[0] > 0 && os[1] > 0, "upsample: invalid output size ", os);
+            TORCH_CHECK(x.size(2) > 0 && x.size(3) > 0, "upsample: input spatial size must be > 0, got ", x.sizes());
+            Tensor out = at::empty({x.size(0), x.size(1), os[0], os[1]}, x.options());
+            const int64_t H = x.size(2), W = x.size(3);
+            float fh, fw;
+            if (mode == kernels::Upsample::Bilinear)
+            {
+                fh = linear_scale(H, os[0], align_corners, sh);
+                fw = linear_scale(W, os[1], align_corners, sw);
+            }
+            else
+            {
+                fh = nearest_scale(H, os[0], sh);
+                fw = nearest_scale(W, os[1], sw);
+            }
+            kernels::run_upsample2d(x, out, mode, align_corners, fh, fw);
+            return self.dim() == 3 ? out.squeeze(0) : out;
+        }
+        Tensor upsample_bilinear2d_direct_fn(const Tensor &self, c10::SymIntArrayRef out_size, bool align_corners,
+                                             std::optional<double> sh, std::optional<double> sw)
+        {
+            if (!direct_upsample_ok(self))
+                return upsample_bilinear2d_fn(self, out_size, align_corners, sh, sw);
+            return upsample2d_direct(self, vec(out_size), kernels::Upsample::Bilinear, align_corners, sh, sw);
+        }
+        Tensor &upsample_bilinear2d_direct_out_fn(const Tensor &self, c10::SymIntArrayRef out_size, bool align_corners,
+                                                  std::optional<double> sh, std::optional<double> sw, Tensor &out)
+        {
+            if (!direct_upsample_ok(self))
+                return upsample_bilinear2d_out_fn(self, out_size, align_corners, sh, sw, out);
+            Tensor r = upsample2d_direct(self, vec(out_size), kernels::Upsample::Bilinear, align_corners, sh, sw);
+            at::native::resize_output(out, r.sizes());
+            return out.copy_(r);
+        }
+#define WG_NEAREST_DIRECT(NAME, MODE)                                                                              \
+    Tensor NAME##_direct_fn(const Tensor &self, c10::SymIntArrayRef out_size, std::optional<double> sh,             \
+                            std::optional<double> sw)                                                              \
+    {                                                                                                              \
+        if (!direct_upsample_ok(self))                                                                             \
+            return NAME##_fn(self, out_size, sh, sw);                                                              \
+        return upsample2d_direct(self, vec(out_size), MODE, false, sh, sw);                                        \
+    }                                                                                                              \
+    Tensor &NAME##_direct_out_fn(const Tensor &self, c10::SymIntArrayRef out_size, std::optional<double> sh,        \
+                                 std::optional<double> sw, Tensor &out)                                            \
+    {                                                                                                              \
+        if (!direct_upsample_ok(self))                                                                             \
+            return NAME##_out_fn(self, out_size, sh, sw, out);                                                     \
+        Tensor r = upsample2d_direct(self, vec(out_size), MODE, false, sh, sw);                                    \
+        at::native::resize_output(out, r.sizes());                                                                 \
+        return out.copy_(r);                                                                                       \
+    }
+        WG_NEAREST_DIRECT(upsample_nearest2d, kernels::Upsample::Nearest)
+        WG_NEAREST_DIRECT(upsample_nearest_exact2d, kernels::Upsample::NearestExact)
+#undef WG_NEAREST_DIRECT
+    }
+
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     {
         m.impl("native_batch_norm", TORCH_FN(native_batch_norm_fn));
@@ -1016,8 +1112,8 @@ namespace torch_webgpu::ops
         m.impl("upsample_linear1d.out", TORCH_FN(upsample_linear1d_out_fn));
         m.impl("upsample_linear1d_backward", TORCH_FN(upsample_linear1d_backward_fn));
         m.impl("upsample_linear1d_backward.grad_input", TORCH_FN(upsample_linear1d_backward_out_fn));
-        m.impl("upsample_bilinear2d", TORCH_FN(upsample_bilinear2d_fn));
-        m.impl("upsample_bilinear2d.out", TORCH_FN(upsample_bilinear2d_out_fn));
+        m.impl("upsample_bilinear2d", TORCH_FN(upsample_bilinear2d_direct_fn));
+        m.impl("upsample_bilinear2d.out", TORCH_FN(upsample_bilinear2d_direct_out_fn));
         m.impl("upsample_bilinear2d_backward", TORCH_FN(upsample_bilinear2d_backward_fn));
         m.impl("upsample_bilinear2d_backward.grad_input", TORCH_FN(upsample_bilinear2d_backward_out_fn));
         m.impl("upsample_bicubic2d", TORCH_FN(upsample_bicubic2d_fn));
@@ -1039,16 +1135,16 @@ namespace torch_webgpu::ops
         WG_REG_UPSAMPLE(upsample_nearest3d)
         WG_REG_UPSAMPLE(_upsample_nearest_exact3d)
 #undef WG_REG_UPSAMPLE
-        m.impl("upsample_nearest2d", TORCH_FN(upsample_nearest2d_fn));
-        m.impl("upsample_nearest2d.out", TORCH_FN(upsample_nearest2d_out_fn));
+        m.impl("upsample_nearest2d", TORCH_FN(upsample_nearest2d_direct_fn));
+        m.impl("upsample_nearest2d.out", TORCH_FN(upsample_nearest2d_direct_out_fn));
         m.impl("upsample_nearest2d_backward", TORCH_FN(upsample_nearest2d_backward_fn));
         m.impl("upsample_nearest2d_backward.grad_input", TORCH_FN(upsample_nearest2d_backward_out_fn));
         m.impl("_upsample_nearest_exact1d", TORCH_FN(upsample_nearest_exact1d_fn));
         m.impl("_upsample_nearest_exact1d.out", TORCH_FN(upsample_nearest_exact1d_out_fn));
         m.impl("_upsample_nearest_exact1d_backward", TORCH_FN(upsample_nearest_exact1d_backward_fn));
         m.impl("_upsample_nearest_exact1d_backward.grad_input", TORCH_FN(upsample_nearest_exact1d_backward_out_fn));
-        m.impl("_upsample_nearest_exact2d", TORCH_FN(upsample_nearest_exact2d_fn));
-        m.impl("_upsample_nearest_exact2d.out", TORCH_FN(upsample_nearest_exact2d_out_fn));
+        m.impl("_upsample_nearest_exact2d", TORCH_FN(upsample_nearest_exact2d_direct_fn));
+        m.impl("_upsample_nearest_exact2d.out", TORCH_FN(upsample_nearest_exact2d_direct_out_fn));
         m.impl("_upsample_nearest_exact2d_backward", TORCH_FN(upsample_nearest_exact2d_backward_fn));
         m.impl("_upsample_nearest_exact2d_backward.grad_input", TORCH_FN(upsample_nearest_exact2d_backward_out_fn));
 
