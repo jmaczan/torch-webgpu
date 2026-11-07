@@ -12,6 +12,7 @@
 #include <ATen/core/Reduction.h>
 #include <torch/library.h>
 
+#include "kernels/elementwise.h"
 #include "kernels/spatial.h"
 #include "ops/common.h"
 
@@ -65,6 +66,28 @@ namespace torch_webgpu::ops
             return s;
         }
 
+        // out = WGSL `code` over inputs (tensors broadcast to the input shape,
+        // e.g. per-channel coefficients viewed as [1, C, 1, ...]), computed in
+        // f32, stored in out's dtype: one fused pass.
+        Tensor fused_elementwise(const char *name, const char *code, const std::vector<Tensor> &inputs,
+                                 at::ScalarType out_dtype)
+        {
+            Tensor out = at::empty(inputs[0].sizes(), inputs[0].options().dtype(out_dtype));
+            at::TensorIteratorConfig cfg;
+            cfg.add_output(out).check_all_same_dtype(false).set_check_mem_overlap(false).resize_outputs(false);
+            for (const auto &t : inputs)
+                cfg.add_const_input(t);
+            auto iter = cfg.build();
+            kernels::ElementwiseOp op;
+            op.name = name;
+            op.code = code;
+            op.in_ct = kernels::CT::F32;
+            op.out_ct = kernels::CT::F32;
+            op.math = true;
+            kernels::run_elementwise(iter, op);
+            return out;
+        }
+
         // Returns (out, save_mean, save_invstd); updates running stats in place.
         std::tuple<Tensor, Tensor, Tensor> batch_norm_impl(const Tensor &input, const std::optional<Tensor> &weight,
                                                            const std::optional<Tensor> &bias,
@@ -100,15 +123,20 @@ namespace torch_webgpu::ops
                 mean = running_mean->to(acc);
                 invstd = (running_var->to(acc) + eps).rsqrt();
             }
-            Tensor y = (x - mean.view(cs)) * invstd.view(cs);
+            // y = x * scale + shift with per-channel scale = w * invstd and
+            // shift = b - mean * scale: a single pass over the input.
+            Tensor scale = invstd;
             if (weight.has_value() && weight->defined())
-                y = y * weight->to(acc).view(cs);
+                scale = scale * weight->to(acc);
+            Tensor shift = -mean * scale;
             if (bias.has_value() && bias->defined())
-                y = y + bias->to(acc).view(cs);
-            y = y.to(input.scalar_type());
+                shift = shift + bias->to(acc);
+            Tensor y = fused_elementwise("bn_affine", "x0 * x1 + x2", {input, scale.view(cs), shift.view(cs)},
+                                         input.scalar_type());
             if (!training)
-                return {y, at::empty({0}, x.options()), at::empty({0}, x.options())};
-            return {y, mean, invstd};
+                return {y, at::empty({0}, input.options()), at::empty({0}, input.options())};
+            // Saved statistics in the input dtype, as CPU does.
+            return {y, mean.to(input.scalar_type()), invstd.to(input.scalar_type())};
         }
 
         std::tuple<Tensor, Tensor, Tensor> native_batch_norm_fn(const Tensor &input, const std::optional<Tensor> &weight,
@@ -163,22 +191,27 @@ namespace torch_webgpu::ops
             }
             const bool has_w = weight.has_value() && weight->defined();
             Tensor w = has_w ? weight->to(acc) : at::ones({x.size(1)}, x.options());
-            Tensor xhat = (x - mean.view(cs)) * invstd.view(cs);
-            Tensor gsum = g.sum(dims);
-            Tensor gxhat = (g * xhat).sum(dims);
+            // Per channel: gsum = sum(g), dot = sum(g * (x - mean)); then
+            // gi = g * cg + x * cx + c0 in one fused pass.
+            Tensor gsum = grad_out.sum(dims, false, acc);
+            Tensor dot = fused_elementwise("bn_gxc", "x0 * (x1 - x2)", {grad_out, input, mean.view(cs)}, acc).sum(dims);
+            Tensor gxhat = dot * invstd;
             Tensor gi, gw, gb;
             if (mask[0])
             {
+                const Tensor cg = w * invstd;
                 if (train)
                 {
                     const double n = static_cast<double>(x.numel() / x.size(1));
-                    gi = (w * invstd).view(cs) * (g - (gsum / n).view(cs) - xhat * (gxhat / n).view(cs));
+                    Tensor cx = -cg * invstd * invstd * dot / n;
+                    Tensor c0 = -cg * gsum / n - mean * cx;
+                    gi = fused_elementwise("bn_bwd", "x0 * x2 + x1 * x3 + x4",
+                                           {grad_out, input, cg.view(cs), cx.view(cs), c0.view(cs)}, input.scalar_type());
                 }
                 else
                 {
-                    gi = g * (w * invstd).view(cs);
+                    gi = fused_elementwise("bn_bwd_eval", "x0 * x1", {grad_out, cg.view(cs)}, input.scalar_type());
                 }
-                gi = gi.to(input.scalar_type());
             }
             if (mask[1] && has_w)
                 gw = gxhat.to(weight->scalar_type());
