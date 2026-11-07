@@ -235,32 +235,54 @@ namespace torch_webgpu::ops
             if (out.numel() == 0)
                 return out;
             const bool has_bias = bias.has_value() && bias->defined();
+            // GEMM: [Og] x [batch * OH * OW] per group (the batch is folded
+            // into N so small feature maps still fill tiles), K = Cg * KH * KW.
             kernels::CustomGemm cg;
             cg.name = "conv2d_fwd";
             cg.key = has_bias ? "b" : "-";
             cg.M = g.Og;
-            cg.N = g.OH * g.OW;
+            cg.N = g.N * g.OH * g.OW;
             cg.K = g.Cg * g.KH * g.KW;
-            cg.Z = g.N * g.G;
+            cg.Z = g.G;
             cg.operands = {{"x", x}, {"w", w}, {"out", out, true}};
             if (has_bias)
                 cg.operands.push_back({"bias", *bias});
             cg.params = conv_params(g, x, w, Tensor());
             cg.load_a = std::string(kConvLets) +
-                        "    let gi = z % G;\n    let c = k / (KH * KW);\n    let r = k % (KH * KW);\n"
+                        "    let gi = z;\n    let c = k / (KH * KW);\n    let r = k % (KH * KW);\n"
                         "    return ld_w((gi * Og + m) * swt[0] + c * swt[1] + (r / KW) * swt[2] + (r % KW) * swt[3]);";
             cg.load_b = std::string(kConvLets) +
-                        "    let nn = z / G;\n    let gi = z % G;\n"
+                        "    let gi = z;\n    let nn = n / (OH * OW);\n    let sp = n % (OH * OW);\n"
                         "    let c = k / (KH * KW);\n    let r = k % (KH * KW);\n"
-                        "    let ih = i32((n / OW) * sh + (r / KW) * dh) - i32(ph);\n"
-                        "    let iw = i32((n % OW) * sw + (r % KW) * dw) - i32(pw);\n"
+                        "    let ih = i32((sp / OW) * sh + (r / KW) * dh) - i32(ph);\n"
+                        "    let iw = i32((sp % OW) * sw + (r % KW) * dw) - i32(pw);\n"
                         "    if (ih < 0 || iw < 0 || ih >= i32(H) || iw >= i32(W)) { return 0.0; }\n"
                         "    return ld_x(nn * sx[0] + (gi * Cg + c) * sx[1] + u32(ih) * sx[2] + u32(iw) * sx[3]);";
             cg.store = std::string(kConvLets) +
-                       "    let nn = z / G;\n    let gi = z % G;\n    let co = gi * Og + m;\n" +
-                       (has_bias ? "    st_out((nn * G * Og + co) * OH * OW + n, v + ld_bias(co));"
-                                 : "    st_out((nn * G * Og + co) * OH * OW + n, v);");
-            kernels::run_custom_gemm(cg);
+                       "    let gi = z;\n    let nn = n / (OH * OW);\n    let sp = n % (OH * OW);\n    let co = gi * Og + m;\n" +
+                       (has_bias ? "    st_out((nn * G * Og + co) * OH * OW + sp, v + ld_bias(co));"
+                                 : "    st_out((nn * G * Og + co) * OH * OW + sp, v);");
+            // Split-K when the tile grid alone can't fill the GPU (deep
+            // layers: few output pixels, long reductions).
+            const int64_t wgs = g.G * ((g.Og + 63) / 64) * ((cg.N + 63) / 64);
+            const int64_t S = std::min<int64_t>(std::max<int64_t>(512 / std::max<int64_t>(wgs, 1), 1), cg.K / 256);
+            if (S >= 2)
+            {
+                Tensor part = at::empty({S, g.G, g.Og, cg.N}, x.options().dtype(at::kFloat));
+                // Partial products only: no output / bias bindings (unused
+                // bindings would not be part of the shader's layout).
+                kernels::CustomGemm sg = cg;
+                sg.key += "|split";
+                sg.operands = {{"x", x}, {"w", w}};
+                sg.store = "";
+                kernels::run_custom_gemm_split(sg, S, part);
+                Tensor r = part.sum(0).view({g.G * g.Og, g.N, g.OH, g.OW}).permute({1, 0, 2, 3});
+                if (has_bias)
+                    r = r + bias->to(at::kFloat).view({1, -1, 1, 1});
+                out.copy_(r);
+            }
+            else
+                kernels::run_custom_gemm(cg);
             return out;
         }
 
@@ -271,31 +293,45 @@ namespace torch_webgpu::ops
             Tensor gi = at::empty(x.sizes(), x.options().memory_format(at::MemoryFormat::Contiguous));
             if (gi.numel() == 0)
                 return gi;
+            // [Cg] x [batch * H * W] per group (batch folded into N).
             kernels::CustomGemm cg;
             cg.name = "conv2d_bwd_in";
             cg.M = g.Cg;
-            cg.N = g.H * g.W;
+            cg.N = g.N * g.H * g.W;
             cg.K = g.Og * g.KH * g.KW;
-            cg.Z = g.N * g.G;
+            cg.Z = g.G;
             cg.operands = {{"go", go}, {"w", w}, {"gi", gi, true}};
             cg.params = conv_params(g, Tensor(), w, go);
             cg.load_a = std::string(kConvLets) +
-                        "    let gz = z % G;\n    let co = k / (KH * KW);\n    let r = k % (KH * KW);\n"
+                        "    let gz = z;\n    let co = k / (KH * KW);\n    let r = k % (KH * KW);\n"
                         "    return ld_w((gz * Og + co) * swt[0] + m * swt[1] + (r / KW) * swt[2] + (r % KW) * swt[3]);";
             cg.load_b = std::string(kConvLets) +
-                        "    let nn = z / G;\n    let gz = z % G;\n"
+                        "    let gz = z;\n    let nn = n / (H * W);\n    let sp = n % (H * W);\n"
                         "    let co = k / (KH * KW);\n    let r = k % (KH * KW);\n"
-                        "    let th = i32(n / W + ph) - i32((r / KW) * dh);\n"
-                        "    let tw = i32(n % W + pw) - i32((r % KW) * dw);\n"
+                        "    let th = i32(sp / W + ph) - i32((r / KW) * dh);\n"
+                        "    let tw = i32(sp % W + pw) - i32((r % KW) * dw);\n"
                         "    if (th < 0 || tw < 0) { return 0.0; }\n"
                         "    if (u32(th) % sh != 0u || u32(tw) % sw != 0u) { return 0.0; }\n"
                         "    let oh = u32(th) / sh;\n    let ow = u32(tw) / sw;\n"
                         "    if (oh >= OH || ow >= OW) { return 0.0; }\n"
                         "    return ld_go(nn * sg[0] + (gz * Og + co) * sg[1] + oh * sg[2] + ow * sg[3]);";
             cg.store = std::string(kConvLets) +
-                       "    let nn = z / G;\n    let gz = z % G;\n"
-                       "    st_gi((nn * G * Cg + gz * Cg + m) * H * W + n, v);";
-            kernels::run_custom_gemm(cg);
+                       "    let gz = z;\n    let nn = n / (H * W);\n    let sp = n % (H * W);\n"
+                       "    st_gi((nn * G * Cg + gz * Cg + m) * H * W + sp, v);";
+            const int64_t wgs = g.G * ((g.Cg + 63) / 64) * ((cg.N + 63) / 64);
+            const int64_t S = std::min<int64_t>(std::max<int64_t>(512 / std::max<int64_t>(wgs, 1), 1), cg.K / 256);
+            if (S >= 2)
+            {
+                Tensor part = at::empty({S, g.G, g.Cg, cg.N}, x.options().dtype(at::kFloat));
+                kernels::CustomGemm sgm = cg;
+                sgm.key += "|split";
+                sgm.operands = {{"go", go}, {"w", w}};
+                sgm.store = "";
+                kernels::run_custom_gemm_split(sgm, S, part);
+                gi.copy_(part.sum(0).view({g.G * g.Cg, g.N, g.H, g.W}).permute({1, 0, 2, 3}));
+            }
+            else
+                kernels::run_custom_gemm(cg);
             return gi;
         }
 
