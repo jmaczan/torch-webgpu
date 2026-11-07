@@ -4,6 +4,8 @@
 // math path otherwise. The backward recomputes the probabilities (math form).
 
 #include <ATen/ATen.h>
+
+#include <numeric>
 #include <ATen/SDPBackend.h>
 #include <ATen/native/transformers/attention.h>
 #include <torch/library.h>
@@ -60,6 +62,29 @@ namespace torch_webgpu::ops
             return static_cast<int64_t>(at::SDPBackend::overrideable);
         }
 
+        // A tensor of `shape` with `like`'s dimension order (as PyTorch's meta
+        // function alloc_with_matching_layout does), so compiled graphs see
+        // the strides they were traced with.
+        Tensor alloc_matching_layout(const Tensor &like, at::IntArrayRef shape)
+        {
+            if (like.sizes() == shape)
+                return at::empty_like(like, at::MemoryFormat::Preserve);
+            std::vector<int64_t> order(like.dim());
+            std::iota(order.begin(), order.end(), 0);
+            std::stable_sort(order.begin(), order.end(), [&](int64_t a, int64_t b)
+                             {
+                                 auto key = [&](int64_t d) { return like.stride(d) ? like.stride(d) : std::numeric_limits<int64_t>::max(); };
+                                 return key(a) < key(b); });
+            std::vector<int64_t> strides(like.dim());
+            int64_t st = 1;
+            for (int64_t d : order)
+            {
+                strides[d] = st;
+                st *= shape[d];
+            }
+            return at::empty_strided(shape, strides, like.options());
+        }
+
         double scale_of(const Tensor &q, std::optional<double> scale)
         {
             return scale.has_value() ? *scale : 1.0 / std::sqrt(static_cast<double>(q.size(-1)));
@@ -71,7 +96,7 @@ namespace torch_webgpu::ops
         {
             TORCH_CHECK(dropout_p == 0.0, "torch_webgpu: fused attention does not support dropout");
             const int64_t B = q.size(0), H = q.size(1), Lq = q.size(2), Lk = k.size(2), Dv = v.size(3);
-            Tensor out = at::empty({B, H, Lq, Dv}, q.options());
+            Tensor out = alloc_matching_layout(q, {B, H, Lq, Dv});
             Tensor lse = at::empty({B, H, Lq}, q.options().dtype(at::kFloat));
             Tensor bias;
             if (attn_bias.has_value() && attn_bias->defined())
@@ -82,8 +107,11 @@ namespace torch_webgpu::ops
                 bias = bias.expand({B, H, Lq, Lk});
             }
             kernels::run_attention(q, k, v, bias, is_causal, scale_of(q, scale), out, lse);
-            Tensor empty = at::empty({0}, q.options().dtype(at::kLong));
-            return {out, lse, empty, empty, Lq, Lk, empty, empty, Tensor()};
+            // Shapes as in the meta function: no cumulative lengths, scalar
+            // (unused) philox seed / offset.
+            Tensor seed = at::empty({}, q.options().dtype(at::kLong));
+            Tensor offset = at::empty({}, q.options().dtype(at::kLong));
+            return {out, lse, Tensor(), Tensor(), Lq, Lk, seed, offset, Tensor()};
         }
 
         // Math-form backward with recomputed probabilities (GQA: kv heads are
@@ -124,7 +152,14 @@ namespace torch_webgpu::ops
             }
             if (mask[3] && attn_bias.defined() && attn_bias.scalar_type() != at::kBool)
                 gb = ds.sum_to_size(attn_bias.sizes()).to(attn_bias.scalar_type());
-            return {gq, gk, gv, gb};
+            // Gradients take their input's layout (empty_like in the meta).
+            auto like = [](const Tensor &g, const Tensor &t)
+            {
+                if (!g.defined() || g.strides() == t.strides())
+                    return g;
+                return at::empty_like(t, at::MemoryFormat::Preserve).copy_(g);
+            };
+            return {like(gq, q), like(gk, k), like(gv, v), attn_bias.defined() ? like(gb, attn_bias) : gb};
         }
     }
 

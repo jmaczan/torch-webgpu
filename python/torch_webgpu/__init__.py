@@ -59,5 +59,8 @@ from . import _module_patch  # noqa: E402
 _module_patch.install()
 
 from .compiler.webgpu_compiler import webgpu_backend  # noqa: F401 E402
+from . import _inductor  # noqa: E402
+
+_inductor.register()
 
 __all__ = ["webgpu_backend", "webgpu"]

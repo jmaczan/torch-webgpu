@@ -50,6 +50,11 @@ fn rng4(idx: u32, seed_lo: u32, seed_hi: u32, off_lo: u32, off_hi: u32) -> vec4<
 fn rng_u32(idx: u32, seed_lo: u32, seed_hi: u32, off_lo: u32, off_hi: u32) -> u32 {
     return rng4(idx, seed_lo, seed_hi, off_lo, off_hi)[idx & 3u];
 }
+// 64 random bits for linear index idx (separate stream from rng_u32).
+fn rng_u64(idx: u32, seed_lo: u32, seed_hi: u32, off_lo: u32, off_hi: u32) -> vec2<u32> {
+    let r = philox(vec4<u32>(idx >> 1u, 1u, off_lo, off_hi), vec2<u32>(seed_lo, seed_hi));
+    return select(r.xy, r.zw, (idx & 1u) == 1u);
+}
 // Uniform in [0, 1) with 24 bits of randomness.
 fn u01(w: u32) -> f32 { return f32(w >> 8u) * 5.9604644775390625e-8; }
 // Uniform in (0, 1].
@@ -221,7 +226,22 @@ fn randn(idx: u32, seed_lo: u32, seed_hi: u32, off_lo: u32, off_hi: u32) -> f32 
                 default: hi = std::numeric_limits<int32_t>::max(); break;
                 }
             }
+            if (self.scalar_type() == at::kLong && !to.has_value())
+                hi = std::numeric_limits<int64_t>::max();
             TORCH_CHECK(from < hi, "random_ expects 'from' to be less than 'to', but got from=", from, " >= to=", hi);
+            if (self.scalar_type() == at::kLong &&
+                (static_cast<uint64_t>(hi) - static_cast<uint64_t>(from) > (uint64_t(1) << 32) ||
+                 from < std::numeric_limits<int32_t>::min() || from > std::numeric_limits<int32_t>::max()))
+            {
+                // 64-bit range: from + (64 random bits mod range), unsigned.
+                const uint64_t range = static_cast<uint64_t>(hi) - static_cast<uint64_t>(from);
+                rng_fill(self, gen, "random64", "",
+                         "let r = rng_u64(" RNG_ARGS ");\n"
+                         "    let m = u64_divmod(r, s5);\n"
+                         "    return i64_add(s4, vec2<u32>(m.z, m.w));",
+                         {{Scalar(from), CT::I64}, {Scalar(static_cast<int64_t>(range)), CT::I64}}, CT::I64);
+                return self;
+            }
             const int64_t range = hi - from;
             TORCH_CHECK(range <= (int64_t(1) << 32) && from >= std::numeric_limits<int32_t>::min() &&
                             from <= std::numeric_limits<int32_t>::max(),
