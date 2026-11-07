@@ -93,6 +93,8 @@ def kernels() -> dict[str, dict]:
     r["attention_prefill_1k_causal"] = {"us": t}
     s = torch.zeros(16, device=D)
     n = 2000
+    for _ in range(100):  # pipeline compile + allocator warm-up
+        s.add_(1)
     torch.webgpu.synchronize()
     t0 = time.perf_counter()
     for _ in range(n):
