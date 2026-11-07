@@ -3,6 +3,7 @@
 // count_nonzero).
 
 #include <ATen/ATen.h>
+#include <ATen/native/Resize.h>
 #include <ATen/ops/aminmax_meta.h>
 #include <ATen/ops/isin_meta.h>
 #include <ATen/ops/sort_meta.h>
@@ -391,6 +392,147 @@ namespace torch_webgpu::ops
             return {values, inverse, counts};
         }
 
+        // ------------------------------------------- unique_consecutive / dim
+        // Groups of equal consecutive rows of x2 [n, m] (m == 1 for elements):
+        // returns is_start [n] bool.
+        Tensor group_starts(const Tensor &x2)
+        {
+            const int64_t n = x2.size(0);
+            Tensor is_start = at::ones({n}, x2.options().dtype(at::kBool));
+            if (n > 1)
+            {
+                Tensor diff = x2.narrow(0, 1, n - 1) != x2.narrow(0, 0, n - 1);
+                is_start.narrow(0, 1, n - 1).copy_(x2.size(1) == 1 ? diff.squeeze(1) : diff.any(1));
+            }
+            return is_start;
+        }
+        std::tuple<Tensor, Tensor> inverse_and_counts(const Tensor &is_start, const Tensor &starts, bool ri, bool rc)
+        {
+            auto lopt = is_start.options().dtype(at::kLong);
+            const int64_t n = is_start.size(0);
+            Tensor inverse = ri ? is_start.to(at::kLong).cumsum(0) - 1 : at::empty({0}, lopt);
+            Tensor counts = at::empty({0}, lopt);
+            if (rc)
+            {
+                Tensor ends = at::cat({starts.narrow(0, 1, starts.numel() - 1), at::full({1}, n, lopt)});
+                counts = ends - starts;
+            }
+            return {inverse, counts};
+        }
+
+        // unique along a dim of an empty tensor: only the empty dim itself
+        // may be selected (as CPU).
+        std::tuple<Tensor, Tensor, Tensor> unique_dim_empty(const Tensor &self, int64_t d)
+        {
+            TORCH_CHECK(self.size(d) == 0,
+                        "There are 0 sized dimensions, and they aren't selected, so unique cannot be applied");
+            auto lopt = self.options().dtype(at::kLong);
+            return {at::empty(self.sizes(), self.options()), at::empty({0}, lopt), at::empty({0}, lopt)};
+        }
+
+        std::tuple<Tensor, Tensor, Tensor> unique_consecutive_fn(const Tensor &self, bool return_inverse,
+                                                                 bool return_counts, std::optional<int64_t> dim)
+        {
+            if (!gpu_dtypes_ok({self}))
+                return WEBGPU_FALLBACK0(unique_consecutive)(self, return_inverse, return_counts, dim);
+            if (dim.has_value() && self.numel() == 0)
+                return unique_dim_empty(self, at::maybe_wrap_dim(*dim, self.dim()));
+            auto lopt = self.options().dtype(at::kLong);
+            if (!dim.has_value())
+            {
+                const int64_t n = self.numel();
+                if (n == 0)
+                    return {at::empty({0}, self.options()), at::empty(self.sizes(), lopt), at::empty({0}, lopt)};
+                Tensor flat = self.reshape({n, 1});
+                Tensor is_start = group_starts(flat);
+                Tensor starts = is_start.nonzero().view({-1});
+                auto [inv, counts] = inverse_and_counts(is_start, starts, return_inverse, return_counts);
+                return {flat.view({-1}).index_select(0, starts), return_inverse ? inv.view(self.sizes()) : inv, counts};
+            }
+            const int64_t d = at::maybe_wrap_dim(*dim, self.dim());
+            const int64_t n = self.size(d);
+            Tensor x2 = self.movedim(d, 0).reshape({n, self.numel() / n});
+            Tensor is_start = group_starts(x2);
+            Tensor starts = is_start.nonzero().view({-1});
+            auto [inv, counts] = inverse_and_counts(is_start, starts, return_inverse, return_counts);
+            return {self.index_select(d, starts), inv, counts};
+        }
+
+        std::tuple<Tensor, Tensor, Tensor> unique_dim_fn(const Tensor &self, int64_t dim, bool sorted, bool return_inverse,
+                                                         bool return_counts)
+        {
+            if (!sortable(self))
+                return WEBGPU_FALLBACK0(unique_dim)(self, dim, sorted, return_inverse, return_counts);
+            if (self.numel() == 0)
+                return unique_dim_empty(self, at::maybe_wrap_dim(dim, self.dim()));
+            const int64_t d = at::maybe_wrap_dim(dim, self.dim());
+            const int64_t n = self.size(d), m = self.numel() / n;
+            auto lopt = self.options().dtype(at::kLong);
+            Tensor x2 = self.movedim(d, 0).reshape({n, m});
+            // Lexicographic order of rows: stable sorts from the last column.
+            Tensor perm = at::arange(n, lopt);
+            for (int64_t c = m - 1; c >= 0; --c)
+            {
+                Tensor keys = x2.select(1, c).index_select(0, perm).contiguous();
+                Tensor sv = at::empty_like(keys), p = at::empty_like(keys, lopt);
+                sort_impl(keys, 0, false, sv, p);
+                perm = perm.index_select(0, p);
+            }
+            Tensor is_start = group_starts(x2.index_select(0, perm));
+            Tensor starts = is_start.nonzero().view({-1});
+            auto [group, counts] = inverse_and_counts(is_start, starts, true, return_counts);
+            Tensor inverse = return_inverse ? at::empty({n}, lopt).scatter_(0, perm, group) : at::empty({0}, lopt);
+            return {self.index_select(d, perm.index_select(0, starts)), inverse, counts};
+        }
+
+        // ------------------------------------------------------------ mode
+        // Most frequent value per row (ties: smallest value) and the largest
+        // index at which it occurs, as CPU.
+        std::tuple<Tensor &, Tensor &> mode_out_fn(const Tensor &self, int64_t dim, bool keepdim, Tensor &values,
+                                                   Tensor &indices)
+        {
+            if (!sortable(self) || self.numel() == 0)
+                return WEBGPU_FALLBACK(mode, values)(self, dim, keepdim, values, indices);
+            const int64_t d = at::maybe_wrap_dim(dim, std::max<int64_t>(self.dim(), 1));
+            Tensor x = self.dim() == 0 ? self.reshape({1}) : self;
+            const int64_t n = x.size(d);
+            Tensor rows = x.movedim(d, -1).reshape({-1, n}).contiguous();
+            const int64_t R = rows.size(0);
+            auto lopt = self.options().dtype(at::kLong);
+            Tensor sv = at::empty_like(rows), si = at::empty_like(rows, lopt);
+            sort_impl(rows, 1, false, sv, si);
+            Tensor pos = at::arange(n, lopt).expand({R, n});
+            Tensor is_end = at::ones({R, n}, self.options().dtype(at::kBool));
+            if (n > 1)
+                is_end.narrow(1, 0, n - 1).copy_(sv.narrow(1, 0, n - 1) != sv.narrow(1, 1, n - 1));
+            // Position of the previous run end (-1 if none): exclusive running max.
+            Tensor end_pos = at::where(is_end, pos, at::full_like(pos, -1));
+            Tensor prev = at::full({R, n}, -1, lopt);
+            if (n > 1)
+                prev.narrow(1, 1, n - 1).copy_(std::get<0>(at::cummax(end_pos.narrow(1, 0, n - 1), 1)));
+            Tensor freq = at::where(is_end, pos - prev, at::zeros_like(pos));
+            Tensor best = freq.argmax(1, /*keepdim=*/true);
+            std::vector<int64_t> out_shape = x.sizes().vec();
+            out_shape.erase(out_shape.begin() + d);
+            Tensor v = sv.gather(1, best).view(out_shape), i = si.gather(1, best).view(out_shape);
+            if (keepdim && self.dim() > 0)
+            {
+                v = v.unsqueeze(d);
+                i = i.unsqueeze(d);
+            }
+            at::native::resize_output(values, v.sizes());
+            at::native::resize_output(indices, i.sizes());
+            values.copy_(v);
+            indices.copy_(i);
+            return {values, indices};
+        }
+        std::tuple<Tensor, Tensor> mode_fn(const Tensor &self, int64_t dim, bool keepdim)
+        {
+            Tensor values = at::empty({0}, self.options()), indices = at::empty({0}, self.options().dtype(at::kLong));
+            mode_out_fn(self, dim, keepdim, values, indices);
+            return {values, indices};
+        }
+
         // ------------------------------------------------ small reductions
         bool equal_fn(const Tensor &self, const Tensor &other)
         {
@@ -459,6 +601,10 @@ namespace torch_webgpu::ops
         m.impl("isin.Tensor_Scalar", TORCH_FN(isin_ts_fn));
         m.impl("isin.Scalar_Tensor", TORCH_FN(isin_st_fn));
         m.impl("_unique2", TORCH_FN(unique2_fn));
+        m.impl("unique_consecutive", TORCH_FN(unique_consecutive_fn));
+        m.impl("unique_dim", TORCH_FN(unique_dim_fn));
+        m.impl("mode", TORCH_FN(mode_fn));
+        m.impl("mode.values", TORCH_FN(mode_out_fn));
         m.impl("equal", TORCH_FN(equal_fn));
         m.impl("aminmax.out", TORCH_FN(aminmax_out_fn));
         m.impl("count_nonzero.dim_IntList", TORCH_FN(count_nonzero_fn));

@@ -61,6 +61,9 @@ namespace torch_webgpu::kernels
         //   wg_sum(v) / wg_max(v) / wg_min(v) workgroup reductions,
         //   wg_scan(v) inclusive prefix sum over lid.
         CT ct = CT::F32;
+        // Extra module-scope WGSL (workgroup arrays, helper functions),
+        // emitted after the wg_* helpers.
+        std::string helpers;
     };
     // inputs/outputs all share the same shape (`dim` is the row dimension).
     // Extra per-row outputs (e.g. layer-norm mean/rstd) are passed in

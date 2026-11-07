@@ -1,6 +1,7 @@
 // Reductions, softmax family, normalization and scans.
 
 #include <ATen/ATen.h>
+#include <ATen/native/Resize.h>
 #include <ATen/OpMathType.h>
 #include <ATen/native/ReduceOpsUtils.h>
 #include <ATen/ops/_log_softmax_backward_data_meta.h>
@@ -845,6 +846,110 @@ namespace torch_webgpu::ops
                 kernels::run_rows({self}, {out}, {}, dim, op);
         }
 
+        // ------------------------------------- cummax / cummin / logcumsumexp
+        // Pair scans (value + index or empty flag) across the workgroup. The
+        // empty element is flagged rather than encoded as +-inf: special-value
+        // constants must not feed arithmetic (driver fast-math).
+        std::string pair_scan_helpers(const std::string &combine_body)
+        {
+            return "var<workgroup> red_i: array<u32, 256>;\n"
+                   "struct VI { v: T, i: u32, };\n"
+                   "const EMPTY: u32 = 0xffffffffu;\n"
+                   "fn comb(a: VI, b: VI) -> VI {\n"
+                   "    if (b.i == EMPTY) { return a; }\n"
+                   "    if (a.i == EMPTY) { return b; }\n" +
+                   combine_body +
+                   "}\n"
+                   "fn wg_scan_vi(x: VI) -> VI {\n"
+                   "    red_f[lid] = x.v; red_i[lid] = x.i;\n    workgroupBarrier();\n"
+                   "    for (var st = 1u; st < 256u; st = st << 1u) {\n"
+                   "        var t = VI(red_f[lid], red_i[lid]);\n"
+                   "        if (lid >= st) { t = comb(VI(red_f[lid - st], red_i[lid - st]), t); }\n"
+                   "        workgroupBarrier();\n"
+                   "        red_f[lid] = t.v; red_i[lid] = t.i;\n"
+                   "        workgroupBarrier();\n    }\n"
+                   "    let r = VI(red_f[lid], red_i[lid]);\n    workgroupBarrier();\n    return r;\n}\n";
+        }
+        // IDX_STORE: statement storing sc.i for element j (or nothing).
+        std::string pair_scan_body(const std::string &idx_store)
+        {
+            return "    var carry = VI(t_zero(), EMPTY);\n"
+                   "    for (var t0 = 0u; t0 < n; t0 = t0 + 256u) {\n"
+                   "        let j = t0 + lid;\n"
+                   "        var x = VI(t_zero(), EMPTY);\n"
+                   "        if (j < n) { x = VI(ld0(j), j); }\n"
+                   "        let sc = comb(carry, wg_scan_vi(x));\n"
+                   "        if (j < n) { st0(j, sc.v); " + idx_store + " }\n"
+                   "        red_f[lid] = sc.v; red_i[lid] = sc.i;\n"
+                   "        workgroupBarrier();\n"
+                   "        carry = VI(red_f[255], red_i[255]);\n"
+                   "        workgroupBarrier();\n"
+                   "    }";
+        }
+
+        // As CPU's cummax_cummin_helper: a later element wins on ties
+        // (>= / <=) and any NaN wins (so the latest NaN is reported).
+        void cummaxmin_impl(const Tensor &self, const Tensor &values, const Tensor &indices, int64_t dim, bool is_max)
+        {
+            CT ct = wgsl::compute_type(values.scalar_type());
+            if (ct == CT::Bool)
+                ct = CT::I32;
+            std::string wins;
+            const char *ge = is_max ? ">=" : "<=";
+            if (ct == CT::F32)
+                wins = std::string("    if (isnan_f(b.v) || (!isnan_f(a.v) && b.v ") + ge + " a.v)) { return b; }\n";
+            else if (ct == CT::I64)
+                wins = std::string("    if (") + (is_max ? "!i64_lt(b.v, a.v)" : "!i64_lt(a.v, b.v)") + ") { return b; }\n";
+            else
+                wins = std::string("    if (b.v ") + ge + " a.v) { return b; }\n";
+            RowOp op;
+            op.name = is_max ? "cummax" : "cummin";
+            op.ct = ct;
+            op.helpers = pair_scan_helpers(wins + "    return a;\n");
+            // indices (int64) is the second output: raw store of the u32 index.
+            op.body = pair_scan_body("raw_st1(base2 + j * P.dstride[0][2], vec2<u32>(sc.i, 0u));");
+            kernels::run_rows({self}, {values, indices}, {}, dim, op);
+        }
+        void cummax_helper_fn(const Tensor &self, Tensor &values, Tensor &indices, int64_t dim)
+        {
+            if (!reduce_ok({self, values}))
+                return WEBGPU_FALLBACK0(_cummax_helper)(self, values, indices, dim);
+            cummaxmin_impl(self, values, indices, dim, true);
+        }
+        void cummin_helper_fn(const Tensor &self, Tensor &values, Tensor &indices, int64_t dim)
+        {
+            if (!reduce_ok({self, values}))
+                return WEBGPU_FALLBACK0(_cummin_helper)(self, values, indices, dim);
+            cummaxmin_impl(self, values, indices, dim, false);
+        }
+
+        Tensor &logcumsumexp_out_fn(const Tensor &self, int64_t dim, Tensor &out)
+        {
+            at::native::resize_output(out, self.sizes());
+            if (!at::isFloatingType(self.scalar_type()) || !reduce_ok({self, out}))
+                return WEBGPU_FALLBACK(_logcumsumexp, out)(self, dim, out);
+            if (self.numel() == 0)
+                return out;
+            RowOp op;
+            op.name = "logcumsumexp";
+            op.ct = CT::F32;
+            op.helpers = pair_scan_helpers("    return VI(logaddexp_f(a.v, b.v), 0u);\n");
+            op.body = pair_scan_body("");
+            Tensor tmp = out.is_same(self) ? at::empty_like(self) : out;
+            if (self.dim() == 0)
+                kernels::run_rows({self.reshape({1})}, {tmp.reshape({1})}, {}, 0, op);
+            else
+                kernels::run_rows({self}, {tmp}, {}, at::maybe_wrap_dim(dim, self.dim()), op);
+            if (!tmp.is_same(out))
+                out.copy_(tmp);
+            return out;
+        }
+        Tensor logcumsumexp_fn(const Tensor &self, int64_t dim)
+        {
+            Tensor out = at::empty_like(self, at::MemoryFormat::Contiguous);
+            return logcumsumexp_out_fn(self, dim, out);
+        }
+
 #define WG_SCAN(NAME, MUL)                                                                                \
     Tensor NAME##_fn(const Tensor &self, int64_t dim, std::optional<at::ScalarType> dtype)                \
     {                                                                                                     \
@@ -926,6 +1031,10 @@ namespace torch_webgpu::ops
         m.impl("_log_softmax_backward_data.out", TORCH_FN(log_softmax_bwd_out_fn));
         m.impl("native_layer_norm", TORCH_FN(native_layer_norm_fn));
         m.impl("native_layer_norm_backward", TORCH_FN(native_layer_norm_backward_fn));
+        m.impl("_cummax_helper", TORCH_FN(cummax_helper_fn));
+        m.impl("_cummin_helper", TORCH_FN(cummin_helper_fn));
+        m.impl("_logcumsumexp", TORCH_FN(logcumsumexp_fn));
+        m.impl("_logcumsumexp.out", TORCH_FN(logcumsumexp_out_fn));
         m.impl("cumsum", TORCH_FN(cumsum_fn));
         m.impl("cumsum.out", TORCH_FN(cumsum_out_fn));
         m.impl("cumsum_", TORCH_FN(cumsum_inplace_fn));

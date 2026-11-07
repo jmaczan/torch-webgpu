@@ -214,6 +214,10 @@ def _weighted_grads(outputs, leaves, weights):
 
 # Backward tolerances: gradients chain several kernels and accumulate.
 GRAD_TOLERANCES = (1e-3, 1e-3)
+# Ill-conditioned backward formulas: an ulp of difference in the forward
+# result is amplified (logcumsumexp samples reach |x| = 1e4, where one f32
+# ulp is ~1e-3, and the gradient is exp(x - out)).
+GRAD_TOLERANCE_OVERRIDES = {"logcumsumexp": (5e-3, 5e-3)}
 
 
 def run_op_grad(op, dtype=torch.float32, max_samples=None):
@@ -228,7 +232,7 @@ def run_op_grad(op, dtype=torch.float32, max_samples=None):
         return "skip", f"sample generation failed: {e}"
     if max_samples:
         samples = samples[:max_samples]
-    atol, rtol = GRAD_TOLERANCES
+    atol, rtol = GRAD_TOLERANCE_OVERRIDES.get(op.name, GRAD_TOLERANCES)
     checked = 0
     for k, s in enumerate(samples):
         if random_sample(op, s):

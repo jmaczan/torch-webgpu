@@ -369,7 +369,7 @@ namespace torch_webgpu::kernels
         const int nsv = (2 * static_cast<int>(op.scalars.size()) + 3) / 4;
         const int nin = static_cast<int>(inputs.size());
         std::ostringstream key;
-        key << "rows|" << op.name << '|' << op.body << '|' << NO << '|' << nsv << '|' << int(op.ct);
+        key << "rows|" << op.name << '|' << op.body << '|' << op.helpers << '|' << NO << '|' << nsv << '|' << int(op.ct);
         for (auto &s : op.scalars)
             key << int(s.second);
         for (int k = 0; k < nt; ++k)
@@ -475,6 +475,7 @@ namespace torch_webgpu::kernels
                   << "    if (lid == src) { red_f[0] = v; }\n    workgroupBarrier();\n"
                   << "    let r = red_f[0];\n    workgroupBarrier();\n    return r;\n}\n";
             }
+            s << op.helpers << "\n";
             s << "@compute @workgroup_size(" << kWG << ")\n"
               << "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>,\n"
               << "        @builtin(num_workgroups) nwg: vec3<u32>) {\n"
