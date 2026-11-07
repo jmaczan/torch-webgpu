@@ -1,6 +1,7 @@
 #include "kernels/matmul.h"
 
 #include "core/allocator.h"
+#include "core/binding_set.h"
 #include "core/context.h"
 #include "core/kernel.h"
 #include "kernels/elementwise.h"
@@ -24,41 +25,27 @@ namespace torch_webgpu::kernels
         }
     }
 
-    void run_matmul(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
-                    const c10::Scalar &beta, const c10::Scalar &alpha)
+    namespace
     {
-        TORCH_INTERNAL_ASSERT(a.dim() == 3 && w.dim() == 3 && out.dim() == 3);
+    void launch_matmul(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
+                       const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias)
+    {
         const int64_t B = out.size(0), M = out.size(1), N = out.size(2), K = a.size(2);
-        if (B == 0 || M == 0 || N == 0)
-            return;
-        const bool has_bias = bias.defined() && !(beta.isIntegral(false) ? beta.toLong() == 0 : beta.toDouble() == 0.0);
-        if (has_bias)
-            TORCH_INTERNAL_ASSERT(bias.dim() == 3);
 
         const CT ct = wgsl::compute_type(out.scalar_type());
         TORCH_CHECK(ct != CT::Bool, "torch_webgpu: matmul is not supported for bool tensors");
         const auto ta = a.scalar_type(), tw = w.scalar_type(), to = out.scalar_type();
         const auto tb = has_bias ? bias.scalar_type() : to;
 
-        // Unique buffers: a, w, bias are read-only; out is written.
-        struct Bind
-        {
-            WGPUBuffer h;
-            wgpu::Buffer b;
-        };
-        std::vector<Bind> binds;
-        auto bind_of = [&](const at::Tensor &t)
-        {
-            auto &buf = core::buffer_of(t);
-            for (size_t i = 0; i < binds.size(); ++i)
-                if (binds[i].h == buf.Get())
-                    return static_cast<int>(i);
-            binds.push_back({buf.Get(), buf});
-            return static_cast<int>(binds.size() - 1);
-        };
-        const int out_b = bind_of(out);
-        const int a_b = bind_of(a), w_b = bind_of(w);
-        const int bias_b = has_bias ? bind_of(bias) : -1;
+        // Unique buffers (windows): a, w, bias are read-only; out is written.
+        core::BindingSet bs;
+        const int out_r = bs.add(out, true);
+        const int a_r = bs.add(a), w_r = bs.add(w);
+        const int bias_r = has_bias ? bs.add(bias) : -1;
+        bs.finalize();
+        const int out_b = bs.binding(out_r), a_b = bs.binding(a_r), w_b = bs.binding(w_r);
+        const int bias_b = has_bias ? bs.binding(bias_r) : -1;
+        const auto &binds = bs.bindings();
         TORCH_CHECK(a_b != out_b && w_b != out_b && bias_b != out_b,
                     "torch_webgpu: matmul output must not alias its inputs");
 
@@ -162,8 +149,8 @@ namespace torch_webgpu::kernels
 
         core::Params p;
         p.u32(u32_of(M, "M")).u32(u32_of(N, "N")).u32(u32_of(K, "K")).u32(0);
-        p.u32(u32_of(core::element_offset_of(a), "offset")).u32(u32_of(core::element_offset_of(w), "offset"));
-        p.u32(u32_of(core::element_offset_of(out), "offset")).u32(has_bias ? u32_of(core::element_offset_of(bias), "offset") : 0u);
+        p.u32(bs.offset(a_r)).u32(bs.offset(w_r));
+        p.u32(bs.offset(out_r)).u32(has_bias ? bs.offset(bias_r) : 0u);
         auto strides = [&](const at::Tensor &t)
         {
             p.u32(u32_of(t.stride(0), "stride")).u32(u32_of(t.stride(1), "stride")).u32(u32_of(t.stride(2), "stride")).u32(0);
@@ -184,9 +171,55 @@ namespace torch_webgpu::kernels
         grid.z = static_cast<uint32_t>(B);
         TORCH_CHECK(grid.x <= maxd && grid.y <= maxd && grid.z <= maxd, "torch_webgpu: matmul too large for one dispatch");
 
-        std::vector<core::BufferBinding> bufs;
-        for (auto &b : binds)
-            bufs.push_back({b.b});
-        core::launch(pipeline, bufs, p.data(), p.size(), grid);
+        core::launch(pipeline, bs.buffers(), p.data(), p.size(), grid);
+    }
+
+    // Splits until every operand's window fits the device's binding limit:
+    // batch first, then N (weight column blocks, e.g. an LM head), then M.
+    void matmul_fitting(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
+                        const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias)
+    {
+        const at::Tensor no_bias;
+        if (core::windows_fit({a, w, out, has_bias ? bias : no_bias}))
+            return launch_matmul(a, w, out, bias, beta, alpha, has_bias);
+        const int64_t B = out.size(0), M = out.size(1), N = out.size(2);
+        auto half = [](int64_t n) { return n / 2; };
+        auto rec = [&](int dim_out, int dim_a, int dim_w, int64_t n)
+        {
+            const int64_t h = half(n);
+            for (auto [s0, len] : {std::pair<int64_t, int64_t>{0, h}, {h, n - h}})
+            {
+                at::Tensor aa = dim_a >= 0 ? a.narrow(dim_a, s0, len) : a;
+                at::Tensor ww = dim_w >= 0 ? w.narrow(dim_w, s0, len) : w;
+                at::Tensor bb = has_bias ? bias.narrow(dim_out, s0, len) : bias;
+                matmul_fitting(aa, ww, out.narrow(dim_out, s0, len), bb, beta, alpha, has_bias);
+            }
+        };
+        const bool w_or_out_big = !core::windows_fit({w}) || !core::windows_fit({out});
+        if (B > 1)
+            rec(0, a.size(0) > 1 ? 0 : -1, w.size(0) > 1 ? 0 : -1, B);
+        else if (w_or_out_big && N > 1)
+            rec(2, -1, 2, N);
+        else if (M > 1)
+            rec(1, 1, -1, M);
+        else if (N > 1)
+            rec(2, -1, 2, N);
+        else
+            TORCH_CHECK(false, "torch_webgpu: matmul operand exceeds this device's maxStorageBufferBindingSize (",
+                        core::max_binding_size(), " bytes) along the reduction dimension");
+    }
+    }
+
+    void run_matmul(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
+                    const c10::Scalar &beta, const c10::Scalar &alpha)
+    {
+        TORCH_INTERNAL_ASSERT(a.dim() == 3 && w.dim() == 3 && out.dim() == 3);
+        const int64_t B = out.size(0), M = out.size(1), N = out.size(2);
+        if (B == 0 || M == 0 || N == 0)
+            return;
+        const bool has_bias = bias.defined() && !(beta.isIntegral(false) ? beta.toLong() == 0 : beta.toDouble() == 0.0);
+        if (has_bias)
+            TORCH_INTERNAL_ASSERT(bias.dim() == 3);
+        matmul_fitting(a, w, out, bias, beta, alpha, has_bias);
     }
 }

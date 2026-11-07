@@ -1,6 +1,7 @@
 #include "kernels/reduce.h"
 
 #include "core/allocator.h"
+#include "core/binding_set.h"
 #include "core/context.h"
 #include "core/kernel.h"
 #include "kernels/elementwise.h"
@@ -76,6 +77,53 @@ namespace torch_webgpu::kernels
 
         const bool keepdim = out0.dim() == ndim && ndim > 0;
         const bool has_out1 = out1.defined();
+
+        // Too large to bind? Split along a kept dim (outputs independent)...
+        const at::Tensor no_tensor;
+        if (!core::windows_fit({input, out0, has_out1 ? out1 : no_tensor}))
+        {
+            int64_t best = -1;
+            for (int64_t d = 0; d < ndim; ++d)
+                if (!reduced[d] && input.size(d) > 1 &&
+                    (best < 0 || input.size(d) * input.stride(d) > input.size(best) * input.stride(best)))
+                    best = d;
+            if (best >= 0)
+            {
+                int64_t od = best;
+                if (!keepdim)
+                    for (int64_t d = 0; d < best; ++d)
+                        od -= reduced[d] ? 1 : 0;
+                const int64_t n = input.size(best), h = n / 2;
+                for (auto [s0, len] : {std::pair<int64_t, int64_t>{0, h}, {h, n - h}})
+                    run_reduce(input.narrow(best, s0, len), dims_in, out0.narrow(od, s0, len),
+                               has_out1 ? out1.narrow(od, s0, len) : out1, op);
+                return;
+            }
+            // ... or, for ops whose outputs combine, reduce halves of the
+            // largest reduced dim into partials and reduce those.
+            TORCH_CHECK(op.output_combinable && !has_out1,
+                        "torch_webgpu: '", op.name, "' over a tensor larger than this device's maxStorageBufferBindingSize (",
+                        core::max_binding_size(), " bytes) is not supported");
+            int64_t rd = -1;
+            for (int64_t d = 0; d < ndim; ++d)
+                if (reduced[d] && input.size(d) > 1 &&
+                    (rd < 0 || input.size(d) * input.stride(d) > input.size(rd) * input.stride(rd)))
+                    rd = d;
+            TORCH_CHECK(rd >= 0, "torch_webgpu: reduction element exceeds the binding limit");
+            const int64_t n = input.size(rd), h = n / 2;
+            std::vector<at::Tensor> parts;
+            for (auto [s0, len] : {std::pair<int64_t, int64_t>{0, h}, {h, n - h}})
+            {
+                at::Tensor part = at::empty_like(out0);
+                run_reduce(input.narrow(rd, s0, len), dims_in, part, at::Tensor(), op);
+                parts.push_back(part);
+            }
+            at::Tensor stacked = at::stack(parts, 0);
+            ReduceOp combine = op;
+            combine.in_ct = op.out0_ct;
+            run_reduce(stacked, {0}, out0, at::Tensor(), combine);
+            return;
+        }
 
         std::vector<KeptDim> kept;
         std::vector<RedDim> red;
@@ -278,9 +326,11 @@ namespace torch_webgpu::kernels
             grid = core::grid_1d(NOUT, kWG);
         }
 
+        const auto w_in = core::window_of(input), w_o0 = core::window_of(out0);
+        const auto w_o1 = has_out1 ? core::window_of(out1) : core::Window{};
         core::Params p;
         p.u32(NOUT).u32(NRED).u32(grid.row_stride).u32(0);
-        p.u32(elem_offset(input)).u32(elem_offset(out0)).u32(has_out1 ? elem_offset(out1) : 0).u32(0);
+        p.u32(w_in.offset).u32(w_o0.offset).u32(has_out1 ? w_o1.offset : 0).u32(0);
         auto put = [&](auto getter, size_t n)
         {
             for (size_t d = 0; d < 8; ++d)
@@ -294,9 +344,9 @@ namespace torch_webgpu::kernels
         put([&](size_t d) { return u32_of(red[d].stride, "stride"); }, red.size());
         put_scalars(p, op.scalars, nsv);
 
-        std::vector<core::BufferBinding> bufs{{core::buffer_of(input)}, {core::buffer_of(out0)}};
+        std::vector<core::BufferBinding> bufs{w_in.binding, w_o0.binding};
         if (has_out1)
-            bufs.push_back({core::buffer_of(out1)});
+            bufs.push_back(w_o1.binding);
         core::launch(pipeline, bufs, p.data(), p.size(), grid);
     }
 
@@ -324,6 +374,55 @@ namespace torch_webgpu::kernels
             TORCH_CHECK(t.is_contiguous() && t.numel() == rows, "torch_webgpu: row outputs must be contiguous");
         const int nt = static_cast<int>(all.size());
 
+        // Too large to bind: split along the outermost non-row dim (its row
+        // numbers form a contiguous block, so per-row outputs narrow too).
+        {
+            bool fit = true;
+            for (auto &t : all)
+                fit &= core::windows_fit({t});
+            for (auto &t : row_outputs)
+                fit &= core::windows_fit({t});
+            bool contiguous = true;
+            for (auto &t : all)
+                contiguous &= t.is_contiguous();
+            if (!fit && !contiguous)
+            {
+                // Strided operands (e.g. rows along a large-stride dim) span far
+                // more memory than they hold: run on contiguous copies.
+                std::vector<at::Tensor> in2, out2;
+                for (auto &t : inputs)
+                    in2.push_back(t.contiguous());
+                for (auto &t : outputs)
+                    out2.push_back(at::empty(t.sizes(), t.options()));
+                run_rows(in2, out2, row_outputs, dim, op);
+                for (size_t k = 0; k < outputs.size(); ++k)
+                    const_cast<at::Tensor &>(outputs[k]).copy_(out2[k]);
+                return;
+            }
+            if (!fit)
+            {
+                int64_t d0 = -1;
+                for (int64_t d = 0; d < ref.dim() && d0 < 0; ++d)
+                    if (d != dim && ref.size(d) > 1)
+                        d0 = d;
+                TORCH_CHECK(d0 >= 0, "torch_webgpu: '", op.name, "' row exceeds this device's maxStorageBufferBindingSize (",
+                            core::max_binding_size(), " bytes)");
+                const int64_t n0 = ref.size(d0), h = n0 / 2, inner = rows / n0;
+                for (auto [s0, len] : {std::pair<int64_t, int64_t>{0, h}, {h, n0 - h}})
+                {
+                    std::vector<at::Tensor> in2, out2, ro2;
+                    for (auto &t : inputs)
+                        in2.push_back(t.narrow(d0, s0, len));
+                    for (auto &t : outputs)
+                        out2.push_back(t.narrow(d0, s0, len));
+                    for (auto &t : row_outputs)
+                        ro2.push_back(t.view({-1}).narrow(0, s0 * inner, len * inner));
+                    run_rows(in2, out2, ro2, dim, op);
+                }
+                return;
+            }
+        }
+
         // Outer dims: all but `dim`, row-major. Per-tensor strides.
         std::vector<int64_t> osz;
         std::vector<std::vector<int64_t>> ost(nt);
@@ -338,33 +437,20 @@ namespace torch_webgpu::kernels
         TORCH_CHECK(osz.size() <= kMaxDims, "torch_webgpu: row kernel supports at most 8 outer dims");
         const int NO = static_cast<int>(osz.size());
 
-        // Unique buffers.
-        struct B
-        {
-            WGPUBuffer h;
-            wgpu::Buffer b;
-            bool written;
-            bool atomic;
-        };
-        std::vector<B> bufs;
-        std::vector<int> bind(nt + row_outputs.size());
-        auto bind_of = [&](const at::Tensor &t, bool write) -> int
-        {
-            auto &buf = core::buffer_of(t);
-            for (size_t j = 0; j < bufs.size(); ++j)
-                if (bufs[j].h == buf.Get())
-                {
-                    bufs[j].written |= write;
-                    bufs[j].atomic |= write && wgsl::is_subword(t.scalar_type());
-                    return static_cast<int>(j);
-                }
-            bufs.push_back({buf.Get(), buf, write, write && wgsl::is_subword(t.scalar_type())});
-            return static_cast<int>(bufs.size() - 1);
-        };
+        // Unique buffers, bound as windows over the accessed bytes.
+        core::BindingSet bs;
+        std::vector<int> reg(nt + row_outputs.size()), bind(nt + row_outputs.size());
         for (int k = 0; k < nt; ++k)
-            bind[k] = bind_of(all[k], k >= static_cast<int>(inputs.size()));
+        {
+            const bool write = k >= static_cast<int>(inputs.size());
+            reg[k] = bs.add(all[k], write, write && wgsl::is_subword(all[k].scalar_type()));
+        }
         for (size_t k = 0; k < row_outputs.size(); ++k)
-            bind[nt + k] = bind_of(row_outputs[k], true);
+            reg[nt + k] = bs.add(row_outputs[k], true, wgsl::is_subword(row_outputs[k].scalar_type()));
+        bs.finalize();
+        for (size_t k = 0; k < reg.size(); ++k)
+            bind[k] = bs.binding(reg[k]);
+        const auto &bufs = bs.bindings();
 
         const int nsv = (2 * static_cast<int>(op.scalars.size()) + 3) / 4;
         const int nin = static_cast<int>(inputs.size());
@@ -515,12 +601,7 @@ namespace torch_webgpu::kernels
             p.u32(k < nt ? u32_of(all[k].dim() ? all[k].stride(dim) : 1, "stride") : 0u);
         for (int k = 0; k < nov * 4; ++k)
         {
-            uint32_t off = 0;
-            if (k < nt)
-                off = elem_offset(all[k]);
-            else if (k < ntot)
-                off = elem_offset(row_outputs[k - nt]);
-            p.u32(off);
+            p.u32(k < ntot ? bs.offset(reg[k]) : 0u);
         }
         put_scalars(p, op.scalars, nsv);
 
@@ -529,9 +610,6 @@ namespace torch_webgpu::kernels
         core::Grid grid;
         grid.x = std::min(R, maxd);
         grid.y = (R + grid.x - 1) / grid.x;
-        std::vector<core::BufferBinding> bb;
-        for (auto &b : bufs)
-            bb.push_back({b.b});
-        core::launch(pipeline, bb, p.data(), p.size(), grid);
+        core::launch(pipeline, bs.buffers(), p.data(), p.size(), grid);
     }
 }

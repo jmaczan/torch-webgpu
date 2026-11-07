@@ -39,6 +39,10 @@ namespace torch_webgpu::kernels
         CT out0_ct = CT::F32;
         CT out1_ct = CT::I32;
         std::vector<std::pair<c10::Scalar, CT>> scalars;
+        // Set when reducing partial results with this same op gives the full
+        // result (sum, prod, max, min, any, all): lets a reduction over a
+        // tensor larger than the binding limit run in two stages.
+        bool output_combinable = false;
     };
 
     // Reduces `input` over `dims` (already wrapped; empty => all dims) into

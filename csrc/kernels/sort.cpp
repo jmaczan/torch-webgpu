@@ -1,6 +1,7 @@
 #include "kernels/sort.h"
 
 #include "core/allocator.h"
+#include "core/binding_set.h"
 #include "core/kernel.h"
 #include "kernels/elementwise.h"
 #include "kernels/iter_layout.h"
@@ -103,7 +104,7 @@ namespace torch_webgpu::kernels
 
         const uint32_t half = static_cast<uint32_t>(N / 2);
         auto grid = core::grid_1d(static_cast<uint64_t>(R) * half, kWG);
-        const std::vector<core::BufferBinding> bufs{{core::buffer_of(kp)}, {core::buffer_of(ip)}};
+        const std::vector<core::BufferBinding> bufs{core::window_of(kp).binding, core::window_of(ip).binding};
         for (int64_t k = 2; k <= N; k <<= 1)
         {
             for (int64_t j = k / 2; j >= 1; j >>= 1)
@@ -165,9 +166,9 @@ namespace torch_webgpu::kernels
         core::Params p;
         p.u32(checked_u32(R, "rows")).u32(checked_u32(m, "size")).u32(checked_u32(n, "size"));
         p.u32(shared_seq ? 0u : checked_u32(n, "size")).u32(grid.row_stride);
-        p.u32(checked_u32(core::element_offset_of(seq), "offset")).u32(checked_u32(core::element_offset_of(values), "offset"));
-        p.u32(checked_u32(core::element_offset_of(out), "offset"));
-        core::launch(pipeline, {{core::buffer_of(seq)}, {core::buffer_of(values)}, {core::buffer_of(out)}}, p.data(), p.size(),
-                     grid);
+        const auto ws = core::window_of(seq), wv = core::window_of(values), wo = core::window_of(out);
+        p.u32(ws.offset).u32(wv.offset);
+        p.u32(wo.offset);
+        core::launch(pipeline, {ws.binding, wv.binding, wo.binding}, p.data(), p.size(), grid);
     }
 }

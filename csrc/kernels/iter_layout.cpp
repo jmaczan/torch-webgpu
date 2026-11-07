@@ -1,6 +1,7 @@
 #include "kernels/iter_layout.h"
 
 #include "core/allocator.h"
+#include "core/context.h"
 #include "kernels/elementwise.h"
 
 #include <c10/util/Exception.h>
@@ -16,9 +17,73 @@ namespace torch_webgpu::kernels
         return static_cast<uint32_t>(v);
     }
 
-    IterLayout IterLayout::build(at::TensorIteratorBase &iter, const std::vector<std::pair<c10::Scalar, CT>> &scalars,
-                                 bool atomic_outputs, const std::vector<CT> &cpu_scalar_cts)
+    namespace
     {
+        // Byte range [lo, hi) operand k of `iter` accesses inside its allocation.
+        std::pair<uint64_t, uint64_t> operand_range(at::TensorIteratorBase &iter, int k, const core::Allocation *alloc,
+                                                    int64_t extra, int64_t shift = 0)
+        {
+            const uint64_t lo = reinterpret_cast<uintptr_t>(iter.data_ptr(k)) - alloc->va + static_cast<uint64_t>(shift);
+            uint64_t ext = c10::elementSize(iter.dtype(k));
+            if (iter.numel() == 0)
+                return {lo, lo};
+            auto strides = iter.strides(k);
+            for (int d = 0; d < iter.ndim(); ++d)
+                ext += static_cast<uint64_t>(iter.shape()[d] - 1) * static_cast<uint64_t>(strides[d]);
+            return {lo, lo + ext + static_cast<uint64_t>(std::max<int64_t>(extra, 0))};
+        }
+
+        uint64_t offset_alignment()
+        {
+            static const uint64_t a = std::max<uint64_t>(core::Context::get().limits().minStorageBufferOffsetAlignment, 4);
+            return a;
+        }
+    }
+
+    uint64_t max_binding_window(at::TensorIteratorBase &iter, const std::vector<int64_t> &extra_extent,
+                                const std::vector<int64_t> &range_shift)
+    {
+        // Per buffer: union of operand ranges, aligned like build() does.
+        std::vector<std::tuple<WGPUBuffer, uint64_t, uint64_t>> wins;
+        for (int k = 0; k < iter.ntensors(); ++k)
+        {
+            if (k >= iter.noutputs() && iter.is_cpu_scalar(k))
+                continue;
+            auto *alloc = core::allocation_of(iter.tensor_base(k));
+            if (!alloc)
+                continue;
+            auto [lo, hi] = operand_range(iter, k, alloc, k < static_cast<int>(extra_extent.size()) ? extra_extent[k] : 0,
+                                          k < static_cast<int>(range_shift.size()) ? range_shift[k] : 0);
+            bool found = false;
+            for (auto &[h, wl, wh] : wins)
+                if (h == alloc->buffer.Get())
+                {
+                    wl = std::min(wl, lo);
+                    wh = std::max(wh, hi);
+                    found = true;
+                }
+            if (!found)
+                wins.emplace_back(alloc->buffer.Get(), lo, hi);
+        }
+        uint64_t m = 0;
+        const uint64_t al = offset_alignment();
+        for (auto &[h, lo, hi] : wins)
+            m = std::max(m, (hi + 3) / 4 * 4 - lo / al * al);
+        return m;
+    }
+
+    bool iter_fits_device(at::TensorIteratorBase &iter, const std::vector<int64_t> &extra_extent)
+    {
+        return iter.can_use_32bit_indexing() &&
+               max_binding_window(iter, extra_extent) <= core::Context::get().limits().maxStorageBufferBindingSize;
+    }
+
+    IterLayout IterLayout::build(at::TensorIteratorBase &iter, const std::vector<std::pair<c10::Scalar, CT>> &scalars,
+                                 bool atomic_outputs, const std::vector<CT> &cpu_scalar_cts,
+                                 const std::vector<int64_t> &extra_extent, const std::vector<int64_t> &range_shift)
+    {
+        std::vector<uint64_t> byte_offs(iter.ntensors(), 0);
+        std::vector<std::pair<uint64_t, uint64_t>> ranges;
         IterLayout L;
         L.ntensors = iter.ntensors();
         L.noutputs = iter.noutputs();
@@ -75,10 +140,12 @@ namespace torch_webgpu::kernels
             auto *alloc = core::allocation_of(t);
             TORCH_CHECK(alloc != nullptr, "torch_webgpu: kernel operand ", k, " has no device storage");
             // data_ptr() is a virtual address inside the allocation (also for
-            // 32-bit sub-iterators).
-            int64_t byte_off = static_cast<int64_t>(reinterpret_cast<uintptr_t>(iter.data_ptr(k)) - alloc->va);
-            TORCH_INTERNAL_ASSERT(byte_off % esize == 0);
-            o.offset = checked_u32(byte_off / esize, "storage offset");
+            // sub-iterators). The element offset is made relative to the
+            // binding window once all operands are known.
+            auto range = operand_range(iter, k, alloc, k < static_cast<int>(extra_extent.size()) ? extra_extent[k] : 0,
+                                       k < static_cast<int>(range_shift.size()) ? range_shift[k] : 0);
+            byte_offs[k] = range.first;
+            TORCH_INTERNAL_ASSERT(range.first % esize == 0);
             auto strides = iter.strides(k);
             for (int d = 0; d < iter.ndim(); ++d)
             {
@@ -94,6 +161,12 @@ namespace torch_webgpu::kernels
             {
                 b = static_cast<int>(L.bindings.size());
                 L.bindings.push_back({h, alloc->buffer});
+                ranges.push_back(range);
+            }
+            else
+            {
+                ranges[b].first = std::min(ranges[b].first, range.first);
+                ranges[b].second = std::max(ranges[b].second, range.second);
             }
             o.binding = b;
             if (o.is_output)
@@ -102,6 +175,26 @@ namespace torch_webgpu::kernels
                 if (atomic_outputs || wgsl::is_subword(o.dtype))
                     L.bindings[b].atomic = true;
             }
+        }
+        // Binding windows, and element offsets relative to them.
+        const uint64_t al = offset_alignment();
+        const uint64_t max_bind = core::Context::get().limits().maxStorageBufferBindingSize;
+        for (size_t b = 0; b < L.bindings.size(); ++b)
+        {
+            auto &bd = L.bindings[b];
+            bd.offset = ranges[b].first / al * al;
+            bd.size = std::max<uint64_t>((ranges[b].second + 3) / 4 * 4 - bd.offset, 4);
+            TORCH_CHECK(bd.size <= max_bind, "torch_webgpu: an operand's accessed range (", bd.size,
+                        " bytes) exceeds this device's maxStorageBufferBindingSize (", max_bind, " bytes)");
+        }
+        for (int k = 0; k < L.ntensors; ++k)
+        {
+            auto &o = L.ops[k];
+            if (o.cpu_scalar)
+                continue;
+            const uint64_t esize = c10::elementSize(o.dtype);
+            o.offset = checked_u32(static_cast<int64_t>((byte_offs[k] - L.bindings[o.binding].offset) / esize),
+                                   "storage offset");
         }
         return L;
     }
@@ -196,8 +289,8 @@ namespace torch_webgpu::kernels
     std::vector<core::BufferBinding> IterLayout::buffers() const
     {
         std::vector<core::BufferBinding> bufs;
-        for (auto &b : bindings)
-            bufs.push_back({b.buffer});
+        for (auto &b : bindings) // size 0: bindings added by hand, bound whole
+            bufs.push_back({b.buffer, b.offset, b.size ? b.size : WGPU_WHOLE_SIZE});
         return bufs;
     }
 }

@@ -136,12 +136,6 @@ namespace torch_webgpu::kernels
     {
         if (iter.numel() == 0)
             return;
-        if (!iter.can_use_32bit_indexing())
-        {
-            for (auto &sub : iter.with_32bit_indexing())
-                launch_one(sub, op);
-            return;
-        }
-        launch_one(iter, op);
+        for_each_fitting(iter, [&](at::TensorIteratorBase &sub) { launch_one(sub, op); });
     }
 }

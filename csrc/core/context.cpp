@@ -223,7 +223,13 @@ namespace torch_webgpu::core
         // ---- Device --------------------------------------------------------
         wgpu::DeviceDescriptor device_desc{};
         device_desc.label = "torch_webgpu device";
-        device_desc.requiredLimits = &adapter_limits; // ask for everything the adapter offers
+        // Ask for everything the adapter offers, unless TORCH_WEBGPU_LIMITS=default
+        // asks for the WebGPU spec defaults (what the smallest conforming
+        // devices offer): a way to test portability on a large GPU.
+        const char *lim = std::getenv("TORCH_WEBGPU_LIMITS");
+        const bool default_limits = lim && std::string(lim) == "default";
+        if (!default_limits)
+            device_desc.requiredLimits = &adapter_limits;
         device_desc.requiredFeatureCount = features.size();
         device_desc.requiredFeatures = features.data();
         if (!toggles.empty() || !disabled.empty())

@@ -68,11 +68,16 @@ namespace torch_webgpu::ops
             return op;
         }
 
-        ReduceOp sum_op(CT ct) { return sum_like("sum", ct, "    return Acc(t_add(a.v, x));", "    return a.v;"); }
+        ReduceOp combinable(ReduceOp op)
+        {
+            op.output_combinable = true;
+            return op;
+        }
+        ReduceOp sum_op(CT ct) { return combinable(sum_like("sum", ct, "    return Acc(t_add(a.v, x));", "    return a.v;")); }
         ReduceOp nansum_op(CT ct)
         {
-            return sum_like("nansum", ct, ct == CT::F32 ? "    return Acc(select(a.v + x, a.v, isnan_f(x)));" : "    return Acc(t_add(a.v, x));",
-                            "    return a.v;");
+            return combinable(sum_like("nansum", ct, ct == CT::F32 ? "    return Acc(select(a.v + x, a.v, isnan_f(x)));" : "    return Acc(t_add(a.v, x));",
+                                       "    return a.v;"));
         }
         ReduceOp mean_op() { return sum_like("mean", CT::F32, "    return Acc(a.v + x);", "    return a.v / f32(n);"); }
 
@@ -87,6 +92,7 @@ namespace torch_webgpu::ops
             op.step = "    return Acc(t_mul(a.v, x));";
             op.combine = "    return Acc(t_mul(a.v, b.v));";
             op.out0 = "    return a.v;";
+            op.output_combinable = true;
             return op;
         }
 
@@ -123,6 +129,7 @@ namespace torch_webgpu::ops
                 op.combine = is_max ? "    return Acc(a.v || b.v);" : "    return Acc(a.v && b.v);";
             }
             op.out0 = "    return a.v;";
+            op.output_combinable = true;
             return op;
         }
 
@@ -190,6 +197,7 @@ namespace torch_webgpu::ops
             op.step = is_any ? "    return Acc(a.v || x);" : "    return Acc(a.v && x);";
             op.combine = is_any ? "    return Acc(a.v || b.v);" : "    return Acc(a.v && b.v);";
             op.out0 = "    return a.v;";
+            op.output_combinable = true;
             return op;
         }
 
@@ -257,6 +265,8 @@ namespace torch_webgpu::ops
                 op.step = "    return Acc(a.v + pow_f(abs(x), s0));";
                 op.out0 = "    return pow_f(a.v, 1.0 / s0);";
             }
+            // A p-norm of partial p-norms is the p-norm (not so for counts).
+            op.output_combinable = ord != 0.0;
             return op;
         }
 

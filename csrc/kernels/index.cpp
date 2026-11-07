@@ -1,6 +1,8 @@
 #include "kernels/index.h"
 
 #include "core/allocator.h"
+#include "core/binding_set.h"
+#include "core/context.h"
 #include "core/kernel.h"
 #include "core/stream.h"
 #include "kernels/iter_layout.h"
@@ -125,13 +127,14 @@ namespace torch_webgpu::kernels
         }
 
         void launch_index(at::TensorIteratorBase &iter, at::IntArrayRef sizes, at::IntArrayRef strides, bool scatter,
-                          ScatterMode mode, bool wrap)
+                          ScatterMode mode, bool wrap, const std::vector<int64_t> &extent,
+                          const std::vector<int64_t> &shift, int64_t lo, int64_t hi)
         {
             const int nidx = iter.ntensors() - 2;
             TORCH_CHECK(nidx >= 0 && nidx <= 16, "torch_webgpu: too many index tensors");
             TORCH_INTERNAL_ASSERT(static_cast<int>(sizes.size()) == nidx && static_cast<int>(strides.size()) == nidx);
             const bool rmw = scatter && mode != ScatterMode::Assign;
-            IterLayout L = IterLayout::build(iter, {}, rmw);
+            IterLayout L = IterLayout::build(iter, {}, rmw, {}, extent, shift);
             // The error flag is only bound when there are indices to check:
             // "auto" layouts drop bindings the shader never touches.
             int flag_b = -1;
@@ -141,7 +144,7 @@ namespace torch_webgpu::kernels
                 flag_b = static_cast<int>(L.bindings.size());
                 L.bindings.push_back({flag.Get(), flag, true, true});
             }
-            L.extra_words = 2 * nidx;
+            L.extra_words = 2 * nidx + 2; // sizes, strides, then the chunk [lo, hi) of index dim 0
 
             const auto t0 = L.ops[0].dtype, t1 = L.ops[1].dtype;
             if (!rmw)
@@ -204,9 +207,18 @@ namespace torch_webgpu::kernels
                 s
                       << "        let sz = i32(P.extra[" << j / 4 << "][" << j % 4 << "]);\n"
                       << (wrap ? "        if (v < 0) { v = v + sz; }\n" : "")
-                      << "        if (v < 0 || v >= sz) { atomicOr(&buf" << flag_b << "[0], 1u); return; }\n"
-                      << "        ioff += u32(v) * P.extra[" << js / 4 << "][" << js % 4 << "];\n"
-                      << "    }\n";
+                      << "        if (v < 0 || v >= sz) { atomicOr(&buf" << flag_b << "[0], 1u); return; }\n";
+                if (j == 0)
+                {
+                    // Index chunk: positions outside [lo, hi) are handled by
+                    // another dispatch, whose window starts at row lo.
+                    const int jl = 2 * nidx, jh = 2 * nidx + 1;
+                    s << "        let lo = i32(P.extra[" << jl / 4 << "][" << jl % 4 << "]);\n"
+                      << "        if (v < lo || v >= i32(P.extra[" << jh / 4 << "][" << jh % 4 << "])) { return; }\n"
+                      << "        v = v - lo;\n";
+                }
+                s << "        ioff += u32(v) * P.extra[" << js / 4 << "][" << js % 4 << "];\n"
+                  << "    }\n";
                 }
                 if (!scatter)
                     s << "    st0(o0, ld1(o1 + ioff));\n";
@@ -226,6 +238,8 @@ namespace torch_webgpu::kernels
                 extra.push_back(checked_u32(v, "index size"));
             for (auto v : strides)
                 extra.push_back(checked_u32(v, "index stride"));
+            extra.push_back(checked_u32(lo, "index chunk"));
+            extra.push_back(checked_u32(hi, "index chunk"));
             core::Params p;
             L.fill_params(p, grid.row_stride, extra);
             core::launch(pipeline, L.buffers(), p.data(), p.size(), grid);
@@ -236,13 +250,39 @@ namespace torch_webgpu::kernels
         {
             if (iter.numel() == 0)
                 return;
-            if (!iter.can_use_32bit_indexing())
+            // The indexed operand (gather source / scatter destination) is
+            // restrided to 0 in the indexed dims: its bound range must also
+            // span every position an index can reach.
+            const int indexed = scatter ? 0 : 1;
+            const int64_t esize = static_cast<int64_t>(c10::elementSize(iter.dtype(indexed)));
+            int64_t rest = 0; // reach of index dims 1.. (bytes)
+            for (size_t j = 1; j < sizes.size(); ++j)
+                rest += std::max<int64_t>(sizes[j] - 1, 0) * strides[j] * esize;
+            const int64_t n0 = sizes.empty() ? 1 : sizes[0];
+            const int64_t row = sizes.empty() ? 0 : strides[0] * esize;
+            std::vector<int64_t> extent(iter.ntensors(), 0), shift(iter.ntensors(), 0);
+            auto run_chunk = [&](int64_t lo, int64_t hi)
             {
-                for (auto &sub : iter.with_32bit_indexing())
-                    launch_index(sub, sizes, strides, scatter, mode, wrap);
-                return;
-            }
-            launch_index(iter, sizes, strides, scatter, mode, wrap);
+                extent[indexed] = (hi - lo - 1) * row + rest;
+                shift[indexed] = lo * row;
+                for_each_fitting(
+                    iter, [&](at::TensorIteratorBase &sub)
+                    { launch_index(sub, sizes, strides, scatter, mode, wrap, extent, shift, lo, hi); },
+                    extent);
+            };
+            extent[indexed] = (n0 - 1) * row + rest;
+            const uint64_t limit = core::Context::get().limits().maxStorageBufferBindingSize;
+            if (sizes.empty() || max_binding_window(iter, extent) <= limit)
+                return run_chunk(0, n0);
+            // The indexed operand is too large to bind whole (indices are data
+            // dependent): process it in chunks of rows of the first index dim.
+            extent[indexed] = 0;
+            const uint64_t base = max_binding_window(iter, extent) + rest + 2 * 256;
+            TORCH_CHECK(row > 0 && base + row <= limit, "torch_webgpu: an indexed tensor slice exceeds this device's maxStorageBufferBindingSize (",
+                        limit, " bytes)");
+            const int64_t rows = std::max<int64_t>(1, static_cast<int64_t>((limit - base) / row));
+            for (int64_t lo = 0; lo < n0; lo += rows)
+                run_chunk(lo, std::min(n0, lo + rows));
         }
     }
 
@@ -297,11 +337,12 @@ namespace torch_webgpu::kernels
         auto grid = core::grid_1d(checked_u32(n, "numel"), kWG);
         core::Params p;
         p.u32(static_cast<uint32_t>(n)).u32(grid.row_stride).u32(nd).u32(0);
-        p.u32(checked_u32(core::element_offset_of(mask), "offset")).u32(checked_u32(core::element_offset_of(positions), "offset"));
-        p.u32(checked_u32(core::element_offset_of(out), "offset")).u32(0);
+        const auto wm = core::window_of(mask), wp = core::window_of(positions), wo = core::window_of(out);
+        p.u32(wm.offset).u32(wp.offset);
+        p.u32(wo.offset).u32(0);
         for (int d = 0; d < 16; ++d)
             p.u32(d < nd ? checked_u32(sizes[d], "size") : 1u);
-        core::launch(pipeline, {{core::buffer_of(mask)}, {core::buffer_of(positions)}, {core::buffer_of(out)}}, p.data(),
+        core::launch(pipeline, {wm.binding, wp.binding, wo.binding}, p.data(),
                      p.size(), grid);
     }
 }

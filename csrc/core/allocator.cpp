@@ -94,7 +94,12 @@ namespace torch_webgpu::core
 
             Allocation *acquire(size_t size)
             {
-                const size_t cap = round_size(size);
+                const uint64_t max_buffer = Context::get().limits().maxBufferSize / 4 * 4;
+                TORCH_CHECK(size <= max_buffer, "torch_webgpu: a tensor of ", size,
+                            " bytes exceeds this device's maximum buffer size (maxBufferSize = ", max_buffer,
+                            " bytes). Use a smaller tensor or dtype, or a device with larger limits.");
+                // Rounding up for reuse must not cross the device limit.
+                const size_t cap = std::max<size_t>(std::min<size_t>(round_size(size), max_buffer), (size + 3) / 4 * 4);
                 {
                     std::lock_guard<std::mutex> g(mutex_);
                     // Best fit, but don't waste more than 25% (large) / 2x (small).
@@ -142,8 +147,6 @@ namespace torch_webgpu::core
             wgpu::Buffer create(size_t cap)
             {
                 auto &ctx = Context::get();
-                if (cap > ctx.limits().maxBufferSize)
-                    return nullptr;
                 std::lock_guard<std::recursive_mutex> g(ctx.mutex());
                 wgpu::BufferDescriptor desc{};
                 desc.label = "torch_webgpu storage";
