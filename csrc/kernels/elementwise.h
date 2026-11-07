@@ -32,8 +32,13 @@ namespace torch_webgpu::kernels
         std::vector<std::optional<CT>> input_cts;
         // Scalar parameters s0, s1, ... with their types.
         std::vector<std::pair<c10::Scalar, CT>> scalars;
-        // Extra module-scope WGSL (helper functions).
-        std::string helpers;
+        // Module-scope WGSL helpers. They are referenced, never copied or
+        // hashed per launch (launch overhead): `math` includes math_wgsl(),
+        // `special` names functions from special_wgsl(), `static_helpers`
+        // points to a long-lived string (identified by its address).
+        bool math = false;
+        std::vector<std::string> special;
+        const std::string *static_helpers = nullptr;
         // Bit-exact copy (1 input, same element size); `code` is ignored.
         bool raw_copy = false;
         // Expose the linear iteration index to `code` as `idx: u32`. Only

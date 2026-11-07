@@ -199,17 +199,30 @@ namespace torch_webgpu::kernels
         return L;
     }
 
-    void IterLayout::write_key(std::ostream &os) const
+    void IterLayout::write_key(std::string &key) const
     {
-        os << ndim << '|' << extra_words << '|';
+        key += char('0' + ndim);
+        key += '|';
+        key += std::to_string(extra_words);
+        key += '|';
         for (auto ct : scalar_cts)
-            os << int(ct);
-        os << '|';
+            key += char('0' + int(ct));
+        key += '|';
         for (auto &o : ops)
-            os << int(o.dtype) << (o.cpu_scalar ? 's' : 't') << o.binding << ':' << o.scalar_slot << ',';
-        os << '|';
+        {
+            key += std::to_string(int(o.dtype));
+            key += o.cpu_scalar ? 's' : 't';
+            key += char('0' + o.binding);
+            key += ':';
+            key += std::to_string(o.scalar_slot);
+            key += ',';
+        }
+        key += '|';
         for (auto &b : bindings)
-            os << b.written << b.atomic;
+        {
+            key += b.written ? 'w' : 'r';
+            key += b.atomic ? 'a' : '-';
+        }
     }
 
     std::string IterLayout::declarations() const

@@ -72,7 +72,7 @@ namespace torch_webgpu::kernels
                                 const std::vector<int64_t> &extra_extent = {},
                                 const std::vector<int64_t> &range_shift = {});
 
-        void write_key(std::ostream &os) const;
+        void write_key(std::string &key) const;
         // WGSL: Params struct + bindings + `var<uniform> P`.
         std::string declarations() const;
         // WGSL statements: computes `i` (linear id) and `oK` (element offset

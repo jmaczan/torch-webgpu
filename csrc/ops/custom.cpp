@@ -36,7 +36,7 @@ namespace torch_webgpu::ops
             op.code = op.in_ct == kernels::CT::F32   ? "select(max(x0 + x1, 0.0), x0 + x1, isnan_f(x0 + x1))"
                       : op.in_ct == kernels::CT::I64 ? "i64_max(i64_add(x0, x1), i64(0u, 0u))"
                                                      : "max(x0 + x1, 0)";
-            op.helpers = kernels::math_wgsl();
+            op.math = true;
             kernels::run_elementwise(iter, op);
             return iter.output();
         }

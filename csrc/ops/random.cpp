@@ -90,7 +90,8 @@ fn randn(idx: u32, seed_lo: u32, seed_hi: u32, off_lo: u32, off_hi: u32) -> f32 
             op.in_ct = CT::F32;
             op.out_ct = out_ct;
             op.code = out_ct == CT::F32 ? code_f : code_i;
-            op.helpers = kernels::math_wgsl() + philox_wgsl();
+            op.math = true;
+            op.static_helpers = &philox_wgsl();
             auto word = [](uint64_t v, int hi)
             { return Scalar(static_cast<int64_t>(static_cast<int32_t>(static_cast<uint32_t>(hi ? v >> 32 : v)))); };
             op.scalars = {{word(seed, 0), CT::I32}, {word(seed, 1), CT::I32}, {word(offset, 0), CT::I32}, {word(offset, 1), CT::I32}};

@@ -59,9 +59,8 @@ namespace torch_webgpu::ops
             CT sct = o.scalar_ct.value_or(ct);
             for (auto &s : o.scalars)
                 op.scalars.push_back({s, sct});
-            op.helpers = kernels::math_wgsl();
-            if (!o.special.empty())
-                op.helpers += kernels::special_wgsl(o.special);
+            op.math = true;
+            op.special = o.special;
             kernels::run_elementwise(it, op);
             return true;
         }

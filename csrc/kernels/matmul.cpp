@@ -174,6 +174,146 @@ namespace torch_webgpu::kernels
         core::launch(pipeline, bs.buffers(), p.data(), p.size(), grid);
     }
 
+    // Skinny products (M <= 8, e.g. LLM decode GEMVs): the tiled GEMM would
+    // launch N/64 workgroups and leave the GPU idle. Instead:
+    //  - weight contiguous along K (nn.Linear): 8 output columns per
+    //    workgroup, 32 lanes each reading K lane-strided (coalesced), then a
+    //    shared-memory reduction;
+    //  - weight contiguous along N (x @ W): 64 columns per workgroup (one per
+    //    thread, coalesced), K split across 4 thread groups and reduced.
+    // Returns false when neither layout applies.
+    constexpr int64_t kSkinnyMaxM = 8;
+    bool launch_skinny(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
+                       const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias)
+    {
+        const int64_t B = out.size(0), M = out.size(1), N = out.size(2), K = a.size(2);
+        const CT ct = wgsl::compute_type(out.scalar_type());
+        if (M > kSkinnyMaxM || ct != CT::F32 || K == 0)
+            return false;
+        const bool k_contig = w.stride(1) == 1 && N > 1;
+        const bool n_contig = w.stride(2) == 1;
+        if (!k_contig && !n_contig)
+            return false;
+        const auto ta = a.scalar_type(), tw = w.scalar_type(), to = out.scalar_type();
+        const auto tb = has_bias ? bias.scalar_type() : to;
+
+        core::BindingSet bs;
+        const int out_r = bs.add(out, true);
+        const int a_r = bs.add(a), w_r = bs.add(w);
+        const int bias_r = has_bias ? bs.add(bias) : -1;
+        bs.finalize();
+        const int out_b = bs.binding(out_r), a_b = bs.binding(a_r), w_b = bs.binding(w_r);
+        const int bias_b = has_bias ? bs.binding(bias_r) : -1;
+        const auto &binds = bs.bindings();
+        TORCH_CHECK(a_b != out_b && w_b != out_b && bias_b != out_b,
+                    "torch_webgpu: matmul output must not alias its inputs");
+
+        std::ostringstream key;
+        key << "gemv|" << (k_contig ? 'k' : 'n') << M << '|' << int(ta) << int(tw) << int(to) << int(tb) << has_bias
+            << '|' << a_b << w_b << bias_b << out_b << binds.size();
+        auto make_source = [&]()
+        {
+            std::ostringstream s;
+            s << wgsl::prelude();
+            s << "struct Params {\n"
+                 "  M: u32, N: u32, K: u32, _p: u32,\n"
+                 "  off: vec4<u32>,\n"
+                 "  sa: vec4<u32>, sw: vec4<u32>, so: vec4<u32>, sb: vec4<u32>,\n"
+                 "  alpha: u32, beta: u32, _q0: u32, _q1: u32,\n"
+                 "};\n";
+            for (size_t i = 0; i < binds.size(); ++i)
+            {
+                bool is_out = static_cast<int>(i) == out_b;
+                s << "@group(0) @binding(" << i << ") var<storage, " << (is_out ? "read_write" : "read") << "> buf" << i
+                  << ": array<" << (is_out && wgsl::is_subword(to) ? "atomic<u32>" : "u32") << ">;\n";
+            }
+            s << "@group(0) @binding(" << binds.size() << ") var<uniform> P: Params;\n";
+            s << wgsl::load_fn("ld_a", "buf" + std::to_string(a_b), ta, false);
+            s << wgsl::load_fn("ld_w", "buf" + std::to_string(w_b), tw, false);
+            if (has_bias)
+                s << wgsl::load_fn("ld_b", "buf" + std::to_string(bias_b), tb, false);
+            s << wgsl::store_fn("st_o", "buf" + std::to_string(out_b), to);
+            s << "var<workgroup> red: array<f32, " << 256 * M << ">;\n";
+            s << "@compute @workgroup_size(256)\n"
+                 "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {\n"
+                 "    let t = l.x;\n    let b = wid.y;\n"
+                 "    let a_base = P.off[0] + b * P.sa[0];\n"
+                 "    let w_base = P.off[1] + b * P.sw[0];\n"
+                 "    var acc: array<f32, " << M << ">;\n";
+            if (k_contig)
+                s << "    let lane = t % 32u;\n    let col = t / 32u;\n"
+                     "    let n = wid.x * 8u + col;\n"
+                     "    if (n < P.N) {\n"
+                     "        let wn = w_base + n * P.sw[2];\n"
+                     "        for (var k = lane; k < P.K; k += 32u) {\n"
+                     "            let wv = ld_w(wn + k);\n";
+            else
+                s << "    let lane = t / 64u;\n    let col = t % 64u;\n"
+                     "    let n = wid.x * 64u + col;\n"
+                     "    if (n < P.N) {\n"
+                     "        for (var k = lane; k < P.K; k += 4u) {\n"
+                     "            let wv = ld_w(w_base + k * P.sw[1] + n);\n";
+            for (int64_t m = 0; m < M; ++m)
+                s << "            acc[" << m << "] += ld_a(a_base + " << m << "u * P.sa[1] + k * P.sa[2]) * wv;\n";
+            s << "        }\n    }\n";
+            for (int64_t m = 0; m < M; ++m)
+                s << "    red[t * " << M << "u + " << m << "u] = acc[" << m << "];\n";
+            s << "    workgroupBarrier();\n";
+            if (k_contig)
+                // tree over the 32 lanes of each column (same 32-thread block)
+                s << "    for (var st = 16u; st > 0u; st = st >> 1u) {\n"
+                     "        if (lane < st) {\n"
+                     "            for (var m = 0u; m < " << M << "u; m++) { red[t * " << M << "u + m] += red[(t + st) * " << M << "u + m]; }\n"
+                     "        }\n"
+                     "        workgroupBarrier();\n"
+                     "    }\n"
+                     "    if (lane != 0u || n >= P.N) { return; }\n";
+            else
+                // sum the 4 K-groups (threads col, col+64, col+128, col+192)
+                s << "    if (lane != 0u || n >= P.N) { return; }\n"
+                     "    for (var m = 0u; m < " << M << "u; m++) {\n"
+                     "        red[t * " << M << "u + m] = red[t * " << M << "u + m] + red[(t + 64u) * " << M << "u + m] + "
+                     "red[(t + 128u) * " << M << "u + m] + red[(t + 192u) * " << M << "u + m];\n"
+                     "    }\n";
+            s << "    let alpha = bitcast<f32>(P.alpha);\n";
+            if (has_bias)
+                s << "    let beta = bitcast<f32>(P.beta);\n";
+            s << "    for (var m = 0u; m < " << M << "u; m++) {\n"
+                 "        var v = alpha * red[t * " << M << "u + m];\n";
+            if (has_bias)
+                s << "        v += beta * " << wgsl::convert("ld_b(P.off[3] + b * P.sb[0] + m * P.sb[1] + n * P.sb[2])", wgsl::compute_type(tb), CT::F32) << ";\n";
+            s << "        st_o(P.off[2] + b * P.so[0] + m * P.so[1] + n * P.so[2], " << wgsl::convert("v", CT::F32, wgsl::compute_type(to)) << ");\n"
+                 "    }\n}\n";
+            return s.str();
+        };
+        const auto &pipeline = core::get_pipeline(key.str(), make_source, "gemv");
+
+        core::Params p;
+        p.u32(u32_of(M, "M")).u32(u32_of(N, "N")).u32(u32_of(K, "K")).u32(0);
+        p.u32(bs.offset(a_r)).u32(bs.offset(w_r)).u32(bs.offset(out_r)).u32(has_bias ? bs.offset(bias_r) : 0u);
+        auto strides = [&](const at::Tensor &t)
+        {
+            p.u32(u32_of(t.stride(0), "stride")).u32(u32_of(t.stride(1), "stride")).u32(u32_of(t.stride(2), "stride")).u32(0);
+        };
+        strides(a);
+        strides(w);
+        strides(out);
+        if (has_bias)
+            strides(bias);
+        else
+            p.u32(0).u32(0).u32(0).u32(0);
+        p.u32(scalar_word(alpha, CT::F32)).u32(has_bias ? scalar_word(beta, CT::F32) : 0u).u32(0).u32(0);
+
+        const uint32_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;
+        core::Grid grid;
+        grid.x = static_cast<uint32_t>(k_contig ? (N + 7) / 8 : (N + 63) / 64);
+        grid.y = static_cast<uint32_t>(B);
+        if (grid.x > maxd || grid.y > maxd)
+            return false;
+        core::launch(pipeline, bs.buffers(), p.data(), p.size(), grid);
+        return true;
+    }
+
     // Splits until every operand's window fits the device's binding limit:
     // batch first, then N (weight column blocks, e.g. an LM head), then M.
     void matmul_fitting(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
@@ -181,7 +321,11 @@ namespace torch_webgpu::kernels
     {
         const at::Tensor no_bias;
         if (core::windows_fit({a, w, out, has_bias ? bias : no_bias}))
-            return launch_matmul(a, w, out, bias, beta, alpha, has_bias);
+        {
+            if (!launch_skinny(a, w, out, bias, beta, alpha, has_bias))
+                launch_matmul(a, w, out, bias, beta, alpha, has_bias);
+            return;
+        }
         const int64_t B = out.size(0), M = out.size(1), N = out.size(2);
         auto half = [](int64_t n) { return n / 2; };
         auto rec = [&](int dim_out, int dim_a, int dim_w, int64_t n)

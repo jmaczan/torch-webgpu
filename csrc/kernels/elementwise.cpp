@@ -2,6 +2,8 @@
 
 #include "core/kernel.h"
 #include "kernels/iter_layout.h"
+#include "kernels/math.h"
+#include "kernels/special.h"
 
 #include <c10/util/Exception.h>
 
@@ -28,12 +30,26 @@ namespace torch_webgpu::kernels
             IterLayout L = IterLayout::build(iter, op.scalars, false, op.raw_copy ? std::vector<CT>{} : want);
             const int nt = L.ntensors, nout = L.noutputs;
 
-            std::ostringstream key;
-            key << "ew|" << op.name << '|' << op.code << '|' << std::hash<std::string>{}(op.helpers) << '|' << int(op.in_ct)
-                << int(op.out_ct) << '|' << op.raw_copy << op.pass_index << '|';
+            std::string key;
+            key.reserve(160 + op.code.size());
+            key += "ew|";
+            key += op.name;
+            key += '|';
+            key += op.code;
+            key += '|';
+            key += op.math ? 'm' : '-';
+            for (auto &f : op.special)
+                (key += f) += ',';
+            key += std::to_string(reinterpret_cast<uintptr_t>(op.static_helpers));
+            key += '|';
+            key += char('0' + int(op.in_ct));
+            key += char('0' + int(op.out_ct));
+            key += op.raw_copy ? 'r' : '-';
+            key += op.pass_index ? 'i' : '-';
+            key += '|';
             for (auto &c : op.input_cts)
-                key << (c ? int(*c) : 9);
-            key << '|';
+                key += c ? char('0' + int(*c)) : '9';
+            key += '|';
             L.write_key(key);
 
             auto make_source = [&]() -> std::string
@@ -54,7 +70,13 @@ namespace torch_webgpu::kernels
                         s << (o.is_output ? wgsl::store_fn("st" + kk, var, o.dtype)
                                           : wgsl::load_fn("ld" + kk, var, o.dtype, L.atomic(k)));
                 }
-                s << op.helpers << "\n";
+                if (op.math)
+                    s << math_wgsl();
+                if (!op.special.empty())
+                    s << special_wgsl(op.special);
+                if (op.static_helpers)
+                    s << *op.static_helpers;
+                s << "\n";
 
                 const int ninputs = nt - nout;
                 if (!op.raw_copy)
@@ -111,7 +133,7 @@ namespace torch_webgpu::kernels
                 return s.str();
             };
 
-            const auto &pipeline = core::get_pipeline(key.str(), make_source, op.name.c_str());
+            const auto &pipeline = core::get_pipeline(key, make_source, op.name.c_str());
             auto grid = core::grid_1d(L.numel, kWorkgroup);
             core::Params p;
             L.fill_params(p, grid.row_stride);

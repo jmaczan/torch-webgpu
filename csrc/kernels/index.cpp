@@ -158,8 +158,12 @@ namespace torch_webgpu::kernels
                             "torch_webgpu: accumulating index kernels support dtypes up to 32 bits (and int64 add), got ", t0);
             }
 
-            std::ostringstream key;
-            key << "idx|" << scatter << int(mode) << nidx << wrap << '|';
+            std::string key = "idx|";
+            key += scatter ? 's' : 'g';
+            key += char('0' + int(mode));
+            key += std::to_string(nidx);
+            key += wrap ? 'w' : '-';
+            key += '|';
             L.write_key(key);
 
             auto make_source = [&]()
@@ -231,7 +235,7 @@ namespace torch_webgpu::kernels
                 return s.str();
             };
 
-            const auto &pipeline = core::get_pipeline(key.str(), make_source, scatter ? "index_scatter" : "index_gather");
+            const auto &pipeline = core::get_pipeline(key, make_source, scatter ? "index_scatter" : "index_gather");
             auto grid = core::grid_1d(L.numel, kWG);
             std::vector<uint32_t> extra;
             for (auto v : sizes)
