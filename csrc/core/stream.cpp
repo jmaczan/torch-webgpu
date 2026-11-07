@@ -71,6 +71,9 @@ namespace torch_webgpu::core
                     "torch_webgpu: invalid multinomial distribution (probabilities must be finite, non-negative and "
                     "not all zero; without replacement, enough of them must be non-zero). Reported asynchronously "
                     "at the next synchronization point.");
+        TORCH_CHECK(!(flag & kErrorDeviceAssert),
+                    "torch_webgpu: device-side assertion failed in a compiled kernel (e.g. a class index out of "
+                    "range in one_hot). Reported asynchronously at the next synchronization point.");
         TORCH_CHECK(false, "torch_webgpu: a kernel reported error code ", flag);
     }
 

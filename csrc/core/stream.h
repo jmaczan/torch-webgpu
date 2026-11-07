@@ -25,6 +25,7 @@ namespace torch_webgpu::core
     // Error bits of the device-side error flag.
     constexpr uint32_t kErrorIndexOutOfBounds = 1u;
     constexpr uint32_t kErrorInvalidDistribution = 2u;
+    constexpr uint32_t kErrorDeviceAssert = 4u; // compiled kernels' device asserts
 
     struct UniformSlice
     {

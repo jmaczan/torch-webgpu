@@ -57,6 +57,38 @@ def _half_atomic_add_fn(name: str, var: str, dtype: torch.dtype, off: str) -> st
     )
 
 
+def _i64_atomic_fns(name: str, var: str, off: str, add: bool) -> str:
+    """st_ / atomic_add_ for int64 (two words) in an atomic binding. The add
+    carries from the low word: each low-word add that wraps contributes its
+    carry to the high word, so concurrent adds sum exactly."""
+    out = (
+        f"fn st_{name}(i: u32, v: i64) {{\n"
+        f"    atomicStore(&{var}[({off} + i) * 2u], v.x);\n"
+        f"    atomicStore(&{var}[({off} + i) * 2u + 1u], v.y);\n"
+        f"}}\n"
+    )
+    if add:
+        out += (
+            f"fn atomic_add_{name}(i: u32, v: i64) {{\n"
+            f"    let e = ({off} + i) * 2u;\n"
+            f"    let old = atomicAdd(&{var}[e], v.x);\n"
+            f"    let carry = select(0u, 1u, old + v.x < old);\n"
+            f"    atomicAdd(&{var}[e + 1u], v.y + carry);\n"
+            f"}}\n"
+        )
+    return out
+
+
+def _bool_atomic_fns(name: str, var: str, off: str) -> str:
+    """atomic_add_ for bool (accumulating booleans is a logical or)."""
+    return (
+        f"fn atomic_add_{name}(i: u32, v: bool) {{\n"
+        f"    let e = {off} + i;\n"
+        f"    if (v) {{ atomicOr(&{var}[e >> 2u], 1u << ((e & 3u) * 8u)); }}\n"
+        f"}}\n"
+    )
+
+
 _CT = {torch.float32: "f32", torch.float16: "f32", torch.bfloat16: "f32", torch.bool: "bool", torch.int64: "i64"}
 
 
@@ -100,12 +132,16 @@ def buffer_declarations(buffers, mapping, error_flag: bool, nparams: int) -> str
         s.append(_C._wgsl_load_fn(f"raw_ld_{name}", var, dtype, atomic[b]))
         s.append(f"fn ld_{name}(i: u32) -> {ty} {{ return raw_ld_{name}({off} + i); }}")
         if w:
-            if atomic[b] and dtype.itemsize == 4:
+            if atomic[b] and dtype == torch.int64:
+                s.append(_i64_atomic_fns(name, var, off, add))
+            elif atomic[b] and dtype.itemsize == 4:
                 s.append(_word_atomic_fns(name, var, dtype, off, add))
             else:
                 s.append(_C._wgsl_store_fn(f"raw_st_{name}", var, dtype))
                 s.append(f"fn st_{name}(i: u32, v: {ty}) {{ raw_st_{name}({off} + i, v); }}")
-                if add:
+                if add and dtype == torch.bool:
+                    s.append(_bool_atomic_fns(name, var, off))
+                elif add:
                     s.append(_half_atomic_add_fn(name, var, dtype, off))
     return "\n".join(s) + "\n"
 

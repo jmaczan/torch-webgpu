@@ -32,6 +32,20 @@ EXPECTED_FAILURES = {
     # statistics in eval mode where eager returns empty tensors.
     ("native_batch_norm", torch.float32),
     ("_native_batch_norm_legit", torch.float32),
+} | {
+    # Half types (TORCH_WEBGPU_OPINFO_ALL_DTYPES=1). Saved norm statistics
+    # are float32 like CUDA's (the CPU returns the input dtype); the empty
+    # mean as above.
+    (name, dt) for dt in (torch.float16, torch.bfloat16) for name in (
+        "native_layer_norm", "native_batch_norm", "_native_batch_norm_legit", "_batch_norm_with_update",
+        "var_mean.unbiased", "std_mean.unbiased",
+        # Fused kernels compute in float32 without rounding between ops
+        # (CUDA's "opmath"); the CPU rounds every intermediate to the half
+        # type. Checked to be as close or closer to a float32 reference.
+        "addbmm", "nn.functional.conv_transpose2d", "nn.functional.conv_transpose3d",
+        "nn.functional.soft_margin_loss", "nn.functional.hinge_embedding_loss", "grid_sampler_2d",
+        "grid_sampler_3d", "nn.functional.embedding_bag",
+    )
 } | EAGER_EXPECTED_FAILURES
 
 

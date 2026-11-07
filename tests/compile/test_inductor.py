@@ -346,3 +346,27 @@ def test_gqa_repeat_kv_stripped():
         with torch.webgpu.profiler.profile() as p:
             ca(*args)
         assert [r.name for r in p.records] == ["attention_decode"], [r.name for r in p.records]
+
+
+def test_atomic_accumulate_int64_carries():
+    """64-bit atomic adds (two 32-bit atomics, carry from the low word) are
+    exact under contention, also across the 2^32 boundary."""
+    idx = torch.randint(0, 3, (5000,))
+    v = torch.full((5000,), 2**31 + 7, dtype=torch.int64)
+    v[::7] = -(2**33)
+    compare(lambda z, i, v: z.index_put((i,), v, accumulate=True), torch.zeros(4, dtype=torch.int64), idx, v, tol=0)
+
+
+def test_atomic_accumulate_bool():
+    idx = torch.tensor([0, 2, 2, 5, 0])
+    vals = torch.tensor([False, True, False, True, False])
+    compare(lambda z, i, v: z.index_put((i,), v, accumulate=True), torch.zeros(8, dtype=torch.bool), idx, vals, tol=0)
+
+
+def test_device_assert_raises():
+    f = torch.compile(lambda t: F.one_hot(t, 3))
+    torch.testing.assert_close(f(torch.tensor([0, 2, 1], device=D)).cpu(), F.one_hot(torch.tensor([0, 2, 1]), 3))
+    with pytest.raises(RuntimeError, match="device-side assertion"):
+        f(torch.tensor([0, 5], device=D))
+        torch.webgpu.synchronize()
+    assert torch.equal((torch.ones(2, device=D) * 3).cpu(), torch.full((2,), 3.0))

@@ -1147,6 +1147,11 @@ class WGSLKernel(SIMDKernel):
             conds.append(f"({e}) >= ({wexpr(self.rename_indexing(size))})")
         self.compute.writeline(f"if ({' || '.join(conds)}) {{ atomicOr(&err_flag[0], 1u); }}")
 
+    def device_assert_async(self, cond: Any, msg: str) -> None:
+        # Raised as RuntimeError at the next synchronization (error bit 4).
+        self.uses_error_flag = True
+        self.compute.writeline(f"if (!({cond})) {{ atomicOr(&err_flag[0], 4u); }}  // {msg[:60]!r}")
+
     # -- memory ----------------------------------------------------------------
     def load(self, name: str, index: sympy.Expr) -> CSEVariable:
         var = self.args.input(name)
@@ -1166,7 +1171,7 @@ class WGSLKernel(SIMDKernel):
         if mode is None:
             line = f"st_{var}(u32({idx}), {v});"
         elif mode == "atomic_add":
-            if dtype not in (torch.float32, torch.int32, torch.float16, torch.bfloat16):
+            if dtype not in (torch.float32, torch.int32, torch.float16, torch.bfloat16, torch.int64, torch.bool):
                 raise NotImplementedError(f"WebGPU Inductor backend: atomic_add on {dtype}")
             self.atomic_buffers.add(var)
             line = f"atomic_add_{var}(u32({idx}), {v});"
