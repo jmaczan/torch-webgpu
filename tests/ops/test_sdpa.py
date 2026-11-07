@@ -148,11 +148,26 @@ def test_sdpa_decode_grad():
         close(a, e, 1e-3)
 
 
-def test_sdpa_decode_uses_one_dispatch():
+@pytest.mark.parametrize("lk,kernels", [(100, ["attention_decode"]),
+                                        (5000, ["attention_decode", "attention_decode_combine"])])
+def test_sdpa_decode_dispatches(lk, kernels):
+    """Short contexts: one dispatch; long ones: key splits + one merge."""
     if not torch.webgpu.profiler.is_supported():
         pytest.skip("no timestamp queries")
-    q, k, v = torch.randn(1, 14, 1, 64, device=D), torch.randn(1, 2, 500, 64, device=D), torch.randn(1, 2, 500, 64, device=D)
+    q, k, v = torch.randn(1, 14, 1, 64, device=D), torch.randn(1, 2, lk, 64, device=D), torch.randn(1, 2, lk, 64, device=D)
     F.scaled_dot_product_attention(q, k, v, enable_gqa=True)
     with torch.webgpu.profiler.profile() as p:
         F.scaled_dot_product_attention(q, k, v, enable_gqa=True)
-    assert [r.name for r in p.records] == ["attention_decode"]
+    assert [r.name for r in p.records] == kernels
+
+
+@pytest.mark.parametrize("lk", [129, 8191, 40000])
+def test_sdpa_decode_long_context(lk):
+    """Split boundaries (chunk sizes double past 64 splits), with a mask
+    that hides whole chunks."""
+    q, k, v = torch.randn(1, 4, 2, 32), torch.randn(1, 2, lk, 32), torch.randn(1, 2, lk, 32)
+    mask = torch.rand(1, 1, 2, lk) > 0.5
+    mask[..., : lk // 3] = False
+    ref = F.scaled_dot_product_attention(q, k.repeat_interleave(2, 1), v.repeat_interleave(2, 1), attn_mask=mask)
+    out = F.scaled_dot_product_attention(q.to(D), k.to(D), v.to(D), attn_mask=mask.to(D), enable_gqa=True)
+    close(out, ref, 2e-4)
