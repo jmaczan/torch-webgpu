@@ -86,7 +86,10 @@ COMPUTED = {
 def test_computed_special_values(name, dtype):
     a = torch.tensor([NAN, INF, -INF, 1.0, -NAN, 6e4, -0.0, 2.0]).to(dtype)
     f = COMPUTED[name]
-    same(f(a.to(D)), f(a))
+    # Special values must match exactly; finite results of transcendental
+    # functions may differ by an ulp between drivers.
+    actual, expected = f(a.to(D)).cpu(), f(a)
+    torch.testing.assert_close(actual, expected, atol=0, rtol=2e-7 if dtype == torch.float32 else 0, equal_nan=True)
 
 
 def test_float_to_int_and_bool_casts():

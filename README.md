@@ -10,58 +10,101 @@
 
 See also the WebGPU benchmark paper: [Characterizing WebGPU Dispatch Overhead for LLM Inference Across Four GPU Vendors, Three Backends, and Three Browsers](https://arxiv.org/abs/2604.02344)
 
-## Example: Compile and run an LLM
-
-```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import torch
-from torch_webgpu.compiler.webgpu_compiler import webgpu_backend
-
-model = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen2.5-0.5B-Instruct", torch_dtype=torch.float32
-)
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
-model.eval()
-
-compiled_model = torch.compile(model, backend=webgpu_backend)
-
-with torch.no_grad():
-    inputs = tokenizer("Hello, how are you?", return_tensors="pt")
-    input_ids = inputs["input_ids"]
-    generated_ids = input_ids.clone()
-    outputs = compiled_model(input_ids)
-    for _ in range(10):
-        outputs = compiled_model(generated_ids)
-        next_token = outputs.logits[0, -1].argmax().unsqueeze(0).unsqueeze(0)
-        generated_ids = torch.cat([generated_ids, next_token], dim=1)
-    print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
-```
-
-## Example: Tensor on WebGPU
+## Example: Tensors and models on WebGPU
 
 ```python
 import torch
-import torch_webgpu
+import torch_webgpu  # registers the "webgpu" device
 
-# Use WebGPU as a device
 x = torch.tensor([1.0, 2.0, 3.0], device="webgpu")
-y = x * 2
-print(y)  # tensor([2., 4., 6.], device='webgpu')
+print(x * 2)  # tensor([2., 4., 6.], device='webgpu:0')
+
+# Any PyTorch model, eager mode, inference or training
+model = torch.nn.Sequential(torch.nn.Linear(16, 32), torch.nn.GELU(), torch.nn.Linear(32, 4)).to("webgpu")
+opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+loss = torch.nn.functional.cross_entropy(model(torch.randn(8, 16, device="webgpu")), torch.randint(0, 4, (8,), device="webgpu"))
+loss.backward()
+opt.step()
 ```
 
-## Use
+## Example: Run an LLM with Hugging Face transformers
 
-In Python:
+```python
+import torch, torch_webgpu
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-`from torch_webgpu import webgpu_backend`
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
+model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B", dtype=torch.float32).to("webgpu")
+ids = tok("The universe is", return_tensors="pt").input_ids.to("webgpu")
+print(tok.decode(model.generate(ids, max_new_tokens=20, do_sample=False)[0]))
+```
 
-And now you can use `@torch.compile(backend=webgpu_backend)`, `device="webgpu"`, `to="webgpu"` to run and compile PyTorch on a real WebGPU!
+Greedy generation matches the CPU token for token, without CPU fallbacks, for GPT-2, GPT-Neo, OPT,
+Pythia, Bloom, Llama 3.2, SmolLM2, Qwen 1.5 / 2.5 / 3, Phi-1.5, StableLM 2, OLMo 2, Granite 3.3 and
+Danube 3 (`scripts/e2e_models.py`).
 
+## Example: Compile with the WebGPU backend
+
+```python
+compiled_model = torch.compile(model, backend="webgpu_backend")
+```
+
+The default Inductor backend (`torch.compile(model)`) does not generate WebGPU code yet.
+
+## What is supported
+
+- **Device**: `torch.device("webgpu")`, `.to("webgpu")`, `Tensor.webgpu()`, `Module.webgpu()`, and the
+  `torch.webgpu` module (synchronize, memory stats / `empty_cache`, RNG state, streams and events,
+  device properties), like `torch.cuda`.
+- **Ops**: native WGSL kernels for elementwise math (incl. special functions), reductions and scans,
+  matmul, convolutions, pooling, normalization, indexing / scatter / gather, sorting, random sampling,
+  losses, upsampling, padding, grid sampling, embedding bags, histograms and more. Every op in PyTorch's
+  OpInfo database is checked against the CPU, forward and backward.
+- **Dtypes**: float32, float16, bfloat16, int64 (exact, emulated), int32, int16, int8, uint8, bool.
+  Half types compute in float32 (like CUDA's "opmath").
+- **Autograd, `torch.autocast(device_type="webgpu")`, `torch.save` / `load`, pickling**, weight tying.
+- **CPU fallback** for anything without a native kernel (it warns once per op; see below).
+
+### Differences from CPU / CUDA
+
+- **No float64 / complex compute**: WebGPU hardware has no float64. Such tensors can live on the device,
+  but ops on them run on the CPU (with a warning saying so). Use float32.
+- **Float32 denormals flush to zero** (as on most GPUs).
+- Results agree with the CPU to float32 precision, not bit for bit (different summation orders, etc.).
+
+## Configuration
+
+| Environment variable | Effect |
+| --- | --- |
+| `TORCH_WEBGPU_FALLBACK_WARN=0` | Don't warn when an op falls back to the CPU |
+| `TORCH_WEBGPU_DISABLE_CPU_FALLBACK=1` | Raise instead of falling back to the CPU |
+| `TORCH_WEBGPU_BACKEND=vulkan\|metal\|d3d12\|opengl\|opengles` | Choose the native GPU API |
+| `TORCH_WEBGPU_COMPAT=1` | Use WebGPU compatibility mode (implied by the OpenGL backends) |
+| `TORCH_WEBGPU_LIMITS=default` | Create the device with the WebGPU spec's default limits (portability testing) |
+| `TORCH_WEBGPU_FORCE_FALLBACK_ADAPTER=1` | Use a software adapter, if available |
+| `TORCH_WEBGPU_MAX_BATCH=N` | Dispatches recorded before a command buffer is submitted (default 128) |
+| `TORCH_WEBGPU_DUMP_SHADERS=dir` | Write every generated WGSL shader to `dir` |
+| `TORCH_WEBGPU_DEBUG=1` | Log adapter / device information |
+
+## Portability
+
+Tensors larger than one storage-buffer binding (128 MiB on the smallest devices, often 1-4 GiB on
+desktop GPUs) work: kernels bind only the bytes they touch and split work that doesn't fit. A single
+tensor can't exceed the device's maximum buffer size. The test suite also runs against the spec's
+minimum limits (`TORCH_WEBGPU_LIMITS=default`) and on Dawn's OpenGL / OpenGL ES backends.
 
 ## Installation
 
 ```bash
 pip install torch-webgpu
+```
+
+## Development
+
+```bash
+python -m pip install -e . --no-build-isolation   # build (Dawn in ./dawn-install)
+./test.sh                                          # pytest (ops, OpInfo forward + gradients, runtime) + C++ gtests
+HF_HUB_OFFLINE=1 python scripts/e2e_models.py gpt2 Qwen/Qwen2.5-0.5B   # end-to-end model checks
 ```
 
 ## Documentation

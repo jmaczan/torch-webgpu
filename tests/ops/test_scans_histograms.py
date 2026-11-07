@@ -108,7 +108,8 @@ def test_histogram(density):
             c = torch.histogram(x, weight=weight, density=density, **kwd)
             d = torch.histogram(x.to(D), weight=None if weight is None else weight.to(D), density=density, **kwd_dev)
             torch.testing.assert_close(d.hist.cpu(), c.hist, atol=1e-5, rtol=1e-5)
-            same(d.bin_edges, c.bin_edges)
+            # (edges may differ by an ulp where a driver fuses start + step * i)
+            torch.testing.assert_close(d.bin_edges.cpu(), c.bin_edges, atol=0, rtol=2e-7)
 
 
 def test_histogramdd():

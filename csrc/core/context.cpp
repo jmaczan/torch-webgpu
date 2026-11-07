@@ -150,6 +150,13 @@ namespace torch_webgpu::core
             adapter_opts.backendType = parse_backend(b);
         if (const char *f = std::getenv("TORCH_WEBGPU_FORCE_FALLBACK_ADAPTER"); f && std::string(f) == "1")
             adapter_opts.forceFallbackAdapter = true;
+        // WebGPU compatibility mode (what browsers expose on older / low-end
+        // hardware; also needed for Dawn's OpenGL and OpenGL ES backends).
+        const char *compat = std::getenv("TORCH_WEBGPU_COMPAT");
+        const char *bname = std::getenv("TORCH_WEBGPU_BACKEND");
+        const bool gl = bname && (std::string(bname) == "opengl" || std::string(bname) == "opengles");
+        if ((compat && std::string(compat) == "1") || gl)
+            adapter_opts.featureLevel = wgpu::FeatureLevel::Compatibility;
 
         std::string adapter_error;
         wait(instance_.RequestAdapter(
@@ -201,6 +208,10 @@ namespace torch_webgpu::core
         std::vector<std::string> toggle_storage = split_csv(std::getenv("TORCH_WEBGPU_DAWN_TOGGLES"));
         std::vector<std::string> disabled_storage = split_csv(std::getenv("TORCH_WEBGPU_DAWN_DISABLED_TOGGLES"));
         std::vector<const char *> toggles, disabled;
+        // OpenGL contexts are bound to one thread at a time; PyTorch uses the
+        // device from several (e.g. the autograd engine's device thread).
+        if (info_.backend == "OpenGL" || info_.backend == "OpenGLES")
+            toggle_storage.push_back("gl_allow_context_on_multi_threads");
         for (auto &t : toggle_storage)
             toggles.push_back(t.c_str());
         // Dawn zero-initializes buffers lazily on first use by default. With

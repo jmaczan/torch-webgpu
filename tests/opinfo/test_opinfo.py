@@ -50,7 +50,8 @@ def _params():
             if dtype is not torch.float32 and not ALL_DTYPES and op.name not in SUBSET:
                 continue
             name = op.name + ("." + op.variant_test_name if op.variant_test_name else "")
-            marks = [pytest.mark.xfail(reason="intentional deviation from CPU, see EXPECTED_FAILURES", strict=True)] \
+            # Not strict: whether the deviation shows depends on the driver's rounding.
+            marks = [pytest.mark.xfail(reason="intentional deviation from CPU, see EXPECTED_FAILURES", strict=False)] \
                 if (name, dtype) in EXPECTED_FAILURES else []
             yield pytest.param(op, dtype, id=f"{name}-{str(dtype).replace('torch.', '')}", marks=marks)
 

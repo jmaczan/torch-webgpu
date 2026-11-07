@@ -345,17 +345,25 @@ fn frexp_f(x: f32) -> vec2<u32> {
                              }}},
                 {"erfcx_f", {{}, []
                              {
+                                 // Groups of 25 cases: some shader compilers (Mesa's
+                                 // GLSL path) miscompile very large switches.
                                  std::ostringstream s;
                                  s << "fn erfcx_y100(y100: f32) -> f32 {\n"
-                                   << "    switch (i32(y100)) {\n";
-                                 for (int k = 0; k < 100; ++k)
+                                   << "    let k = i32(y100);\n";
+                                 for (int g = 0; g < 100; g += 25)
                                  {
-                                     std::vector<double> c(ERFCX_TABLE[k], ERFCX_TABLE[k] + 7);
-                                     std::vector<double> rev(c.rbegin(), c.rend());
-                                     s << "        case " << k << ": { let t = 2.0 * y100 - " << (2 * k + 1)
-                                       << ".0; return " << horner("t", rev) << "; }\n";
+                                     s << "    if (k >= " << g << " && k < " << g + 25 << ") {\n"
+                                       << "        switch (k) {\n";
+                                     for (int k = g; k < g + 25; ++k)
+                                     {
+                                         std::vector<double> c(ERFCX_TABLE[k], ERFCX_TABLE[k] + 7);
+                                         std::vector<double> rev(c.rbegin(), c.rend());
+                                         s << "            case " << k << ": { let t = 2.0 * y100 - " << (2 * k + 1)
+                                           << ".0; return " << horner("t", rev) << "; }\n";
+                                     }
+                                     s << "            default: { return 1.0; }\n        }\n    }\n";
                                  }
-                                 s << "        default: { return 1.0; }\n    }\n}\n";
+                                 s << "    return 1.0;\n}\n";
                                  s << R"(
 fn erfcx_f(x: f32) -> f32 {
     if (isnan_f(x)) { return x; }
