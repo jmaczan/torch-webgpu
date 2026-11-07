@@ -96,6 +96,17 @@ namespace torch_webgpu::kernels
                 s << "    atomicAdd(&" << var << "[i], bitcast<u32>(v));\n}\n";
                 return s.str();
             }
+            if (t == c10::kLong && mode == ScatterMode::Add)
+            {
+                // 64-bit add from two 32-bit atomics: the high word receives
+                // the high part plus one carry per low-word wraparound, which
+                // sums exactly regardless of interleaving.
+                s << "    let lo_old = atomicAdd(&" << var << "[2u * i], v.x);\n"
+                  << "    let carry = select(0u, 1u, lo_old + v.x < lo_old);\n"
+                  << "    atomicAdd(&" << var << "[2u * i + 1u], v.y + carry);\n}\n";
+                return s.str();
+            }
+            TORCH_CHECK(es <= 4, "torch_webgpu: atomic ", int(mode), " is not supported for ", t);
             if (es == 4)
                 s << "    let w = i;\n    let sh = 0u;\n    let mask = 0xffffffffu;\n";
             else if (es == 2)
@@ -140,8 +151,8 @@ namespace torch_webgpu::kernels
             }
             else
             {
-                TORCH_CHECK(c10::elementSize(t0) <= 4 && wgsl::is_compute_dtype(t0),
-                            "torch_webgpu: accumulating index kernels support dtypes up to 32 bits, got ", t0);
+                TORCH_CHECK(wgsl::is_compute_dtype(t0) && (c10::elementSize(t0) <= 4 || (t0 == c10::kLong && mode == ScatterMode::Add)),
+                            "torch_webgpu: accumulating index kernels support dtypes up to 32 bits (and int64 add), got ", t0);
             }
 
             std::ostringstream key;

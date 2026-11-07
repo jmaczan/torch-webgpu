@@ -174,8 +174,12 @@ namespace torch_webgpu::ops
 
         bool scatter_supported(const Tensor &self, ScatterMode mode)
         {
-            return mode == ScatterMode::Assign ? wgsl::is_storage_dtype(self.scalar_type())
-                                               : (wgsl::is_compute_dtype(self.scalar_type()) && self.element_size() <= 4);
+            if (mode == ScatterMode::Assign)
+                return wgsl::is_storage_dtype(self.scalar_type());
+            // int64 supports Add (carry-propagating atomics), not CAS-based ops.
+            if (self.scalar_type() == at::kLong)
+                return mode == ScatterMode::Add;
+            return wgsl::is_compute_dtype(self.scalar_type()) && self.element_size() <= 4;
         }
 
         Tensor value_tensor(const Tensor &self, const Scalar &value)

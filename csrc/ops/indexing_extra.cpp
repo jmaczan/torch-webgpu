@@ -27,6 +27,31 @@ namespace torch_webgpu::ops
 
     namespace
     {
+        // -------------------------------------------------------- bincount
+        Tensor bincount_fn(const Tensor &self, const std::optional<Tensor> &weights, int64_t minlength)
+        {
+            const bool has_w = weights.has_value() && weights->defined();
+            // CPU returns float64 for non-float32 weights: no GPU arithmetic for that.
+            if (has_w && weights->scalar_type() != at::kFloat)
+                return WEBGPU_FALLBACK0(bincount)(self, weights, minlength);
+            TORCH_CHECK(self.dim() == 1 && !at::isFloatingType(self.scalar_type()) && self.scalar_type() != at::kBool,
+                        "bincount only supports 1-d non-negative integral inputs.");
+            TORCH_CHECK(minlength >= 0, "minlength should be >= 0");
+            TORCH_CHECK(!has_w || (weights->dim() == 1 && weights->size(0) == self.size(0)),
+                        "weights should be 1-d and have the same length as input");
+            int64_t size = minlength;
+            if (self.numel() > 0)
+            {
+                auto [mn, mx] = at::aminmax(self);
+                TORCH_CHECK(mn.item<int64_t>() >= 0, "bincount only supports 1-d non-negative integral inputs.");
+                size = std::max(size, mx.item<int64_t>() + 1);
+            }
+            Tensor idx = self.to(at::kLong);
+            if (has_w)
+                return at::zeros({size}, weights->options()).index_add_(0, idx, *weights);
+            return at::zeros({size}, self.options().dtype(at::kLong)).index_add_(0, idx, at::ones({self.numel()}, self.options().dtype(at::kLong)));
+        }
+
         // ------------------------------------------------------ take / put
         // Linear (row-major) indices into self; negatives wrap.
         Tensor &take_out_fn(const Tensor &self, const Tensor &index, Tensor &out)
@@ -410,6 +435,7 @@ namespace torch_webgpu::ops
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     {
+        m.impl("bincount", TORCH_FN(bincount_fn));
         m.impl("triu_indices", TORCH_FN(triu_indices_fn));
         m.impl("tril_indices", TORCH_FN(tril_indices_fn));
         m.impl("take", TORCH_FN(take_fn));

@@ -4,7 +4,11 @@
 
 #include <ATen/ATen.h>
 #include <ATen/native/Resize.h>
+#include <ATen/ScalarOps.h>
+#include <ATen/WrapDimUtils.h>
 #include <ATen/ops/clamp_meta.h>
+#include <ATen/ops/linalg_cross_meta.h>
+#include <ATen/ops/pow_meta.h>
 #include <ATen/ops/digamma_meta.h>
 #include <ATen/ops/i0_meta.h>
 #include <ATen/ops/lgamma_meta.h>
@@ -216,6 +220,56 @@ namespace torch_webgpu::ops
             return it.output();
         }
 
+        // ------------------------------------------------ pow(Scalar, Tensor)
+        // As CPU: base 1 fills ones; otherwise pow.Tensor_Tensor with the base
+        // as a wrapped scalar tensor (which keeps result_type semantics).
+        void pow_scalar_impl(const Scalar &base, const Tensor &exponent, const Tensor &out)
+        {
+            if (base.equal(1.0))
+                const_cast<Tensor &>(out).fill_(1);
+            else
+                at::pow_out(const_cast<Tensor &>(out), at::native::wrapped_scalar_tensor(base),
+                            exponent);
+        }
+        Tensor pow_scalar_fn(const Scalar &base, const Tensor &exponent)
+        {
+            Functional<at::meta::structured_pow_Scalar> op;
+            op.meta(base, exponent);
+            pow_scalar_impl(base, exponent, op.outputs_[0]);
+            return std::move(op.outputs_[0]);
+        }
+        Tensor &pow_scalar_out_fn(const Scalar &base, const Tensor &exponent, Tensor &out)
+        {
+            Out<at::meta::structured_pow_Scalar> op(out);
+            op.meta(base, exponent);
+            pow_scalar_impl(base, exponent, op.maybe_get_output(0));
+            op.finish();
+            return out;
+        }
+
+        // ---------------------------------------------------- linalg_cross
+        // out_i = a_{i+1} b_{i+2} - a_{i+2} b_{i+1} along `dim` (size 3).
+        Tensor &linalg_cross_out_fn(const Tensor &self, const Tensor &other, int64_t dim, Tensor &out)
+        {
+            Out<at::meta::structured_linalg_cross> op(out);
+            op.meta(self, other, dim);
+            const Tensor &o = op.maybe_get_output(0);
+            if (o.numel() > 0)
+            {
+                const int64_t d = at::maybe_wrap_dim(dim, o.dim());
+                Tensor a = self.expand(o.sizes()), b = other.expand(o.sizes());
+                Tensor a1 = a.roll(-1, d), a2 = a.roll(-2, d), b1 = b.roll(-1, d), b2 = b.roll(-2, d);
+                at::sub_out(const_cast<Tensor &>(o), a1 * b2, a2 * b1);
+            }
+            op.finish();
+            return out;
+        }
+        Tensor linalg_cross_fn(const Tensor &self, const Tensor &other, int64_t dim)
+        {
+            Tensor out = at::empty({0}, self.options().dtype(at::result_type(self, other)));
+            return linalg_cross_out_fn(self, other, dim, out);
+        }
+
         // ------------------------------------------------------------ rsub
         Tensor rsub_fn(const Tensor &self, const Tensor &other, const Scalar &alpha)
         {
@@ -262,5 +316,9 @@ namespace torch_webgpu::ops
         m.impl("angle", TORCH_FN(angle_fn));
         m.impl("angle.out", TORCH_FN(angle_out_fn));
         m.impl("rsub.Tensor", TORCH_FN(rsub_fn));
+        m.impl("pow.Scalar", TORCH_FN(pow_scalar_fn));
+        m.impl("pow.Scalar_out", TORCH_FN(pow_scalar_out_fn));
+        m.impl("linalg_cross", TORCH_FN(linalg_cross_fn));
+        m.impl("linalg_cross.out", TORCH_FN(linalg_cross_out_fn));
     }
 }
