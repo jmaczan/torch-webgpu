@@ -197,10 +197,11 @@ def test_aliased_buffers():
     torch.testing.assert_close(dev.cpu(), ref_base)
 
 
-@pytest.mark.xfail(reason="compiled AdamW parameters drift > 2e-3 from CPU after 3 steps (losses match); under investigation", strict=False)
 def test_training_step():
     torch.manual_seed(0)
-    m = nn.Sequential(nn.Conv2d(3, 16, 3, padding=1), nn.BatchNorm2d(16), nn.ReLU(), nn.Flatten(), nn.Linear(1024, 10))
+    # No conv bias: before BatchNorm its gradient is pure rounding noise,
+    # which Adam's first step (~ lr * sign(grad)) turns into +-lr updates.
+    m = nn.Sequential(nn.Conv2d(3, 16, 3, padding=1, bias=False), nn.BatchNorm2d(16), nn.ReLU(), nn.Flatten(), nn.Linear(1024, 10))
     mc = copy.deepcopy(m).to(D)
     x, t = torch.randn(4, 3, 8, 8), torch.randint(0, 10, (4,))
     opt = torch.optim.AdamW(m.parameters(), lr=1e-2)
@@ -219,8 +220,7 @@ def test_training_step():
         l2 = cstep(mc, optc, x.to(D), t.to(D))
         torch.testing.assert_close(l2.cpu(), l1, atol=1e-4, rtol=1e-4)
     for a, b in zip(m.parameters(), mc.parameters()):
-        # Adam divides by sqrt of tiny second moments, amplifying f32 noise.
-        torch.testing.assert_close(b.cpu(), a, atol=2e-3, rtol=2e-3)
+        torch.testing.assert_close(b.cpu(), a, atol=1e-4, rtol=1e-4)
     torch.testing.assert_close(mc[1].running_var.cpu(), m[1].running_var, atol=1e-5, rtol=1e-5)
 
 

@@ -114,8 +114,20 @@ class WGSLKernelRunner:
         grid = (gx, -(-nwg // gx), 1)
         params = [int(p) for p in params]
         # Inductor feeds zero-dim CPU tensors (e.g. optimizer step counts)
-        # to device kernels; they are read-only there.
-        tensors = [t if t.device.type == "webgpu" else t.to("webgpu") for t in tensors]
+        # to device kernels. Stage them on the device; written ones are
+        # copied back after the launch.
+        staged = None
+        for i, t in enumerate(tensors):
+            if t.device.type != "webgpu":
+                if staged is None:
+                    tensors = list(tensors)
+                    staged = []
+                tensors[i] = t.to("webgpu")
+                if self.buffers[i][2]:
+                    staged.append((t, tensors[i]))
         if not _C._wgsl_launch(self.kid, tensors, params, grid, self.error_flag, False):
             kid = self._compile(tuple(_C._wgsl_binding_map(tensors)))
             _C._wgsl_launch(kid, tensors, params, grid, self.error_flag, True)
+        if staged:
+            for cpu, dev in staged:
+                cpu.copy_(dev)
