@@ -617,7 +617,7 @@ namespace torch_webgpu::ops
             return FB_F(self, dim, half_to_float);                                                      \
         if (self.dim() == 0)                                                                            \
         {                                                                                               \
-            kernels::run_rows({self.view({1})}, {op.outputs_[0].view({1})}, {}, 0, RowOp{#ID, BODY});    \
+            kernels::run_rows({self.reshape({1})}, {op.outputs_[0].reshape({1})}, {}, 0, RowOp{#ID, BODY});    \
             return std::move(op.outputs_[0]);                                                           \
         }                                                                                               \
         kernels::run_rows({self}, {op.outputs_[0]}, {}, dim, RowOp{#ID, BODY});                         \
@@ -631,7 +631,7 @@ namespace torch_webgpu::ops
             return FB_O(self, dim, half_to_float, out);                                                 \
         const Tensor &o = op.maybe_get_output(0);                                                       \
         if (self.dim() == 0)                                                                            \
-            kernels::run_rows({self.view({1})}, {o.view({1})}, {}, 0, RowOp{#ID, BODY});                 \
+            kernels::run_rows({self.reshape({1})}, {o.reshape({1})}, {}, 0, RowOp{#ID, BODY});                 \
         else                                                                                            \
             kernels::run_rows({self}, {o}, {}, dim, RowOp{#ID, BODY});                                  \
         op.finish();                                                                                    \
@@ -649,7 +649,7 @@ namespace torch_webgpu::ops
         if (!reduce_ok({grad, output}))                                                                       \
             return FB_F(grad, output, dim, input_dtype);                                                      \
         if (grad.dim() == 0)                                                                                  \
-            kernels::run_rows({grad.view({1}), output.view({1})}, {op.outputs_[0].view({1})}, {}, 0, RowOp{#ID, BODY}); \
+            kernels::run_rows({grad.reshape({1}), output.reshape({1})}, {op.outputs_[0].reshape({1})}, {}, 0, RowOp{#ID, BODY}); \
         else                                                                                                  \
             kernels::run_rows({grad, output}, {op.outputs_[0]}, {}, dim, RowOp{#ID, BODY});                   \
         return std::move(op.outputs_[0]);                                                                     \
@@ -663,7 +663,7 @@ namespace torch_webgpu::ops
             return FB_O(grad, output, dim, input_dtype, out);                                                 \
         const Tensor &o = op.maybe_get_output(0);                                                             \
         if (grad.dim() == 0)                                                                                  \
-            kernels::run_rows({grad.view({1}), output.view({1})}, {o.view({1})}, {}, 0, RowOp{#ID, BODY});    \
+            kernels::run_rows({grad.reshape({1}), output.reshape({1})}, {o.reshape({1})}, {}, 0, RowOp{#ID, BODY});    \
         else                                                                                                  \
             kernels::run_rows({grad, output}, {o}, {}, dim, RowOp{#ID, BODY});                                \
         op.finish();                                                                                          \
@@ -840,7 +840,7 @@ namespace torch_webgpu::ops
                 ct = CT::I32;
             RowOp op{mul ? "cumprod" : "cumsum", mul ? kScanMul : kScan, {}, ct};
             if (self.dim() == 0)
-                kernels::run_rows({self.view({1})}, {out.view({1})}, {}, 0, op);
+                kernels::run_rows({self.reshape({1})}, {out.reshape({1})}, {}, 0, op);
             else
                 kernels::run_rows({self}, {out}, {}, dim, op);
         }

@@ -314,8 +314,8 @@ namespace torch_webgpu::ops
                 TORCH_CHECK_INDEX(idx.numel() == 1, "index_select(): Index to scalar can have only 1 value, got ",
                                   idx.numel(), " value(s)");
                 at::native::resize_output(out, {});
-                Tensor src = self.view({1}).as_strided({1}, {0}, self.storage_offset());
-                Tensor o = out.view({1});
+                Tensor src = self.reshape({1}).as_strided({1}, {0}, self.storage_offset());
+                Tensor o = out.reshape({1});
                 auto iter = index_config().add_output(o).add_const_input(src).add_const_input(idx).build();
                 kernels::run_gather(iter, {1}, {1});
                 return out;
@@ -347,7 +347,7 @@ namespace torch_webgpu::ops
             Tensor idx = index.reshape({-1});
             if (dst.dim() == 0)
             {
-                Tensor d = dst.view({1}).as_strided({1}, {0}, dst.storage_offset());
+                Tensor d = dst.reshape({1}).as_strided({1}, {0}, dst.storage_offset());
                 Tensor src1 = source.reshape({1});
                 auto iter = index_config().add_output(d).add_const_input(src1).add_const_input(idx).build();
                 kernels::run_scatter(iter, {1}, {1}, mode);
@@ -491,8 +491,8 @@ namespace torch_webgpu::ops
             Tensor s = self.expand(shapes), m = mask.expand(shapes);
             if (shapes.empty())
             {
-                s = s.view({1});
-                m = m.view({1});
+                s = s.reshape({1});
+                m = m.reshape({1});
             }
             c10::List<std::optional<Tensor>> idx;
             idx.push_back(m);

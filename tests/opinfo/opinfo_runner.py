@@ -103,6 +103,48 @@ def harness_limited(op):
         op.name.startswith("sparse.") or op.name == "to_sparse"
 
 
+# Ops returning indices into `input` along a dim, where the order among equal
+# values is implementation-defined (CPU's unstable sort and partial-sort topk
+# differ from ours, and from CUDA's). op name -> (index of dim among args,
+# default dim, index of the indices output or None if the result *is* indices).
+TIE_ORDER_OPS = {
+    "sort": (0, -1, 1), "argsort": (0, -1, None), "topk": (1, -1, 1), "kthvalue": (1, -1, 1),
+    "median": (0, None, 1), "nanmedian": (0, None, 1), "mode": (0, -1, 1),
+}
+
+
+def tie_equivalent(op, sample, actual, expected):
+    """True if actual's indices select the same values as expected's."""
+    spec = TIE_ORDER_OPS.get(op.name)
+    if spec is None:
+        return False
+    arg_i, default_dim, out_i = spec
+    x = sample.input
+    dim = sample.args[arg_i] if len(sample.args) > arg_i else sample.kwargs.get("dim", default_dim)
+    if dim is None or x.dim() == 0:
+        return False
+    if out_i is None:
+        ia, ie = actual, expected
+    else:
+        if not isinstance(expected, (tuple, list)):
+            return False
+        try:
+            compare(actual[0], expected[0], 0, 0)
+        except AssertionError:
+            return False
+        ia, ie = actual[out_i], expected[out_i]
+    ia = ia.cpu()
+    if ia.dtype != ie.dtype or ia.shape != ie.shape:
+        return False
+    if ia.dim() < x.dim():  # keepdim=False
+        ia, ie = ia.unsqueeze(dim), ie.unsqueeze(dim)
+    if ia.numel() and (ia.min() < 0 or ia.max() >= x.size(dim)):
+        return False
+    va, ve = x.gather(dim, ia), x.gather(dim, ie)
+    return torch.equal(va, ve) or (va.is_floating_point() and torch.equal(va.isnan(), ve.isnan())
+                                   and torch.equal(va.nan_to_num(0), ve.nan_to_num(0)))
+
+
 def run_op(op, dtype, max_samples=None):
     """Returns (status, message). status in {pass, fail, error, skip}."""
     if nondeterministic(op):
@@ -132,6 +174,8 @@ def run_op(op, dtype, max_samples=None):
             actual = op(di, *da, **dk)
             compare(actual, expected, atol, rtol)
         except AssertionError as e:
+            if tie_equivalent(op, s, actual, expected):
+                continue
             return "fail", f"sample {k}: {str(e)[:300]}"
         except Exception as e:  # noqa: BLE001
             return "error", f"sample {k}: {type(e).__name__}: {str(e).splitlines()[0][:300] if str(e) else ''}"
