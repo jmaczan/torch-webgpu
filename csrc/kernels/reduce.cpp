@@ -9,6 +9,7 @@
 
 #include <c10/util/Exception.h>
 
+#include <algorithm>
 #include <sstream>
 
 namespace torch_webgpu::kernels
@@ -55,6 +56,38 @@ namespace torch_webgpu::kernels
             }
             for (int j = 0; j < nsv * 4; ++j)
                 p.u32(j < static_cast<int>(words.size()) ? words[j] : 0u);
+        }
+
+        // Byte size of `struct Acc` in a storage array (0 if it isn't
+        // host-shareable, e.g. holds a bool).
+        int64_t acc_storage_size(const std::string &acc_struct)
+        {
+            const auto b = acc_struct.find("struct Acc");
+            if (b == std::string::npos)
+                return 0;
+            const auto open = acc_struct.find('{', b), close = acc_struct.find('}', open);
+            const std::string body = acc_struct.substr(open + 1, close - open - 1);
+            int64_t off = 0, align = 4;
+            size_t pos = 0;
+            while ((pos = body.find(':', pos)) != std::string::npos)
+            {
+                size_t e = body.find(',', pos);
+                std::string ty = body.substr(pos + 1, (e == std::string::npos ? body.size() : e) - pos - 1);
+                ty.erase(0, ty.find_first_not_of(' '));
+                ty.erase(ty.find_last_not_of(' ') + 1);
+                int64_t sz;
+                if (ty == "f32" || ty == "i32" || ty == "u32")
+                    sz = 4;
+                else if (ty == "i64" || ty == "vec2<u32>")
+                    sz = 8;
+                else
+                    return 0;
+                off = (off + sz - 1) / sz * sz;
+                off += sz;
+                align = std::max(align, sz);
+                pos = e == std::string::npos ? body.size() : e;
+            }
+            return (off + align - 1) / align * align;
         }
 
         uint32_t elem_offset(const at::Tensor &t)
@@ -200,43 +233,80 @@ namespace torch_webgpu::kernels
                     "torch_webgpu: reduction outputs must not alias");
 
         const int nsv = (2 * static_cast<int>(op.scalars.size()) + 3) / 4;
-        std::ostringstream key;
-        key << "red|" << op.name << '|' << op.acc_struct << op.init << op.step << op.combine << op.out0 << op.out1
-            << '|' << int(op.in_ct) << int(op.out0_ct) << int(op.out1_ct) << '|' << int(in_t) << ',' << int(o0_t)
-            << ',' << int(o1_t) << '|' << NK << NR << wg_mode << has_out1 << nsv;
-        for (auto &s : op.scalars)
-            key << int(s.second);
+        const uint32_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;
 
-        auto make_source = [&]()
+        // Kernel modes:
+        //  0 thread per output, sequential over the reduction (short reductions)
+        //  1 workgroup per output, 256 threads strided over the reduction
+        //  2 split-workgroup stage 1: (output, slice) workgroups -> partial Accs
+        //  3 column stage 1: thread per (output, slice), coalesced across outputs
+        //  4 stage 2 combining partials, workgroup per output (after 2)
+        //  5 stage 2 combining partials, thread per output (after 3)
+        // Few outputs over long reductions (2) or reductions along a strided dim
+        // with contiguous outputs (3) would otherwise starve or uncoalesce the GPU.
+        const int64_t acc_bytes = acc_storage_size(op.acc_struct);
+        const bool column = NK > 0 && kept.back().in_stride == 1 && NRED >= 16 && NOUT >= 256 && acc_bytes > 0;
+        const bool split_wg = !column && wg_mode && NOUT < 1024 && NRED >= 8192 && acc_bytes > 0;
+        int mode = wg_mode ? 1 : 0;
+        uint32_t S = 1, chunk = NRED;
+        if (column)
+        {
+            mode = 3;
+            S = static_cast<uint32_t>(std::clamp<int64_t>((65536 + NOUT - 1) / NOUT, 1, std::max<int64_t>(NRED / 32, 1)));
+            chunk = (NRED + S - 1) / S;
+            S = (NRED + chunk - 1) / chunk;
+        }
+        else if (split_wg)
+        {
+            mode = 2;
+            S = static_cast<uint32_t>(std::clamp<int64_t>((NRED + 4095) / 4096, 1, std::min<uint32_t>(1024, maxd)));
+            chunk = (NRED + S - 1) / S;
+            S = (NRED + chunk - 1) / chunk;
+        }
+        if (S <= 1 && (mode == 2 || mode == 3))
+            mode = wg_mode ? 1 : 0;
+
+        auto source_for = [&](int m)
         {
             std::ostringstream s;
             s << wgsl::prelude() << math_wgsl();
             s << "struct Params {\n"
-                 "  n_out: u32, n_red: u32, row_stride: u32, _p: u32,\n"
+                 "  n_out: u32, n_red: u32, row_stride: u32, chunk: u32,\n"
                  "  off: vec4<u32>,\n"
                  "  k_size: array<vec4<u32>, 2>, k_in: array<vec4<u32>, 2>,\n"
                  "  k_o0: array<vec4<u32>, 2>, k_o1: array<vec4<u32>, 2>,\n"
-                 "  r_size: array<vec4<u32>, 2>, r_in: array<vec4<u32>, 2>,\n";
+                 "  r_size: array<vec4<u32>, 2>, r_in: array<vec4<u32>, 2>,\n"
+                 "  n_split: u32, _q0: u32, _q1: u32, _q2: u32,\n";
             if (nsv)
                 s << "  scalars: array<vec4<u32>, " << nsv << ">,\n";
             s << "};\n";
-            s << "@group(0) @binding(0) var<storage, read> bin: array<u32>;\n";
-            s << "@group(0) @binding(1) var<storage, read_write> bo0: array<" << (wgsl::is_subword(o0_t) ? "atomic<u32>" : "u32") << ">;\n";
-            int pb = 2;
-            if (has_out1)
-            {
-                s << "@group(0) @binding(2) var<storage, read_write> bo1: array<" << (wgsl::is_subword(o1_t) ? "atomic<u32>" : "u32") << ">;\n";
-                pb = 3;
-            }
-            s << "@group(0) @binding(" << pb << ") var<uniform> P: Params;\n";
-            s << wgsl::load_fn("ld_in", "bin", in_t, false);
-            s << wgsl::store_fn("st_o0", "bo0", o0_t);
-            if (has_out1)
-                s << wgsl::store_fn("st_o1", "bo1", o1_t);
+            const bool stage1 = m == 2 || m == 3, stage2 = m == 4 || m == 5;
             const char *IT = wgsl::type_name(op.in_ct);
             std::string lets = scalar_lets(op.scalars);
             s << wgsl::typed_ops(op.in_ct);
             s << op.acc_struct << "\n";
+            int b = 0;
+            if (!stage2)
+                s << "@group(0) @binding(" << b++ << ") var<storage, read> bin: array<u32>;\n";
+            if (stage1)
+                s << "@group(0) @binding(" << b++ << ") var<storage, read_write> part: array<Acc>;\n";
+            if (stage2)
+                s << "@group(0) @binding(" << b++ << ") var<storage, read> part: array<Acc>;\n";
+            if (!stage1)
+            {
+                s << "@group(0) @binding(" << b++ << ") var<storage, read_write> bo0: array<" << (wgsl::is_subword(o0_t) ? "atomic<u32>" : "u32") << ">;\n";
+                if (has_out1)
+                    s << "@group(0) @binding(" << b++ << ") var<storage, read_write> bo1: array<" << (wgsl::is_subword(o1_t) ? "atomic<u32>" : "u32") << ">;\n";
+            }
+            s << "@group(0) @binding(" << b << ") var<uniform> P: Params;\n";
+            if (!stage2)
+                s << wgsl::load_fn("ld_in", "bin", in_t, false);
+            if (!stage1)
+            {
+                s << wgsl::store_fn("st_o0", "bo0", o0_t);
+                if (has_out1)
+                    s << wgsl::store_fn("st_o1", "bo1", o1_t);
+            }
             s << "fn acc_init() -> Acc {\n" << lets << op.init << "\n}\n";
             s << "fn acc_step(a: Acc, x: " << IT << ", r: u32) -> Acc {\n" << lets << op.step << "\n}\n";
             s << "fn acc_combine(a: Acc, b: Acc) -> Acc {\n" << lets << op.combine << "\n}\n";
@@ -274,80 +344,175 @@ namespace torch_webgpu::kernels
                 if (has_out1)
                     s << "        st_o1(o1, " << wgsl::convert(std::string("acc_out1(") + acc + ", P.n_red)", op.out1_ct, wgsl::compute_type(o1_t)) << ");\n";
             };
-
-            if (wg_mode)
+            auto emit_tree = [&]()
             {
-                s << "var<workgroup> sh: array<Acc, " << kWG << ">;\n";
-                s << "@compute @workgroup_size(" << kWG << ")\n"
-                  << "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,\n"
-                  << "        @builtin(num_workgroups) nwg: vec3<u32>) {\n";
-                emit_prologue("wid.x + wid.y * nwg.x");
-                s << "    if (o >= P.n_out) { return; }\n"
-                  << "    var acc = acc_init();\n"
-                  << "    for (var r = lid.x; r < P.n_red; r += " << kWG << "u) {\n"
-                  << "        acc = acc_step(acc, " << load << ", r);\n"
-                  << "    }\n"
-                  << "    sh[lid.x] = acc;\n    workgroupBarrier();\n"
+                s << "    sh[lid.x] = acc;\n    workgroupBarrier();\n"
                   << "    for (var st = " << kWG / 2 << "u; st > 0u; st = st >> 1u) {\n"
                   << "        if (lid.x < st) { sh[lid.x] = acc_combine(sh[lid.x], sh[lid.x + st]); }\n"
-                  << "        workgroupBarrier();\n    }\n"
-                  << "    if (lid.x == 0u) {\n        let res = sh[0];\n";
-                emit_store("res");
-                s << "    }\n}\n";
-            }
-            else
+                  << "        workgroupBarrier();\n    }\n";
+            };
+            const char *wg_main = "@compute @workgroup_size(256)\n"
+                                  "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,\n"
+                                  "        @builtin(num_workgroups) nwg: vec3<u32>) {\n";
+            const char *th_main = "@compute @workgroup_size(256)\n"
+                                  "fn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n";
+            switch (m)
             {
-                s << "@compute @workgroup_size(" << kWG << ")\n"
-                  << "fn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n";
+            case 0:
+                s << th_main;
                 emit_prologue("gid.x + gid.y * P.row_stride");
                 s << "    if (o >= P.n_out) { return; }\n"
                   << "    var acc = acc_init();\n"
-                  << "    for (var r = 0u; r < P.n_red; r++) {\n"
-                  << "        acc = acc_step(acc, " << load << ", r);\n"
-                  << "    }\n    {\n";
+                  << "    for (var r = 0u; r < P.n_red; r++) { acc = acc_step(acc, " << load << ", r); }\n    {\n";
                 emit_store("acc");
                 s << "    }\n}\n";
+                break;
+            case 1:
+                s << "var<workgroup> sh: array<Acc, " << kWG << ">;\n" << wg_main;
+                emit_prologue("wid.x + wid.y * nwg.x");
+                s << "    if (o >= P.n_out) { return; }\n"
+                  << "    var acc = acc_init();\n"
+                  << "    for (var r = lid.x; r < P.n_red; r += " << kWG << "u) { acc = acc_step(acc, " << load << ", r); }\n";
+                emit_tree();
+                s << "    if (lid.x == 0u) {\n        let res = sh[0];\n";
+                emit_store("res");
+                s << "    }\n}\n";
+                break;
+            case 2:
+                s << "var<workgroup> sh: array<Acc, " << kWG << ">;\n" << wg_main;
+                emit_prologue("wid.x");
+                s << "    let sl = wid.y;\n"
+                  << "    let r0 = sl * P.chunk;\n    let r1 = min(r0 + P.chunk, P.n_red);\n"
+                  << "    var acc = acc_init();\n"
+                  << "    for (var r = r0 + lid.x; r < r1; r += " << kWG << "u) { acc = acc_step(acc, " << load << ", r); }\n";
+                emit_tree();
+                s << "    if (lid.x == 0u) { part[o * P.n_split + sl] = sh[0]; }\n}\n";
+                break;
+            case 3:
+                s << th_main
+                  << "    let tid = gid.x + gid.y * P.row_stride;\n"
+                  << "    if (tid >= P.n_out * P.n_split) { return; }\n"
+                  << "    let sl = tid / P.n_out;\n";
+                emit_prologue("tid % P.n_out");
+                s << "    let r0 = sl * P.chunk;\n    let r1 = min(r0 + P.chunk, P.n_red);\n"
+                  << "    var acc = acc_init();\n"
+                  << "    for (var r = r0; r < r1; r++) { acc = acc_step(acc, " << load << ", r); }\n"
+                  << "    part[o * P.n_split + sl] = acc;\n}\n";
+                break;
+            case 4:
+                s << "var<workgroup> sh: array<Acc, " << kWG << ">;\n" << wg_main;
+                emit_prologue("wid.x");
+                s << "    var acc = acc_init();\n"
+                  << "    for (var j = lid.x; j < P.n_split; j += " << kWG << "u) { acc = acc_combine(acc, part[o * P.n_split + j]); }\n";
+                emit_tree();
+                s << "    if (lid.x == 0u) {\n        let res = sh[0];\n";
+                emit_store("res");
+                s << "    }\n}\n";
+                break;
+            default: // 5
+                s << th_main;
+                emit_prologue("gid.x + gid.y * P.row_stride");
+                s << "    if (o >= P.n_out) { return; }\n"
+                  << "    var acc = acc_init();\n"
+                  << "    for (var j = 0u; j < P.n_split; j++) { acc = acc_combine(acc, part[o * P.n_split + j]); }\n    {\n";
+                emit_store("acc");
+                s << "    }\n}\n";
+                break;
             }
             return s.str();
         };
-
-        const auto &pipeline = core::get_pipeline(key.str(), make_source, op.name.c_str());
-
-        core::Grid grid;
-        if (wg_mode)
+        auto pipeline_for = [&](int m) -> const core::Pipeline &
         {
-            const uint32_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;
-            grid.x = std::min(NOUT, maxd);
-            grid.y = (NOUT + grid.x - 1) / grid.x;
-            grid.row_stride = 0;
-        }
-        else
+            std::ostringstream key;
+            key << "red|" << op.name << '|' << op.acc_struct << op.init << op.step << op.combine << op.out0 << op.out1
+                << '|' << int(op.in_ct) << int(op.out0_ct) << int(op.out1_ct) << '|' << int(in_t) << ',' << int(o0_t)
+                << ',' << int(o1_t) << '|' << NK << NR << m << has_out1 << nsv;
+            for (auto &sc : op.scalars)
+                key << int(sc.second);
+            return core::get_pipeline(key.str(), [&] { return source_for(m); }, op.name.c_str());
+        };
+        auto grid_for = [&](int m) -> core::Grid
         {
-            grid = core::grid_1d(NOUT, kWG);
-        }
+            core::Grid g;
+            if (m == 1 || m == 4)
+            {
+                g.x = std::min(NOUT, maxd);
+                g.y = (NOUT + g.x - 1) / g.x;
+                g.row_stride = 0;
+            }
+            else if (m == 2)
+            {
+                TORCH_CHECK(NOUT <= maxd, "torch_webgpu: reduction has too many outputs for split mode");
+                g.x = NOUT;
+                g.y = S;
+            }
+            else if (m == 3)
+                g = core::grid_1d(static_cast<uint64_t>(NOUT) * S, kWG);
+            else
+                g = core::grid_1d(NOUT, kWG);
+            return g;
+        };
 
         const auto w_in = core::window_of(input), w_o0 = core::window_of(out0);
         const auto w_o1 = has_out1 ? core::window_of(out1) : core::Window{};
-        core::Params p;
-        p.u32(NOUT).u32(NRED).u32(grid.row_stride).u32(0);
-        p.u32(w_in.offset).u32(w_o0.offset).u32(has_out1 ? w_o1.offset : 0).u32(0);
-        auto put = [&](auto getter, size_t n)
+        auto params_for = [&](const core::Grid &grid)
         {
-            for (size_t d = 0; d < 8; ++d)
-                p.u32(d < n ? getter(d) : 1u);
+            core::Params p;
+            p.u32(NOUT).u32(NRED).u32(grid.row_stride).u32(chunk);
+            p.u32(w_in.offset).u32(w_o0.offset).u32(has_out1 ? w_o1.offset : 0).u32(0);
+            auto put = [&](auto getter, size_t n)
+            {
+                for (size_t d = 0; d < 8; ++d)
+                    p.u32(d < n ? getter(d) : 1u);
+            };
+            put([&](size_t d) { return u32_of(kept[d].size, "size"); }, kept.size());
+            put([&](size_t d) { return u32_of(kept[d].in_stride, "stride"); }, kept.size());
+            put([&](size_t d) { return u32_of(kept[d].out0_stride, "stride"); }, kept.size());
+            put([&](size_t d) { return u32_of(kept[d].out1_stride, "stride"); }, kept.size());
+            put([&](size_t d) { return u32_of(red[d].size, "size"); }, red.size());
+            put([&](size_t d) { return u32_of(red[d].stride, "stride"); }, red.size());
+            p.u32(S).u32(0).u32(0).u32(0);
+            put_scalars(p, op.scalars, nsv);
+            return p;
         };
-        put([&](size_t d) { return u32_of(kept[d].size, "size"); }, kept.size());
-        put([&](size_t d) { return u32_of(kept[d].in_stride, "stride"); }, kept.size());
-        put([&](size_t d) { return u32_of(kept[d].out0_stride, "stride"); }, kept.size());
-        put([&](size_t d) { return u32_of(kept[d].out1_stride, "stride"); }, kept.size());
-        put([&](size_t d) { return u32_of(red[d].size, "size"); }, red.size());
-        put([&](size_t d) { return u32_of(red[d].stride, "stride"); }, red.size());
-        put_scalars(p, op.scalars, nsv);
+        auto out_bufs = [&]()
+        {
+            std::vector<core::BufferBinding> b{w_o0.binding};
+            if (has_out1)
+                b.push_back(w_o1.binding);
+            return b;
+        };
 
-        std::vector<core::BufferBinding> bufs{w_in.binding, w_o0.binding};
-        if (has_out1)
-            bufs.push_back(w_o1.binding);
-        core::launch(pipeline, bufs, p.data(), p.size(), grid);
+        if (mode == 0 || mode == 1)
+        {
+            const auto &pipeline = pipeline_for(mode);
+            auto grid = grid_for(mode);
+            auto p = params_for(grid);
+            std::vector<core::BufferBinding> bufs{w_in.binding};
+            for (auto &b : out_bufs())
+                bufs.push_back(b);
+            core::launch(pipeline, bufs, p.data(), p.size(), grid);
+            return;
+        }
+        // Two stages through partial accumulators.
+        at::Tensor part = at::empty({static_cast<int64_t>(NOUT) * S * acc_bytes / 4}, input.options().dtype(at::kInt));
+        const auto w_part = core::window_of(part);
+        {
+            const auto &pipeline = pipeline_for(mode);
+            auto grid = grid_for(mode);
+            auto p = params_for(grid);
+            core::launch(pipeline, {w_in.binding, w_part.binding}, p.data(), p.size(), grid);
+        }
+        {
+            const int m2 = mode == 2 ? 4 : 5;
+            const auto &pipeline = pipeline_for(m2);
+            auto grid = grid_for(m2);
+            auto p = params_for(grid);
+            std::vector<core::BufferBinding> bufs{w_part.binding};
+            for (auto &b : out_bufs())
+                bufs.push_back(b);
+            core::launch(pipeline, bufs, p.data(), p.size(), grid);
+        }
     }
 
     // ------------------------------------------------------------- rows
