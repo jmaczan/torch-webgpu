@@ -123,16 +123,38 @@ namespace torch_webgpu::core
     }
 
     void Stream::dispatch(const wgpu::ComputePipeline &pipeline, const wgpu::BindGroup &bind_group,
-                          uint32_t x, uint32_t y, uint32_t z)
+                          uint32_t x, uint32_t y, uint32_t z, const std::string *label)
     {
         if (x == 0 || y == 0 || z == 0)
             return;
         auto &ctx = Context::get();
         std::lock_guard<std::recursive_mutex> g(ctx.mutex());
-        auto &p = pass();
-        p.SetPipeline(pipeline);
-        p.SetBindGroup(0, bind_group);
-        p.DispatchWorkgroups(x, y, z);
+        if (profiling_)
+        {
+            if (queries_used_ + 2 > query_capacity_)
+                flush_locked();
+            end_pass();
+            wgpu::PassTimestampWrites tw{};
+            tw.querySet = query_set_;
+            tw.beginningOfPassWriteIndex = queries_used_;
+            tw.endOfPassWriteIndex = queries_used_ + 1;
+            wgpu::ComputePassDescriptor desc{};
+            desc.timestampWrites = &tw;
+            wgpu::ComputePassEncoder p = encoder().BeginComputePass(&desc);
+            p.SetPipeline(pipeline);
+            p.SetBindGroup(0, bind_group);
+            p.DispatchWorkgroups(x, y, z);
+            p.End();
+            queries_used_ += 2;
+            open_records_.push_back({label ? *label : std::string("?"), x, y, z, 0.0});
+        }
+        else
+        {
+            auto &p = pass();
+            p.SetPipeline(pipeline);
+            p.SetBindGroup(0, bind_group);
+            p.DispatchWorkgroups(x, y, z);
+        }
         ++pending_dispatches_;
         ++pending_commands_;
         ++total_dispatches_;
@@ -231,10 +253,88 @@ namespace torch_webgpu::core
         }
     }
 
+    void Stream::start_profiling()
+    {
+        auto &ctx = Context::get();
+        std::lock_guard<std::recursive_mutex> g(ctx.mutex());
+        TORCH_CHECK(ctx.has_timestamp_query(),
+                    "torch_webgpu: profiling needs the timestamp-query feature, which this adapter lacks");
+        flush_locked();
+        if (!query_set_)
+        {
+            query_capacity_ = 4096;
+            wgpu::QuerySetDescriptor desc{};
+            desc.label = "torch_webgpu profiler";
+            desc.type = wgpu::QueryType::Timestamp;
+            desc.count = query_capacity_;
+            query_set_ = ctx.device().CreateQuerySet(&desc);
+        }
+        profile_batches_.clear();
+        open_records_.clear();
+        queries_used_ = 0;
+        profiling_ = true;
+    }
+
+    void Stream::resolve_queries_locked()
+    {
+        if (queries_used_ == 0)
+            return;
+        auto &ctx = Context::get();
+        const uint64_t bytes = uint64_t(queries_used_) * 8;
+        wgpu::BufferDescriptor rdesc{};
+        rdesc.label = "torch_webgpu profiler resolve";
+        rdesc.usage = wgpu::BufferUsage::QueryResolve | wgpu::BufferUsage::CopySrc;
+        rdesc.size = bytes;
+        wgpu::Buffer resolve = ctx.device().CreateBuffer(&rdesc);
+        wgpu::BufferDescriptor bdesc{};
+        bdesc.label = "torch_webgpu profiler readback";
+        bdesc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
+        bdesc.size = bytes;
+        wgpu::Buffer readback = ctx.device().CreateBuffer(&bdesc);
+        encoder().ResolveQuerySet(query_set_, 0, queries_used_, resolve, 0);
+        encoder().CopyBufferToBuffer(resolve, 0, readback, 0, bytes);
+        ++pending_commands_;
+        profile_batches_.push_back({readback, std::move(open_records_)});
+        open_records_.clear();
+        queries_used_ = 0;
+    }
+
+    std::vector<Stream::ProfileRecord> Stream::stop_profiling()
+    {
+        auto &ctx = Context::get();
+        std::lock_guard<std::recursive_mutex> g(ctx.mutex());
+        TORCH_CHECK(profiling_, "torch_webgpu: profiling was not started");
+        synchronize();
+        profiling_ = false;
+        std::vector<ProfileRecord> out;
+        for (auto &b : profile_batches_)
+        {
+            const uint64_t bytes = b.records.size() * 16;
+            bool ok = false;
+            ctx.wait(b.readback.MapAsync(wgpu::MapMode::Read, 0, bytes, wgpu::CallbackMode::WaitAnyOnly,
+                                         [&](wgpu::MapAsyncStatus status, wgpu::StringView)
+                                         { ok = status == wgpu::MapAsyncStatus::Success; }));
+            TORCH_CHECK(ok, "torch_webgpu: failed to read profiler timestamps");
+            const uint64_t *ts = static_cast<const uint64_t *>(b.readback.GetConstMappedRange(0, bytes));
+            for (size_t i = 0; i < b.records.size(); ++i)
+            {
+                ProfileRecord r = std::move(b.records[i]);
+                const uint64_t t0 = ts[2 * i], t1 = ts[2 * i + 1];
+                r.gpu_us = t1 > t0 ? double(t1 - t0) / 1000.0 : 0.0;
+                out.push_back(std::move(r));
+            }
+            b.readback.Unmap();
+        }
+        profile_batches_.clear();
+        return out;
+    }
+
     void Stream::flush_locked()
     {
         auto &ctx = Context::get();
         end_pass();
+        if (profiling_)
+            resolve_queries_locked();
         if (pending_commands_ == 0 && !encoder_)
         {
             ctx.check_errors();

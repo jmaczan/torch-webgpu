@@ -78,4 +78,4 @@ def test_suites_under_spec_default_limits(target):
     if "opinfo" in target:
         args += ["-k", "float32"]
     out = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True, timeout=1800)
-    assert out.returncode == 0, out.stdout[-3000:]
+    assert out.returncode == 0, f"rc={out.returncode}\n{out.stdout[-3000:]}\n{out.stderr[-3000:]}"

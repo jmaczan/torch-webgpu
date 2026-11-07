@@ -1,120 +1,76 @@
 # Using torch.compile
 
-The `torch.compile` backend is the recommended way to run models on WebGPU. It traces your model and optimizes it for WebGPU execution.
-
-## Basic Usage
+`torch.compile` works on webgpu tensors with PyTorch's default compiler,
+Inductor. torch-webgpu registers an Inductor backend for the `webgpu`
+device that generates fused WGSL compute shaders:
 
 ```python
 import torch
-from torch_webgpu.compiler.webgpu_compiler import webgpu_backend
+import torch_webgpu  # registers the device and the compiler backend
 
-# Compile a function
-@torch.compile(backend=webgpu_backend)
-def my_function(x, y):
-    return torch.relu(x @ y)
+model = MyModel().to("webgpu")
+compiled = torch.compile(model)          # no backend argument needed
 
-# Or compile a model
-model = MyModel()
-compiled_model = torch.compile(model, backend=webgpu_backend)
-```
-
-## How It Works
-
-1. **Tracing** - PyTorch traces your function/model to create an FX graph
-2. **IR Conversion** - The graph is converted to torch-webgpu's IR
-3. **Lowering** - IR is lowered to WebGPU operations
-4. **Execution** - Operations run on WebGPU
-
-```
-PyTorch Model → FX Graph → High IR → Low IR → WebGPU Ops
-```
-
-## Compiling Models
-
-```python
-import torch.nn as nn
-from torch_webgpu.compiler.webgpu_compiler import webgpu_backend
-
-class MyModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.linear = nn.Linear(512, 256)
-
-    def forward(self, x):
-        return torch.relu(self.linear(x))
-
-model = MyModel()
-model.eval()  # Important: set to eval mode
-
-# Compile
-compiled = torch.compile(model, backend=webgpu_backend)
-
-# Run
 with torch.no_grad():
-    output = compiled(torch.randn(1, 512))
+    out = compiled(torch.randn(8, 512, device="webgpu"))
 ```
 
-## Compiler Options
+Training works too: forward, backward and optimizer steps are compiled
+(`torch.compile(train_step)`).
+
+## What it does
+
+* **Fusion.** Chains of pointwise ops, reductions (sum, mean, max, argmax,
+  var / Welford, softmax, norms) and their epilogues become single WGSL
+  kernels: one dispatch where eager mode would launch one per op.
+* **Every dtype eager supports.** float32 math for float32 / float16 /
+  bfloat16 (rounded on store), exact int64 (emulated), int32, the narrow
+  integer types and bool. float64 has no WGSL type; graph nodes using it run
+  eagerly (through the CPU fallback), like in eager mode.
+* **Matrix products** use the eager kernels (tiled GEMM, vectorized GEMV).
+  Decode-size linear layers that read the same input (attention q / k / v,
+  MLP gate / up) are merged into one multi-weight GEMV dispatch.
+* **NaN / Inf semantics** match eager PyTorch inside fused kernels even
+  though GPU drivers compile shaders with fast-math (special constants and
+  divisions are kept opaque to the driver's optimizer).
+* **Indexing** (gather, embedding, index_put with accumulate via atomics)
+  reports out-of-bounds indices as `IndexError` at the next synchronization,
+  as eager mode does.
+* **Random numbers** (dropout, rand / randn) use a Philox generator inside
+  the kernels.
+
+Compiled graphs are cached by Inductor's FX graph cache; the cache key
+includes the backend's code, so upgrades invalidate stale entries.
+
+## Performance tips
+
+* Small-batch LLM decoding is bound by reading the weights; compiled decode
+  of Qwen2.5-0.5B runs in about 2 ms per token on an RTX 5090 (3x eager).
+* Shapes that change every call (growing sequence lengths) recompile; use
+  `dynamic=True` or a static KV cache.
+* Find hot kernels with the GPU profiler:
 
 ```python
-# Dynamic shapes (for variable input sizes)
-compiled = torch.compile(model, backend=webgpu_backend, dynamic=True)
-
-# Disable for debugging
-compiled = torch.compile(model, backend=webgpu_backend, disable=True)
+with torch.webgpu.profiler.profile() as prof:
+    compiled(x)
+print(prof.table())        # per-kernel GPU time from timestamp queries
 ```
 
-## What Gets Compiled
+## Inspecting generated code
 
-The compiler handles:
-
-- ✅ Linear layers
-- ✅ Activations (ReLU, SiLU, GELU, etc.)
-- ✅ Normalization (LayerNorm, RMSNorm)
-- ✅ Attention (scaled_dot_product_attention)
-- ✅ Embeddings
-- ✅ Element-wise ops (add, mul, div, etc.)
-- ✅ Reductions (sum, mean, max, etc.)
-- ✅ Shape ops (view, reshape, transpose, etc.)
-
-## Debugging
-
-Enable debug output to see what's happening:
-
-```python
-# In lowering.py, set:
-DEBUG_LOWERING = True
+```bash
+TORCH_LOGS=output_code python my_script.py     # wrapper + WGSL sources
+TORCH_WEBGPU_DUMP_SHADERS=/tmp/wgsl python my_script.py   # every compiled shader as a .wgsl file
 ```
 
-This prints shape information for each operation.
+Environment knobs:
 
-## Common Issues
+| Variable | Effect |
+|----------|--------|
+| `TORCH_WEBGPU_NO_LINEAR_FUSION=1` | Keep parallel linear layers as separate GEMVs. |
 
-### Graph Break
+## Legacy compiler
 
-If you see "graph break", some operation isn't supported:
-
-```python
-# This may cause a graph break
-def forward(self, x):
-    if x.sum() > 0:  # Dynamic condition - graph break!
-        return x * 2
-    return x
-```
-
-Solution: Keep control flow static.
-
-### Unsupported Op
-
-```
-Unsupported FX op: some_op
-```
-
-The operation isn't implemented yet. Check [Supported Ops](ops.md) or open an issue.
-
-## Performance Tips
-
-1. **Use eval mode** - `model.eval()` before compiling
-2. **Use no_grad** - `with torch.no_grad():` for inference
-3. **Warm up** - First run compiles; subsequent runs are faster
-4. **Batch inputs** - Larger batches are more efficient
+`torch_webgpu.compiler.webgpu_backend` is the original experimental
+compiler (FX graph -> custom IR -> eager ops). It is kept for
+compatibility; the Inductor path above is faster and covers all ops.

@@ -21,6 +21,7 @@ namespace torch_webgpu::core
     {
         wgpu::ComputePipeline pipeline;
         wgpu::BindGroupLayout layout;
+        std::string label; // kernel name in profiles
     };
 
     // Returns the pipeline for `key`, building it from `make_source()` on a

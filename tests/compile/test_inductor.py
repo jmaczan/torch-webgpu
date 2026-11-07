@@ -138,7 +138,7 @@ def test_integer(name):
 
 def test_indexing():
     emb = torch.randn(50, 16)
-    idx = torch.randint(-50, 50, (8, 9))
+    idx = torch.randint(-49, 50, (8, 9))
     compare(lambda e, i: F.embedding(i.abs(), e) * 2, emb, idx)
     compare(lambda e, i: e[i] + 1, emb, idx)  # negative indices wrap
     compare(lambda a, i: torch.gather(a, 1, i), X, torch.randint(0, 129, (37, 5)))
@@ -278,3 +278,34 @@ def test_transformer_block():
         ref = layer(x)
         out = torch.compile(copy.deepcopy(layer).to(D))(x.to(D))
     torch.testing.assert_close(out.cpu(), ref, atol=1e-4, rtol=1e-4)
+
+
+def test_parallel_linears_fused():
+    """Decode-size linears on one input (q / k / v, gate / up) run as one
+    multi_gemv dispatch each, with the results unchanged."""
+
+    class Block(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.q, self.k, self.v = nn.Linear(64, 64), nn.Linear(64, 16), nn.Linear(64, 16)
+            self.gate, self.up = nn.Linear(64, 128, bias=False), nn.Linear(64, 128, bias=False)
+            self.down = nn.Linear(128, 64, bias=False)
+
+        def forward(self, x):
+            h = x * 2
+            a = self.q(h) + self.k(h).repeat(1, 4) * self.v(h).repeat(1, 4)
+            return a + self.down(F.silu(self.gate(a)) * self.up(a))
+
+    torch.manual_seed(0)
+    m = Block()
+    md = copy.deepcopy(m).to(D)
+    cm = torch.compile(md)
+    for rows in (1, 5):
+        x = torch.randn(rows, 64)
+        torch.testing.assert_close(cm(x.to(D)).cpu(), m(x), atol=1e-4, rtol=1e-4)
+    if torch.webgpu.profiler.is_supported():
+        with torch.webgpu.profiler.profile() as p:
+            cm(torch.randn(1, 64, device=D))
+        names = [r.name for r in p.records]
+        assert names.count("multi_gemv") == 2, names
+        assert names.count("gemv4") == 1, names  # down projection

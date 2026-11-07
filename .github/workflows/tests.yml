@@ -32,13 +32,25 @@ jobs:
         with:
           path: dawn-install
           key: dawn-linux-gl-${{ env.DAWN_REV }}-${{ hashFiles('scripts/build-dawn.sh') }}
-      - name: Build Dawn
+      - name: Install toolchain
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang ninja-build cmake libx11-dev libx11-xcb-dev libxcb1-dev \
+          sudo apt-get install -y ninja-build cmake libx11-dev libx11-xcb-dev libxcb1-dev \
             libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl-dev libegl-dev libgles-dev
-          CC=clang CXX=clang++ DAWN_ENABLE_GL=ON ./scripts/build-dawn.sh dawn-install
+          # Dawn is developed against recent clang (as its own bots use); build
+          # with a current release rather than the distribution's clang 18.
+          wget -q https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 20
+          clang++-20 --version; cmake --version; ninja --version
+      - name: Build Dawn
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          CC: clang-20
+          CXX: clang++-20
+          CMAKE_GENERATOR: Ninja
+          DAWN_ENABLE_GL: "ON"
+        run: ./scripts/build-dawn.sh dawn-install
       - uses: actions/upload-artifact@v4
         with:
           name: dawn-install

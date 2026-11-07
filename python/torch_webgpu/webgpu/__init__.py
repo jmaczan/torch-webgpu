@@ -328,3 +328,5 @@ class Event:
         if self._time_ns is None or end_event._time_ns is None:
             raise RuntimeError("Both events must be recorded before calling elapsed_time")
         return (end_event._time_ns - self._time_ns) / 1e6
+
+from . import profiler  # noqa: E402,F401

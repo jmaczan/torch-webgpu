@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+#include <vector>
 // Command stream: batches GPU work into one command encoder.
 //
 // Kernels are recorded into a single open compute pass and only submitted
@@ -41,7 +43,7 @@ namespace torch_webgpu::core
 
         // Records a compute dispatch.
         void dispatch(const wgpu::ComputePipeline &pipeline, const wgpu::BindGroup &bind_group,
-                      uint32_t x, uint32_t y = 1, uint32_t z = 1);
+                      uint32_t x, uint32_t y = 1, uint32_t z = 1, const std::string *label = nullptr);
 
         // Records a buffer->buffer copy. Offsets/size must be multiples of 4.
         void copy_buffer(const wgpu::Buffer &src, uint64_t src_offset, const wgpu::Buffer &dst,
@@ -71,6 +73,20 @@ namespace torch_webgpu::core
         uint64_t total_dispatches() const { return total_dispatches_; }
         uint64_t total_submits() const { return total_submits_; }
 
+        // GPU timing of every dispatch with timestamp queries (needs the
+        // timestamp-query feature). While profiling, each dispatch gets its
+        // own compute pass, which adds a little overhead of its own.
+        struct ProfileRecord
+        {
+            std::string label;
+            uint32_t x = 0, y = 0, z = 0; // workgroups
+            double gpu_us = 0.0;
+        };
+        void start_profiling();
+        // Synchronizes and returns the records since start_profiling().
+        std::vector<ProfileRecord> stop_profiling();
+        bool profiling() const { return profiling_; }
+
     private:
         Stream();
         wgpu::CommandEncoder &encoder();
@@ -97,5 +113,18 @@ namespace torch_webgpu::core
         size_t arena_used_ = 0;
         size_t arena_capacity_;
         size_t uniform_align_;
+
+        bool profiling_ = false;
+        wgpu::QuerySet query_set_;
+        uint32_t query_capacity_ = 0;
+        uint32_t queries_used_ = 0;              // in the open encoder
+        std::vector<ProfileRecord> open_records_; // dispatches in the open encoder
+        struct ProfileBatch
+        {
+            wgpu::Buffer readback;
+            std::vector<ProfileRecord> records;
+        };
+        std::vector<ProfileBatch> profile_batches_;
+        void resolve_queries_locked();
     };
 }

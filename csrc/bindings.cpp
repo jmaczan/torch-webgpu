@@ -90,6 +90,16 @@ PYBIND11_MODULE(_C, m)
               d["pipelines"] = core::pipeline_cache_size();
               return d; });
     m.def("_fallback_ops", &ops::fallback_ops_seen);
+    m.def("_profiler_start", []
+          { core::Stream::get().start_profiling(); });
+    m.def("_profiler_stop", []
+          {
+              py::list out;
+              for (auto &r : core::Stream::get().stop_profiling())
+                  out.append(py::make_tuple(r.label, py::make_tuple(r.x, r.y, r.z), r.gpu_us));
+              return out; });
+    m.def("_profiler_supported", []
+          { return core::Context::get().has_timestamp_query(); });
 
     // Runs a WGSL compute shader. Tensors are bound as storage buffers at
     // @binding(0..n-1) (whole buffers; use storage_offset in the shader),

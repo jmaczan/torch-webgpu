@@ -1,6 +1,7 @@
 """Shared pytest configuration for the torch-webgpu suites.
 
-* Every test ends with a device synchronization, so asynchronous device
+* Every test starts from a seed derived from its node id (results don't
+  depend on test order) and ends with a device synchronization, so asynchronous device
   errors (WebGPU validation errors, out-of-bounds index flags, device loss)
   fail the test that caused them instead of a later, unrelated one.
 * `no_fallback` / `@pytest.mark.no_fallback` fail a test whose ops ran
@@ -10,6 +11,8 @@
 """
 
 import os
+import random
+import zlib
 
 import pytest
 import torch
@@ -52,7 +55,12 @@ def model_cached(model_id: str) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def _device_sync_after_test():
+def _device_sync_after_test(request):
+    # Order-independent randomness: each test starts from a seed derived
+    # from its own id, whatever ran before it.
+    seed = zlib.crc32(request.node.nodeid.encode())
+    torch.manual_seed(seed)
+    random.seed(seed)
     yield
     # Raises pending device errors here, inside the test that caused them.
     torch.webgpu.synchronize()

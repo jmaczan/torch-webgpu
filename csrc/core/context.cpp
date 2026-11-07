@@ -223,6 +223,9 @@ namespace torch_webgpu::core
         const char *lazy = std::getenv("TORCH_WEBGPU_LAZY_CLEAR");
         if (!(lazy && std::string(lazy) == "1"))
             disabled_storage.push_back("lazy_clear_resource_on_first_use");
+        // Full-precision GPU timestamps for the profiler (quantization is a
+        // browser fingerprinting defense).
+        disabled_storage.push_back("timestamp_quantization");
         for (auto &t : disabled_storage)
             disabled.push_back(t.c_str());
         wgpu::DawnTogglesDescriptor toggles_desc{};

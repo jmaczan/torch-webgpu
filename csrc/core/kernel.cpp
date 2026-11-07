@@ -75,7 +75,7 @@ namespace torch_webgpu::core
                 TORCH_CHECK(false, "torch_webgpu: failed to compile kernel '", label, "':\n", error,
                             debug_enabled() ? std::string("\n--- source ---\n") + source : std::string("(set TORCH_WEBGPU_DEBUG=1 to print the shader source)"));
             }
-            return Pipeline{pipeline, pipeline.GetBindGroupLayout(0)};
+            return Pipeline{pipeline, pipeline.GetBindGroupLayout(0), label};
         }
     }
 
@@ -160,6 +160,6 @@ namespace torch_webgpu::core
         desc.entryCount = entries.size();
         desc.entries = entries.data();
         wgpu::BindGroup bg = ctx.device().CreateBindGroup(&desc);
-        stream.dispatch(p.pipeline, bg, grid.x, grid.y, grid.z);
+        stream.dispatch(p.pipeline, bg, grid.x, grid.y, grid.z, &p.label);
     }
 }
