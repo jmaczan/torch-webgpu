@@ -359,6 +359,154 @@ namespace torch_webgpu::kernels
         return tpr;
     }
 
+    // Vectorized GEMV for x @ W with W contiguous along N (HF Conv1D,
+    // x @ weight): each thread owns a quad of output columns (vec4 loads)
+    // for a slice of K; QC quads x G K-groups per workgroup, QC shrinking
+    // for narrow N so enough workgroups are in flight. M <= 4 (the K-group
+    // reduction keeps 256 * M vec4 in shared memory).
+    bool launch_gemv_vec4_n(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
+                            const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias)
+    {
+        const int64_t B = out.size(0), M = out.size(1), N = out.size(2), K = a.size(2);
+        if (M > 4 || a.scalar_type() != at::kFloat || w.scalar_type() != at::kFloat || N % 4 != 0)
+            return false;
+        if (w.stride(2) != 1 || w.stride(1) % 4 != 0 || (B > 1 && w.stride(0) % 4 != 0))
+            return false;
+        const auto ta = a.scalar_type(), to = out.scalar_type();
+        const auto tb = has_bias ? bias.scalar_type() : to;
+
+        core::BindingSet bs;
+        const int out_r = bs.add(out, true);
+        const int a_r = bs.add(a), w_r = bs.add(w);
+        const int bias_r = has_bias ? bs.add(bias) : -1;
+        bs.finalize();
+        const int out_b = bs.binding(out_r), a_b = bs.binding(a_r), w_b = bs.binding(w_r);
+        const int bias_b = has_bias ? bs.binding(bias_r) : -1;
+        const auto &binds = bs.bindings();
+        if (w_b == a_b || w_b == out_b || w_b == bias_b || a_b == out_b || bias_b == out_b)
+            return false;
+        if (bs.offset(w_r) % 4 != 0)
+            return false;
+
+        const int64_t quads = N / 4;
+        uint32_t qc = 64;
+        while (qc > 4 && (quads + qc - 1) / qc < 128)
+            qc /= 2;
+        const uint32_t groups = 256 / qc;
+
+        std::ostringstream key;
+        key << "gemv4n|" << M << '|' << qc << '|' << int(ta) << int(to) << int(tb) << has_bias << '|' << a_b << w_b
+            << bias_b << out_b << binds.size();
+        auto make_source = [&]()
+        {
+            std::ostringstream s;
+            s << wgsl::prelude();
+            s << "struct Params {\n"
+                 "  M: u32, N: u32, K: u32, _p: u32,\n"
+                 "  off: vec4<u32>,\n"
+                 "  sa: vec4<u32>, sw: vec4<u32>, so: vec4<u32>, sb: vec4<u32>,\n"
+                 "  alpha: u32, beta: u32, _q0: u32, _q1: u32,\n"
+                 "};\n";
+            for (size_t i = 0; i < binds.size(); ++i)
+            {
+                const bool is_out = static_cast<int>(i) == out_b;
+                const bool vec = static_cast<int>(i) == w_b;
+                s << "@group(0) @binding(" << i << ") var<storage, " << (is_out ? "read_write" : "read") << "> buf" << i
+                  << ": array<" << (vec ? "vec4<f32>" : is_out && wgsl::is_subword(to) ? "atomic<u32>" : "u32") << ">;\n";
+            }
+            s << "@group(0) @binding(" << binds.size() << ") var<uniform> P: Params;\n";
+            s << wgsl::load_fn("ld_a", "buf" + std::to_string(a_b), ta, false);
+            if (has_bias)
+                s << wgsl::load_fn("ld_b", "buf" + std::to_string(bias_b), tb, false);
+            s << wgsl::store_fn("st_o", "buf" + std::to_string(out_b), to);
+            const std::string W = "buf" + std::to_string(w_b);
+            s << "var<workgroup> red: array<vec4<f32>, " << 256 * M << ">;\n";
+            s << "const QC: u32 = " << qc << "u;\nconst G: u32 = " << groups << "u;\n";
+            s << "@compute @workgroup_size(256)\n"
+                 "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {\n"
+                 "    let t = l.x;\n    let b = wid.y;\n"
+                 "    let c = t % QC;\n    let g = t / QC;\n"
+                 "    let q = wid.x * QC + c;\n"
+                 "    let nq = P.N / 4u;\n"
+                 "    let qq = min(q, nq - 1u);\n"
+                 "    let a0 = P.off[0] + b * P.sa[0];\n"
+                 "    let w0 = (P.off[1] + b * P.sw[0]) / 4u + qq;\n"
+                 "    let swk = P.sw[1] / 4u;\n"
+                 "    var acc: array<vec4<f32>, " << M << ">;\n"
+                 "    if (q < nq) {\n"
+                 "        var k = g;\n"
+                 "        for (; k + 3u * G < P.K; k += 4u * G) {\n"
+                 "            let v0 = " << W << "[w0 + k * swk];\n"
+                 "            let v1 = " << W << "[w0 + (k + G) * swk];\n"
+                 "            let v2 = " << W << "[w0 + (k + 2u * G) * swk];\n"
+                 "            let v3 = " << W << "[w0 + (k + 3u * G) * swk];\n";
+            for (int64_t m = 0; m < M; ++m)
+                s << "            { let ab = a0 + " << m << "u * P.sa[1];\n"
+                     "              acc[" << m << "] += " << wgsl::convert("ld_a(ab + k * P.sa[2])", wgsl::compute_type(ta), CT::F32)
+                  << " * v0 + " << wgsl::convert("ld_a(ab + (k + G) * P.sa[2])", wgsl::compute_type(ta), CT::F32)
+                  << " * v1 + " << wgsl::convert("ld_a(ab + (k + 2u * G) * P.sa[2])", wgsl::compute_type(ta), CT::F32)
+                  << " * v2 + " << wgsl::convert("ld_a(ab + (k + 3u * G) * P.sa[2])", wgsl::compute_type(ta), CT::F32)
+                  << " * v3; }\n";
+            s << "        }\n"
+                 "        for (; k < P.K; k += G) {\n"
+                 "            let v0 = " << W << "[w0 + k * swk];\n";
+            for (int64_t m = 0; m < M; ++m)
+                s << "            acc[" << m << "] += " << wgsl::convert("ld_a(a0 + " + std::to_string(m) + "u * P.sa[1] + k * P.sa[2])", wgsl::compute_type(ta), CT::F32)
+                  << " * v0;\n";
+            s << "        }\n    }\n";
+            for (int64_t m = 0; m < M; ++m)
+                s << "    red[t * " << M << "u + " << m << "u] = acc[" << m << "];\n";
+            s << "    workgroupBarrier();\n"
+                 "    for (var st = G / 2u; st > 0u; st = st >> 1u) {\n"
+                 "        if (g < st) {\n"
+                 "            for (var m = 0u; m < " << M << "u; m++) { red[t * " << M << "u + m] += red[(t + st * QC) * " << M << "u + m]; }\n"
+                 "        }\n"
+                 "        workgroupBarrier();\n"
+                 "    }\n"
+                 "    if (g != 0u || q >= nq) { return; }\n"
+                 "    let alpha = bitcast<f32>(P.alpha);\n";
+            if (has_bias)
+                s << "    let beta = bitcast<f32>(P.beta);\n";
+            s << "    for (var m = 0u; m < " << M << "u; m++) {\n"
+                 "        let r = red[t * " << M << "u + m];\n"
+                 "        for (var e = 0u; e < 4u; e++) {\n"
+                 "            let n = q * 4u + e;\n"
+                 "            var v = alpha * r[e];\n";
+            if (has_bias)
+                s << "            v += beta * " << wgsl::convert("ld_b(P.off[3] + b * P.sb[0] + m * P.sb[1] + n * P.sb[2])", wgsl::compute_type(tb), CT::F32) << ";\n";
+            s << "            st_o(P.off[2] + b * P.so[0] + m * P.so[1] + n * P.so[2], " << wgsl::convert("v", CT::F32, wgsl::compute_type(to)) << ");\n"
+                 "        }\n"
+                 "    }\n}\n";
+            return s.str();
+        };
+        const auto &pipeline = core::get_pipeline(key.str(), make_source, "gemv4n");
+
+        core::Params p;
+        p.u32(u32_of(M, "M")).u32(u32_of(N, "N")).u32(u32_of(K, "K")).u32(0);
+        p.u32(bs.offset(a_r)).u32(bs.offset(w_r)).u32(bs.offset(out_r)).u32(has_bias ? bs.offset(bias_r) : 0u);
+        auto strides = [&](const at::Tensor &t)
+        {
+            p.u32(u32_of(t.stride(0), "stride")).u32(u32_of(t.stride(1), "stride")).u32(u32_of(t.stride(2), "stride")).u32(0);
+        };
+        strides(a);
+        strides(w);
+        strides(out);
+        if (has_bias)
+            strides(bias);
+        else
+            p.u32(0).u32(0).u32(0).u32(0);
+        p.u32(scalar_word(alpha, CT::F32)).u32(has_bias ? scalar_word(beta, CT::F32) : 0u).u32(0).u32(0);
+
+        const uint32_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;
+        core::Grid grid;
+        grid.x = static_cast<uint32_t>((quads + qc - 1) / qc);
+        grid.y = static_cast<uint32_t>(B);
+        if (grid.x > maxd || grid.y > maxd)
+            return false;
+        core::launch(pipeline, bs.buffers(), p.data(), p.size(), grid);
+        return true;
+    }
+
     bool launch_skinny(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,
                        const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias)
     {
@@ -373,6 +521,8 @@ namespace torch_webgpu::kernels
         // TORCH_WEBGPU_NO_GEMV4=1 forces the scalar kernel (for comparisons).
         static const bool no_vec4 = std::getenv("TORCH_WEBGPU_NO_GEMV4") != nullptr;
         if (k_contig && !no_vec4 && launch_gemv_vec4(a, w, out, bias, beta, alpha, has_bias))
+            return true;
+        if (!k_contig && !no_vec4 && launch_gemv_vec4_n(a, w, out, bias, beta, alpha, has_bias))
             return true;
         const auto ta = a.scalar_type(), tw = w.scalar_type(), to = out.scalar_type();
         const auto tb = has_bias ? bias.scalar_type() : to;

@@ -43,19 +43,38 @@ Greedy generation matches the CPU token for token, without CPU fallbacks, for GP
 Pythia, Bloom, Llama 3.2, SmolLM2, Qwen 1.5 / 2.5 / 3, Phi-1.5, StableLM 2, OLMo 2, Granite 3.3 and
 Danube 3 (`scripts/e2e_models.py`).
 
-## Example: Compile with the WebGPU backend
+## Example: torch.compile
 
 ```python
-compiled_model = torch.compile(model, backend="webgpu_backend")
+compiled_model = torch.compile(model)   # Inductor, generating fused WGSL kernels for webgpu tensors
 ```
 
-The default Inductor backend (`torch.compile(model)`) does not generate WebGPU code yet.
+`torch.compile` uses PyTorch's default compiler (Inductor) with a WebGPU code generator: pointwise
+ops, reductions and normalizations fuse into single WGSL kernels, decode-time linear layers sharing an
+input run as one GEMV, attention uses fused kernels (including grouped-query attention without KV
+repeats). Every OpInfo op is also tested through `torch.compile`. For LLM generation, compile the
+forward with a static KV cache:
+
+```python
+model.forward = torch.compile(model.forward)
+model.generate(ids, max_new_tokens=100, do_sample=False, cache_implementation="static")
+```
+
+(Qwen2.5-0.5B on an RTX 5090: ~300 tokens/s compiled vs ~165 eager, matching the CPU token for token.)
+
+Profile GPU time per kernel with timestamp queries:
+
+```python
+with torch.webgpu.profiler.profile() as prof:
+    compiled_model(x)
+print(prof.table())
+```
 
 ## What is supported
 
 - **Device**: `torch.device("webgpu")`, `.to("webgpu")`, `Tensor.webgpu()`, `Module.webgpu()`, and the
   `torch.webgpu` module (synchronize, memory stats / `empty_cache`, RNG state, streams and events,
-  device properties), like `torch.cuda`.
+  device properties, a GPU kernel profiler), like `torch.cuda`.
 - **Ops**: native WGSL kernels for elementwise math (incl. special functions), reductions and scans,
   matmul, convolutions, pooling, normalization, indexing / scatter / gather, sorting, random sampling,
   losses, upsampling, padding, grid sampling, embedding bags, histograms and more. Every op in PyTorch's
@@ -103,7 +122,7 @@ pip install torch-webgpu
 
 ```bash
 python -m pip install -e . --no-build-isolation   # build (Dawn in ./dawn-install)
-./test.sh                                          # pytest (ops, OpInfo forward + gradients, runtime) + C++ gtests
+./test.sh                                          # pytest (ops, OpInfo eager + compiled, compiler fuzzing, runtime) + C++ gtests
 HF_HUB_OFFLINE=1 python scripts/e2e_models.py gpt2 Qwen/Qwen2.5-0.5B   # end-to-end model checks
 ```
 

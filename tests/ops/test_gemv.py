@@ -103,3 +103,25 @@ def test_multi_linear_one_dispatch():
     with torch.webgpu.profiler.profile() as p:
         torch.ops.webgpu.multi_linear(x, ws, [None, None, None])
     assert [r.name for r in p.records] == ["multi_gemv"]
+
+
+@pytest.mark.parametrize("M", [1, 2, 4, 5])
+@pytest.mark.parametrize("N,K", [(768, 768), (2304, 768), (3072, 768), (768, 3072), (6, 10), (64, 1), (4, 4), (50, 33)])
+@pytest.mark.parametrize("bias", [False, True])
+def test_conv1d_layout(M, N, K, bias):
+    """x @ W with W contiguous along N (Hugging Face Conv1D: addmm(b, x, W))."""
+    x, w, b = torch.randn(M, K), torch.randn(K, N), torch.randn(N)
+    ref = torch.addmm(b, x, w) if bias else x @ w
+    out = torch.addmm(b.to(D), x.to(D), w.to(D)) if bias else x.to(D) @ w.to(D)
+    close(out, ref, 1e-3)
+
+
+def test_conv1d_layout_views():
+    """Column slices (unaligned starts) and batched weights."""
+    w = torch.randn(64, 130)
+    x = torch.randn(1, 64)
+    wd = w.to(D)
+    for start in range(4):
+        close(x.to(D) @ wd[:, start:start + 120], x @ w[:, start:start + 120])
+    wb, xb = torch.randn(3, 32, 48), torch.randn(3, 2, 32)
+    close(torch.bmm(xb.to(D), wb.to(D)), torch.bmm(xb, wb))

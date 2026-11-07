@@ -20,7 +20,7 @@ pytest tests/ops/test_sdpa.py  # one file
 | `tests/compile/test_inductor.py` | Compiler unit tests: dtype classes, NaN / Inf semantics inside fused kernels, indexing and bounds errors, atomics, random numbers, dynamic shapes, aliasing, training steps. |
 | `tests/compile/test_fuzz.py` | Differential fuzzing of the compiler with seeded random programs (fusions of pointwise ops, reductions, views, casts). |
 | `tests/ops/` | Targeted op tests: edge cases OpInfo samples don't reach (NaN semantics, long sequences, large tensors, attention variants, sorting ties...). |
-| `tests/runtime/` | Device API (memory stats, streams, RNG, errors) and runs of the suites under the WebGPU spec's minimum limits. |
+| `tests/runtime/` | Device API (memory stats, streams, RNG, errors, GPU profiler) and runs of the suites under the WebGPU spec's minimum limits. |
 | `tests/e2e/` | Hugging Face models: greedy generation must match the CPU token for token without CPU fallbacks; training steps track the CPU. Models come from the local HF cache and are skipped when absent. |
 | `ctests/` | C++ runtime core (allocator, launch grids, stream ordering, binding windows, WGSL encodings, device errors) and ops through the C++ API. |
 
