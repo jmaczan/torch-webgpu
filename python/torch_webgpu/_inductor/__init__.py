@@ -107,7 +107,7 @@ def register() -> None:
 
     from torch._inductor.custom_graph_pass import CustomGraphModulePass
 
-    from .fx_passes import fuse_parallel_linears
+    from .fx_passes import fuse_parallel_linears, strip_repeat_kv
 
     class BackendVersion(CustomGraphModulePass):
         """webgpu post-grad passes (fx_passes.py). The uuid puts this
@@ -116,6 +116,7 @@ def register() -> None:
         the backend changes."""
 
         def __call__(self, gm: torch.fx.GraphModule) -> None:
+            strip_repeat_kv(gm)
             if os.environ.get("TORCH_WEBGPU_NO_LINEAR_FUSION") != "1":
                 fuse_parallel_linears(gm)
 
@@ -191,5 +192,10 @@ def _backend_hash() -> str:
             h.update(f.read_bytes())
         h.update(_C._wgsl_prelude().encode())
         h.update(_C._wgsl_math().encode())
+        # The extension build: traced graphs depend on its kernels' choices
+        # (e.g. which SDPA backend an attention call takes). Size and mtime
+        # identify a build without reading the 100+ MB library.
+        st = Path(_C.__file__).stat()
+        h.update(f"{_C.__file__}:{st.st_size}:{st.st_mtime_ns}".encode())
         _hash = h.hexdigest()
     return _hash

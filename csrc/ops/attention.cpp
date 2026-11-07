@@ -38,13 +38,17 @@ namespace torch_webgpu::ops
                 k.size(1) != v.size(1) || k.size(1) == 0 || q.size(1) % k.size(1) != 0 ||
                 (!enable_gqa && q.size(1) != k.size(1)))
                 return math;
-            if (!kernels::attention_fits(q.size(3), v.size(3)))
+            // Decode shapes (a few queries): the decode kernel, one workgroup
+            // per query row. Otherwise the flash kernel (blocks of 16 rows).
+            const bool decode = q.size(2) <= kernels::kDecodeMaxQueries &&
+                                kernels::attention_decode_fits(k.size(2), q.size(3), v.size(3));
+            if (!decode && !kernels::attention_fits(q.size(3), v.size(3)))
                 return math;
-            // The fused kernel works on blocks of 16 query rows; for decode-like
-            // shapes (few queries) the math path parallelizes better over keys,
+            // The flash kernel works on blocks of 16 query rows; for other
+            // short query blocks the math path parallelizes better over keys,
             // unless its materialized scores would be large.
             const double score_bytes = 4.0 * q.size(0) * q.size(1) * q.size(2) * k.size(2);
-            if (q.size(2) < 16 && score_bytes < 64.0 * (1 << 20))
+            if (!decode && q.size(2) < 16 && score_bytes < 64.0 * (1 << 20))
                 return math;
             if (mask.has_value() && mask->defined())
             {
@@ -106,7 +110,10 @@ namespace torch_webgpu::ops
                            : *attn_bias;
                 bias = bias.expand({B, H, Lq, Lk});
             }
-            kernels::run_attention(q, k, v, bias, is_causal, scale_of(q, scale), out, lse);
+            if (Lq <= kernels::kDecodeMaxQueries && kernels::attention_decode_fits(Lk, q.size(3), Dv))
+                kernels::run_attention_decode(q, k, v, bias, is_causal, scale_of(q, scale), out, lse);
+            else
+                kernels::run_attention(q, k, v, bias, is_causal, scale_of(q, scale), out, lse);
             // Shapes as in the meta function: no cumulative lengths, scalar
             // (unused) philox seed / offset.
             Tensor seed = at::empty({}, q.options().dtype(at::kLong));

@@ -309,3 +309,28 @@ def test_parallel_linears_fused():
         names = [r.name for r in p.records]
         assert names.count("multi_gemv") == 2, names
         assert names.count("gemv4") == 1, names  # down projection
+
+
+def test_gqa_repeat_kv_stripped():
+    """Hugging Face's repeat_kv (expand + reshape of the KV cache before
+    SDPA) is removed: the fused kernel reads the shared kv heads, so no
+    per-token copy of the cache is made."""
+
+    def repeat_kv(x, n):
+        b, h, s, d = x.shape
+        return x[:, :, None, :, :].expand(b, h, n, s, d).reshape(b, h * n, s, d)
+
+    def attn(q, k, v, mask):
+        return F.scaled_dot_product_attention(q, repeat_kv(k, 7), repeat_kv(v, 7), attn_mask=mask)
+
+    q, k, v = torch.randn(1, 14, 1, 64), torch.randn(1, 2, 48, 64), torch.randn(1, 2, 48, 64)
+    mask = torch.where(torch.rand(1, 1, 1, 48) > 0.3, 0.0, torch.finfo(torch.float32).min)
+    mask[..., 0] = 0.0
+    ref = attn(q, k, v, mask)
+    ca = torch.compile(attn)
+    args = [t.to(D) for t in (q, k, v, mask)]
+    torch.testing.assert_close(ca(*args).cpu(), ref, atol=1e-4, rtol=1e-4)
+    if torch.webgpu.profiler.is_supported():
+        with torch.webgpu.profiler.profile() as p:
+            ca(*args)
+        assert [r.name for r in p.records] == ["attention_decode"], [r.name for r in p.records]

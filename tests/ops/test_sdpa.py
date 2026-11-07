@@ -85,3 +85,74 @@ def test_long_context_memory():
     torch.webgpu.synchronize()
     assert torch.webgpu.max_memory_allocated() - base < 64 * 2**20  # scores alone would be 1 GiB
     assert torch.isfinite(out).all().item()
+
+
+DECODE_CASES = [  # (B, H, Hk, Lq, Lk, head dim, value head dim)
+    (1, 14, 2, 1, 1, 64, 64),
+    (1, 14, 2, 1, 48, 64, 64),
+    (2, 4, 4, 1, 255, 32, 32),
+    (1, 4, 2, 1, 256, 64, 64),
+    (1, 4, 2, 1, 257, 64, 64),
+    (1, 2, 1, 3, 1000, 128, 128),
+    (1, 2, 2, 4, 2000, 80, 80),
+    (1, 2, 2, 2, 33, 160, 96),
+    (1, 2, 2, 1, 6000, 64, 64),    # may exceed the shared score buffer: other path
+    (1, 3, 3, 1, 70, 8, 200),
+]
+
+
+@pytest.mark.parametrize("case", DECODE_CASES, ids=str)
+@pytest.mark.parametrize("variant", ["plain", "causal", "bool_mask", "hf_additive_mask", "fully_masked_row"])
+def test_sdpa_decode(case, variant):
+    """Few queries against a long key sequence (LLM decoding with a KV
+    cache), incl. Hugging Face's additive masks (finfo.min, finite)."""
+    B, H, Hk, Lq, Lk, Dh, Dv = case
+    q, k, v = torch.randn(B, H, Lq, Dh), torch.randn(B, Hk, Lk, Dh), torch.randn(B, Hk, Lk, Dv)
+    mask = None
+    if variant == "bool_mask":
+        mask = torch.rand(B, 1, Lq, Lk) > 0.3
+    elif variant == "hf_additive_mask":
+        visible = torch.rand(B, 1, Lq, Lk) > 0.5
+        visible[..., 0] = True
+        mask = torch.where(visible, 0.0, torch.finfo(torch.float32).min)
+    elif variant == "fully_masked_row":
+        mask = torch.rand(B, 1, Lq, Lk) > 0.3
+        mask[..., 0, :] = False
+    rep = H // Hk
+    ref = F.scaled_dot_product_attention(q, k.repeat_interleave(rep, 1), v.repeat_interleave(rep, 1),
+                                         attn_mask=mask, is_causal=variant == "causal")
+    out = F.scaled_dot_product_attention(q.to(D), k.to(D), v.to(D), attn_mask=None if mask is None else mask.to(D),
+                                         is_causal=variant == "causal", enable_gqa=rep > 1)
+    if variant == "fully_masked_row":
+        ref = ref.nan_to_num(0.0)  # CPU math gives NaN rows; ours (like the fused CPU kernels) gives 0
+    close(out, ref, 2e-4)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16], ids=str)
+def test_sdpa_decode_half(dtype):
+    q, k, v = torch.randn(1, 8, 1, 64).to(dtype), torch.randn(1, 2, 300, 64).to(dtype), torch.randn(1, 2, 300, 64).to(dtype)
+    out = F.scaled_dot_product_attention(q.to(D), k.to(D), v.to(D), enable_gqa=True)
+    assert out.dtype == dtype
+    ref = F.scaled_dot_product_attention(q.float(), k.float().repeat_interleave(4, 1), v.float().repeat_interleave(4, 1))
+    close(out, ref, 2e-2)
+
+
+def test_sdpa_decode_grad():
+    q, k, v = torch.randn(1, 4, 1, 32), torch.randn(1, 4, 100, 32), torch.randn(1, 4, 100, 32)
+    qc, kc, vc = [t.clone().requires_grad_() for t in (q, k, v)]
+    qd, kd, vd = [t.to(D).requires_grad_() for t in (q, k, v)]
+    g = torch.randn(1, 4, 1, 32)
+    F.scaled_dot_product_attention(qc, kc, vc).backward(g)
+    F.scaled_dot_product_attention(qd, kd, vd).backward(g.to(D))
+    for a, e in [(qd.grad, qc.grad), (kd.grad, kc.grad), (vd.grad, vc.grad)]:
+        close(a, e, 1e-3)
+
+
+def test_sdpa_decode_uses_one_dispatch():
+    if not torch.webgpu.profiler.is_supported():
+        pytest.skip("no timestamp queries")
+    q, k, v = torch.randn(1, 14, 1, 64, device=D), torch.randn(1, 2, 500, 64, device=D), torch.randn(1, 2, 500, 64, device=D)
+    F.scaled_dot_product_attention(q, k, v, enable_gqa=True)
+    with torch.webgpu.profiler.profile() as p:
+        F.scaled_dot_product_attention(q, k, v, enable_gqa=True)
+    assert [r.name for r in p.records] == ["attention_decode"]

@@ -228,4 +228,198 @@ namespace torch_webgpu::kernels
         TORCH_CHECK(g.x <= maxd && g.y <= maxd && g.z <= maxd, "torch_webgpu: attention too large for one dispatch");
         core::launch(pipeline, bs.buffers(), p.data(), p.size(), g);
     }
+
+    namespace
+    {
+        // Key capacity of the decode kernel's shared score buffer: a power of
+        // two >= lk (at least 256), within the device's workgroup storage.
+        int64_t decode_capacity(int64_t lk, int64_t d)
+        {
+            const int64_t avail = core::Context::get().limits().maxComputeWorkgroupStorageSize;
+            int64_t cap = 256;
+            while (cap < lk)
+                cap *= 2;
+            const int64_t bytes = 4 * (cap + d + 2 * 256);
+            return bytes <= avail ? cap : 0;
+        }
+    }
+
+    bool attention_decode_fits(int64_t lk, int64_t d, int64_t dv)
+    {
+        return d >= 1 && dv >= 1 && d <= 256 && dv <= 256 && lk >= 1 && decode_capacity(lk, d) > 0;
+    }
+
+    void run_attention_decode(const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &bias,
+                              bool causal, double scale, const at::Tensor &out, const at::Tensor &lse)
+    {
+        const int64_t B = q.size(0), Hq = q.size(1), Lq = q.size(2), D = q.size(3);
+        const int64_t Hk = k.size(1), Lk = k.size(2), Dv = v.size(3);
+        if (out.numel() == 0)
+            return;
+        TORCH_INTERNAL_ASSERT(Hq % Hk == 0 && attention_decode_fits(Lk, D, Dv));
+        const int64_t CAP = decode_capacity(Lk, D);
+        int64_t DVP = 1;
+        while (DVP < Dv)
+            DVP *= 2;
+        const int64_t G = 256 / DVP; // key groups in the PV product
+        const bool has_bias = bias.defined();
+
+        core::BindingSet bs;
+        const int out_r = bs.add(out, true, wgsl::is_subword(out.scalar_type()));
+        const int lse_r = bs.add(lse, true);
+        const int q_r = bs.add(q), k_r = bs.add(k), v_r = bs.add(v);
+        const int b_r = has_bias ? bs.add(bias) : -1;
+        bs.finalize();
+        auto bind = [&](int r) { return "buf" + std::to_string(bs.binding(r)); };
+
+        std::ostringstream key;
+        key << "attn_decode|" << D << ',' << Dv << ',' << CAP << '|' << int(q.scalar_type()) << int(k.scalar_type())
+            << int(v.scalar_type()) << int(out.scalar_type()) << (has_bias ? int(bias.scalar_type()) : -1) << '|'
+            << bs.binding(out_r) << bs.binding(lse_r) << bs.binding(q_r) << bs.binding(k_r) << bs.binding(v_r)
+            << (has_bias ? bs.binding(b_r) : -1) << bs.bindings().size();
+        auto make = [&]()
+        {
+            std::ostringstream s;
+            s << wgsl::prelude() << math_wgsl();
+            s << "struct Params {\n"
+                 "  B: u32, Hq: u32, Hk: u32, Lq: u32,\n"
+                 "  Lk: u32, causal: u32, _p0: u32, _p1: u32,\n"
+                 "  sq: vec4<u32>, sk: vec4<u32>, sv: vec4<u32>, so: vec4<u32>, sb: vec4<u32>,\n"
+                 "  offs: vec4<u32>, offs2: vec4<u32>,\n"
+                 "  scale: f32, _f0: u32, _f1: u32, _f2: u32,\n"
+                 "};\n";
+            const auto &bb = bs.bindings();
+            for (size_t i = 0; i < bb.size(); ++i)
+                s << "@group(0) @binding(" << i << ") var<storage, " << (bb[i].written ? "read_write" : "read") << "> buf" << i
+                  << ": array<" << (bb[i].atomic ? "atomic<u32>" : "u32") << ">;\n";
+            s << "@group(0) @binding(" << bb.size() << ") var<uniform> P: Params;\n";
+            auto ld = [&](const char *name, int r, const at::Tensor &t)
+            {
+                s << wgsl::load_fn(std::string("raw_") + name, bind(r), t.scalar_type(), false);
+                s << "fn " << name << "(i: u32) -> f32 { return "
+                  << wgsl::convert(std::string("raw_") + name + "(i)", wgsl::compute_type(t.scalar_type()), CT::F32) << "; }\n";
+            };
+            ld("ldq", q_r, q);
+            ld("ldk", k_r, k);
+            ld("ldv", v_r, v);
+            if (has_bias)
+                ld("ldb", b_r, bias);
+            s << wgsl::store_fn("raw_sto", bind(out_r), out.scalar_type());
+            s << wgsl::store_fn("raw_stl", bind(lse_r), at::kFloat);
+            // S holds score bits; MASKED (the -inf pattern) marks invisible
+            // keys and is only ever compared as an integer (fast-math safe).
+            s << "const MASKED: u32 = 0xff800000u;\n"
+              << "var<workgroup> Qs: array<f32, " << D << ">;\n"
+              << "var<workgroup> S: array<u32, " << CAP << ">;\n"
+              << "var<workgroup> R: array<f32, 256>;\n"
+              << "var<workgroup> RC: array<u32, 256>;\n";
+            s << "@compute @workgroup_size(256)\n"
+                 "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l3: vec3<u32>) {\n"
+                 "    let lid = l3.x;\n"
+                 "    let qi = wid.x;\n    let h = wid.y;\n    let b = wid.z;\n"
+                 "    let hk = h / (P.Hq / P.Hk);\n"
+                 "    let qbase = P.offs[0] + b * P.sq[0] + h * P.sq[1] + qi * P.sq[2];\n"
+                 "    let kbase = P.offs[1] + b * P.sk[0] + hk * P.sk[1];\n"
+                 "    let vbase = P.offs[2] + b * P.sv[0] + hk * P.sv[1];\n"
+              << "    for (var d = lid; d < " << D << "u; d += 256u) { Qs[d] = ldq(qbase + d * P.sq[3]); }\n"
+                 "    workgroupBarrier();\n"
+                 // scores and the running max of visible keys
+                 "    var mx = 0.0;\n    var cnt = 0u;\n"
+                 "    for (var j = lid; j < P.Lk; j += 256u) {\n"
+                 "        var visible = P.causal == 0u || j <= qi;\n"
+                 "        var sc = 0.0;\n"
+                 "        if (visible) {\n"
+                 "            let kr = kbase + j * P.sk[2];\n"
+              << "            for (var d = 0u; d < " << D << "u; d++) { sc += Qs[d] * ldk(kr + d * P.sk[3]); }\n"
+                 "            sc = sc * P.scale;\n";
+            if (has_bias)
+                s << "            let bv = ldb(P.offs2[0] + b * P.sb[0] + h * P.sb[1] + qi * P.sb[2] + j * P.sb[3]);\n"
+                     "            if (isinf_f(bv) && signbit_f(bv)) { visible = false; } else { sc += bv; }\n";
+            s << "        }\n"
+                 "        if (visible) {\n"
+                 "            if (cnt == 0u || sc > mx) { mx = sc; }\n"
+                 "            cnt += 1u;\n"
+                 "            S[j] = bitcast<u32>(sc);\n"
+                 "        } else {\n"
+                 "            S[j] = MASKED;\n"
+                 "        }\n"
+                 "    }\n"
+                 "    R[lid] = mx;\n    RC[lid] = cnt;\n"
+                 "    workgroupBarrier();\n"
+                 "    for (var st = 128u; st > 0u; st >>= 1u) {\n"
+                 "        if (lid < st) {\n"
+                 "            let c2 = RC[lid + st];\n"
+                 "            if (c2 > 0u && (RC[lid] == 0u || R[lid + st] > R[lid])) { R[lid] = R[lid + st]; }\n"
+                 "            RC[lid] += c2;\n"
+                 "        }\n"
+                 "        workgroupBarrier();\n"
+                 "    }\n"
+                 "    let m = R[0];\n    let any = RC[0] > 0u;\n"
+                 "    workgroupBarrier();\n"
+                 // probabilities (unnormalized) and their sum
+                 "    var ls = 0.0;\n"
+                 "    for (var j = lid; j < P.Lk; j += 256u) {\n"
+                 "        var p = 0.0;\n"
+                 "        if (S[j] != MASKED) { p = exp(bitcast<f32>(S[j]) - m); }\n"
+                 "        S[j] = bitcast<u32>(p);\n"
+                 "        ls += p;\n"
+                 "    }\n"
+                 "    R[lid] = ls;\n"
+                 "    workgroupBarrier();\n"
+                 "    for (var st = 128u; st > 0u; st >>= 1u) {\n"
+                 "        if (lid < st) { R[lid] += R[lid + st]; }\n"
+                 "        workgroupBarrier();\n"
+                 "    }\n"
+                 "    let lsum = R[0];\n"
+                 "    workgroupBarrier();\n"
+                 // PV: thread (g, d) sums keys j = g (mod G) for output dim d
+              << "    let g = lid / " << DVP << "u;\n    let d = lid % " << DVP << "u;\n"
+                 "    var acc = 0.0;\n"
+              << "    if (d < " << Dv << "u) {\n"
+              << "        for (var j = g; j < P.Lk; j += " << G << "u) {\n"
+                 "            let p = bitcast<f32>(S[j]);\n"
+                 "            if (p != 0.0) { acc += p * ldv(vbase + j * P.sv[2] + d * P.sv[3]); }\n"
+                 "        }\n"
+                 "    }\n"
+                 "    R[lid] = acc;\n"
+                 "    workgroupBarrier();\n"
+              << "    if (lid < " << DVP << "u && d < " << Dv << "u) {\n"
+                 "        var y = 0.0;\n"
+              << "        for (var gg = 0u; gg < " << G << "u; gg++) { y += R[gg * " << DVP << "u + d]; }\n"
+                 "        if (any) { y = y / lsum; } else { y = 0.0; }\n"
+                 "        let obase = P.offs[3] + b * P.so[0] + h * P.so[1] + qi * P.so[2];\n"
+              << "        raw_sto(obase + d * P.so[3], " << wgsl::convert("y", CT::F32, wgsl::compute_type(out.scalar_type())) << ");\n"
+                 "    }\n"
+                 "    if (lid == 0u) {\n"
+                 "        var lv = bitcast<f32>(INF_BITS | 0x80000000u);\n"
+                 "        if (any) { lv = m + log(lsum); }\n"
+                 "        raw_stl(P.offs2[1] + (b * P.Hq + h) * P.Lq + qi, lv);\n"
+                 "    }\n"
+                 "}\n";
+            return s.str();
+        };
+        const auto &pipeline = core::get_pipeline(key.str(), make, "attention_decode");
+
+        auto u = [](int64_t x) { return checked_u32(x, "attention size"); };
+        core::Params p;
+        p.u32(u(B)).u32(u(Hq)).u32(u(Hk)).u32(u(Lq)).u32(u(Lk)).u32(causal ? 1u : 0u).u32(0).u32(0);
+        for (const at::Tensor *t : {&q, &k, &v, &out})
+            for (int d = 0; d < 4; ++d)
+                p.u32(u(t->stride(d)));
+        for (int d = 0; d < 4; ++d)
+            p.u32(has_bias ? u(bias.stride(d)) : 0u);
+        p.u32(bs.offset(q_r)).u32(bs.offset(k_r)).u32(bs.offset(v_r)).u32(bs.offset(out_r));
+        p.u32(has_bias ? bs.offset(b_r) : 0u).u32(bs.offset(lse_r)).u32(0).u32(0);
+        const float sc = static_cast<float>(scale);
+        uint32_t scw;
+        std::memcpy(&scw, &sc, 4);
+        p.u32(scw).u32(0).u32(0).u32(0);
+        const uint32_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;
+        core::Grid g;
+        g.x = static_cast<uint32_t>(Lq);
+        g.y = static_cast<uint32_t>(Hq);
+        g.z = static_cast<uint32_t>(B);
+        TORCH_CHECK(g.x <= maxd && g.y <= maxd && g.z <= maxd, "torch_webgpu: attention too large for one dispatch");
+        core::launch(pipeline, bs.buffers(), p.data(), p.size(), g);
+    }
 }

@@ -21,4 +21,12 @@ namespace torch_webgpu::kernels
     // Causal masking is top-left aligned (key j visible to query i iff j <= i).
     void run_attention(const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &bias,
                        bool causal, double scale, const at::Tensor &out, const at::Tensor &lse);
+
+    // Decode-shaped attention (few queries against a long key sequence):
+    // one workgroup per query row, scores held in shared memory. Same
+    // operands and semantics as run_attention.
+    constexpr int64_t kDecodeMaxQueries = 4;
+    bool attention_decode_fits(int64_t lk, int64_t d, int64_t dv);
+    void run_attention_decode(const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &bias,
+                              bool causal, double scale, const at::Tensor &out, const at::Tensor &lse);
 }
