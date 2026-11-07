@@ -21,6 +21,9 @@ FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
 file(GLOB_RECURSE TORCH_WEBGPU_SRC CONFIGURE_DEPENDS ../csrc/*.cpp)
+# The Python module entry point needs libtorch_python; the C++ tests use the
+# backend directly.
+list(FILTER TORCH_WEBGPU_SRC EXCLUDE REGEX "bindings\\.cpp$")
 
 add_library(torch_webgpu_core ${TORCH_WEBGPU_SRC})
 target_include_directories(torch_webgpu_core PUBLIC
