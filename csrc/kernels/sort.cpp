@@ -165,8 +165,8 @@ namespace torch_webgpu::kernels
         core::Params p;
         p.u32(checked_u32(R, "rows")).u32(checked_u32(m, "size")).u32(checked_u32(n, "size"));
         p.u32(shared_seq ? 0u : checked_u32(n, "size")).u32(grid.row_stride);
-        p.u32(checked_u32(seq.storage_offset(), "offset")).u32(checked_u32(values.storage_offset(), "offset"));
-        p.u32(checked_u32(out.storage_offset(), "offset"));
+        p.u32(checked_u32(core::element_offset_of(seq), "offset")).u32(checked_u32(core::element_offset_of(values), "offset"));
+        p.u32(checked_u32(core::element_offset_of(out), "offset"));
         core::launch(pipeline, {{core::buffer_of(seq)}, {core::buffer_of(values)}, {core::buffer_of(out)}}, p.data(), p.size(),
                      grid);
     }

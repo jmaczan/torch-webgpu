@@ -58,7 +58,7 @@ namespace torch_webgpu::kernels
 
         uint32_t elem_offset(const at::Tensor &t)
         {
-            return u32_of(t.storage_offset(), "storage offset");
+            return u32_of(core::element_offset_of(t), "storage offset");
         }
     }
 

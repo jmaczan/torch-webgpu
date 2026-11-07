@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Union
 
+import time
+
 import torch
 
 from .. import _C
@@ -285,13 +287,23 @@ def stream(stream: Stream | None = None) -> Stream:
 
 
 class Event:
-    """Events on a single in-order queue: waiting means synchronizing."""
+    """Events on a single in-order queue: waiting means synchronizing.
+
+    With ``enable_timing=True``, ``record()`` waits for all previously
+    submitted work and takes a host timestamp, so ``elapsed_time`` measures
+    the device time between two records (plus submission latency).
+    """
 
     def __init__(self, enable_timing: bool = False, blocking: bool = False, interprocess: bool = False):
         self.enable_timing = enable_timing
+        self._time_ns: int | None = None
 
     def record(self, stream: Stream | None = None) -> None:
-        _C._flush()
+        if self.enable_timing:
+            synchronize()
+            self._time_ns = time.perf_counter_ns()
+        else:
+            _C._flush()
 
     def wait(self, stream: Stream | None = None) -> None:
         pass
@@ -304,4 +316,9 @@ class Event:
         synchronize()
 
     def elapsed_time(self, end_event: "Event") -> float:
-        raise NotImplementedError("torch_webgpu: Event timing is not supported yet")
+        """Milliseconds between this event and ``end_event``."""
+        if not (self.enable_timing and end_event.enable_timing):
+            raise RuntimeError("Both events must be created with enable_timing=True")
+        if self._time_ns is None or end_event._time_ns is None:
+            raise RuntimeError("Both events must be recorded before calling elapsed_time")
+        return (end_event._time_ns - self._time_ns) / 1e6

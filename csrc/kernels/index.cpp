@@ -297,8 +297,8 @@ namespace torch_webgpu::kernels
         auto grid = core::grid_1d(checked_u32(n, "numel"), kWG);
         core::Params p;
         p.u32(static_cast<uint32_t>(n)).u32(grid.row_stride).u32(nd).u32(0);
-        p.u32(checked_u32(mask.storage_offset(), "offset")).u32(checked_u32(positions.storage_offset(), "offset"));
-        p.u32(checked_u32(out.storage_offset(), "offset")).u32(0);
+        p.u32(checked_u32(core::element_offset_of(mask), "offset")).u32(checked_u32(core::element_offset_of(positions), "offset"));
+        p.u32(checked_u32(core::element_offset_of(out), "offset")).u32(0);
         for (int d = 0; d < 16; ++d)
             p.u32(d < nd ? checked_u32(sizes[d], "size") : 1u);
         core::launch(pipeline, {{core::buffer_of(mask)}, {core::buffer_of(positions)}, {core::buffer_of(out)}}, p.data(),

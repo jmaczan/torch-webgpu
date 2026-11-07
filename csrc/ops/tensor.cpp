@@ -37,8 +37,9 @@ namespace torch_webgpu::core
         const size_t n = std::min(old_size, new_size);
         if (n > 0)
         {
-            auto *src = static_cast<Allocation *>(storage->data_ptr().get_context());
+            auto *src = allocation_of(c10::Storage(c10::intrusive_ptr<c10::StorageImpl>::reclaim_copy(storage)));
             auto *dst = static_cast<Allocation *>(new_data.get_context());
+            TORCH_INTERNAL_ASSERT(src && dst);
             // Capacities are multiples of 4 >= the rounded sizes, so rounding
             // the copy up stays in bounds of both buffers.
             uint64_t bytes = (n + 3) / 4 * 4;
@@ -59,11 +60,18 @@ namespace torch_webgpu::ops
         constexpr c10::DispatchKeySet kWebGPUKeys{c10::DispatchKey::PrivateUse1};
 
         // ---------------------------------------------------------- empty
+        void check_device(const std::optional<at::Device> &device)
+        {
+            TORCH_CHECK(!device.has_value() || !device->has_index() || device->index() == 0,
+                        "torch_webgpu: invalid device ", *device, " (only webgpu:0 is available)");
+        }
+
         at::Tensor empty_memory_format(c10::IntArrayRef size, std::optional<at::ScalarType> dtype,
                                        std::optional<at::Layout> layout, std::optional<at::Device> device,
                                        std::optional<bool> pin_memory,
                                        std::optional<c10::MemoryFormat> memory_format)
         {
+            check_device(device);
             TORCH_CHECK(!pin_memory.value_or(false), "torch_webgpu: pin_memory is not supported for webgpu tensors");
             TORCH_CHECK(layout.value_or(at::kStrided) == at::kStrided, "torch_webgpu: only strided layout is supported");
             auto dt = c10::dtype_or_default(dtype);
@@ -75,6 +83,7 @@ namespace torch_webgpu::ops
                                  std::optional<at::Layout> layout, std::optional<at::Device> device,
                                  std::optional<bool> pin_memory)
         {
+            check_device(device);
             TORCH_CHECK(!pin_memory.value_or(false), "torch_webgpu: pin_memory is not supported for webgpu tensors");
             auto dt = c10::dtype_or_default(dtype);
             TORCH_CHECK(wgsl::is_storage_dtype(dt), "torch_webgpu: dtype ", dt, " is not supported");

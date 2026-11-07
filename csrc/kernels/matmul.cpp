@@ -162,8 +162,8 @@ namespace torch_webgpu::kernels
 
         core::Params p;
         p.u32(u32_of(M, "M")).u32(u32_of(N, "N")).u32(u32_of(K, "K")).u32(0);
-        p.u32(u32_of(a.storage_offset(), "offset")).u32(u32_of(w.storage_offset(), "offset"));
-        p.u32(u32_of(out.storage_offset(), "offset")).u32(has_bias ? u32_of(bias.storage_offset(), "offset") : 0u);
+        p.u32(u32_of(core::element_offset_of(a), "offset")).u32(u32_of(core::element_offset_of(w), "offset"));
+        p.u32(u32_of(core::element_offset_of(out), "offset")).u32(has_bias ? u32_of(core::element_offset_of(bias), "offset") : 0u);
         auto strides = [&](const at::Tensor &t)
         {
             p.u32(u32_of(t.stride(0), "stride")).u32(u32_of(t.stride(1), "stride")).u32(u32_of(t.stride(2), "stride")).u32(0);

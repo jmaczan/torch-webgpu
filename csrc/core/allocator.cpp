@@ -32,7 +32,7 @@ namespace torch_webgpu::core
                 if (size == 0)
                     return {nullptr, nullptr, &noop_delete, device};
                 Allocation *a = acquire(size);
-                return {a, a, &release_raw, device};
+                return {reinterpret_cast<void *>(a->va), a, &release_raw, device};
             }
 
             at::DeleterFnPtr raw_deleter() const override { return &release_raw; }
@@ -64,6 +64,20 @@ namespace torch_webgpu::core
                 pool_.clear();
             }
 
+            Allocation *find(const void *ptr)
+            {
+                const auto p = reinterpret_cast<uintptr_t>(ptr);
+                std::lock_guard<std::mutex> g(mutex_);
+                auto it = live_.upper_bound(p);
+                if (it == live_.begin())
+                    return nullptr;
+                --it;
+                Allocation *a = it->second;
+                return p < a->va + a->capacity ? a : nullptr;
+            }
+
+            static bool is_release(at::DeleterFnPtr f) { return f == &release_raw; }
+
             static CachingAllocator &instance()
             {
                 static CachingAllocator *a = new CachingAllocator();
@@ -92,6 +106,7 @@ namespace torch_webgpu::core
                         pool_.erase(it);
                         stats_.num_cache_hits++;
                         on_alloc(a->capacity);
+                        register_va(a);
                         return a;
                     }
                 }
@@ -120,6 +135,7 @@ namespace torch_webgpu::core
                 stats_.reserved_bytes += static_cast<int64_t>(cap);
                 auto *a = new Allocation{std::move(buffer), size, cap};
                 on_alloc(cap);
+                register_va(a);
                 return a;
             }
 
@@ -145,6 +161,15 @@ namespace torch_webgpu::core
                 return oom ? nullptr : buffer;
             }
 
+            // Caller holds mutex_. Ranges are 256-byte aligned with a gap so
+            // one-past-the-end pointers never alias the next allocation.
+            void register_va(Allocation *a)
+            {
+                a->va = next_va_;
+                next_va_ += (a->capacity + 2 * 256 - 1) / 256 * 256;
+                live_.emplace(a->va, a);
+            }
+
             void on_alloc(size_t cap)
             {
                 stats_.allocated_bytes += static_cast<int64_t>(cap);
@@ -157,17 +182,22 @@ namespace torch_webgpu::core
                     return;
                 std::lock_guard<std::mutex> g(mutex_);
                 stats_.allocated_bytes -= static_cast<int64_t>(a->capacity);
+                live_.erase(a->va);
                 pool_.emplace(a->capacity, std::move(a->buffer));
                 delete a;
             }
 
             std::mutex mutex_;
             std::multimap<size_t, wgpu::Buffer> pool_;
+            std::map<uintptr_t, Allocation *> live_; // va -> live allocation
+            uintptr_t next_va_ = uintptr_t(1) << 40;   // well clear of 0 / small integers
             MemoryStats stats_;
         };
     }
 
     c10::Allocator *get_allocator() { return &CachingAllocator::instance(); }
+    Allocation *find_allocation(const void *ptr) { return CachingAllocator::instance().find(ptr); }
+    bool owns(const c10::DataPtr &p) { return CachingAllocator::is_release(p.get_deleter()); }
 
     const wgpu::Buffer &dummy_buffer()
     {

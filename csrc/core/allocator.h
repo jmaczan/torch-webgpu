@@ -16,11 +16,16 @@
 namespace torch_webgpu::core
 {
     // Object stored as the DataPtr of every WebGPU storage.
+    // Device memory is exposed to PyTorch through *virtual* addresses: each
+    // allocation owns a unique, never-reused range [va, va + capacity), so
+    // any pointer into a tensor (data_ptr(), from_blob, DLPack) resolves to
+    // its buffer and byte offset. The addresses are never dereferenced.
     struct Allocation
     {
         wgpu::Buffer buffer;
         size_t size;     // requested size in bytes
         size_t capacity; // actual buffer size in bytes (>= size, multiple of 4)
+        uint64_t va = 0; // virtual base address
     };
 
     struct MemoryStats
@@ -41,14 +46,29 @@ namespace torch_webgpu::core
     // Releases all cached (unused) buffers back to the driver.
     void empty_cache();
 
-    // Helpers to reach the backing buffer of a tensor/storage.
+    // Live allocation containing virtual address `ptr`, or nullptr.
+    Allocation *find_allocation(const void *ptr);
+    bool owns(const c10::DataPtr &p);
+
+    // Helpers to reach the backing buffer of a tensor/storage. Storages made
+    // by our allocator carry their Allocation as context; foreign wrappers of
+    // our memory (at::from_blob) are resolved through the address registry.
     inline Allocation *allocation_of(const c10::Storage &storage)
     {
-        return static_cast<Allocation *>(storage.data_ptr().get_context());
+        const auto &dp = storage.data_ptr();
+        if (owns(dp))
+            return static_cast<Allocation *>(dp.get_context());
+        return dp.get() ? find_allocation(dp.get()) : nullptr;
     }
     inline Allocation *allocation_of(const at::TensorBase &t)
     {
         return allocation_of(t.storage());
+    }
+    // Byte offset of a storage's data pointer inside its allocation (0 unless
+    // the storage wraps an interior pointer).
+    inline uint64_t storage_delta(const c10::Storage &storage, const Allocation *a)
+    {
+        return a ? static_cast<uint64_t>(reinterpret_cast<uintptr_t>(storage.data_ptr().get()) - a->va) : 0;
     }
     // A small storage buffer bound in place of zero-sized tensors (which have
     // no allocation). Kernels never access it because they have no elements.
@@ -68,6 +88,13 @@ namespace torch_webgpu::core
     // Byte offset of the tensor's first element inside its buffer.
     inline uint64_t byte_offset_of(const at::TensorBase &t)
     {
-        return static_cast<uint64_t>(t.storage_offset()) * t.element_size();
+        return storage_delta(t.storage(), allocation_of(t)) + static_cast<uint64_t>(t.storage_offset()) * t.element_size();
+    }
+    // Same, in elements (the buffer offset kernels index with).
+    inline uint64_t element_offset_of(const at::TensorBase &t)
+    {
+        const uint64_t b = byte_offset_of(t);
+        TORCH_INTERNAL_ASSERT(b % t.element_size() == 0, "torch_webgpu: misaligned tensor data pointer");
+        return b / t.element_size();
     }
 }

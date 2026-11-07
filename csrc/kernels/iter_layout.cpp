@@ -74,9 +74,9 @@ namespace torch_webgpu::kernels
             const int64_t esize = static_cast<int64_t>(c10::elementSize(o.dtype));
             auto *alloc = core::allocation_of(t);
             TORCH_CHECK(alloc != nullptr, "torch_webgpu: kernel operand ", k, " has no device storage");
-            // data_ptr() is allocation + byte offset (also for 32-bit sub-iterators).
-            int64_t byte_off = static_cast<const char *>(iter.data_ptr(k)) -
-                               static_cast<const char *>(t.storage().data_ptr().get());
+            // data_ptr() is a virtual address inside the allocation (also for
+            // 32-bit sub-iterators).
+            int64_t byte_off = static_cast<int64_t>(reinterpret_cast<uintptr_t>(iter.data_ptr(k)) - alloc->va);
             TORCH_INTERNAL_ASSERT(byte_off % esize == 0);
             o.offset = checked_u32(byte_off / esize, "storage offset");
             auto strides = iter.strides(k);
