@@ -59,6 +59,22 @@ python tests/opinfo/opinfo_runner.py --filter '^nn\.functional\.'
 python scripts/op_coverage.py --missing                 # aten ops without a webgpu kernel
 ```
 
+## Performance
+
+`benchmarks/suite.py` measures kernels (GEMM, decode GEMVs, convolution,
+attention, launch overhead; GPU time from timestamp queries) and models in
+the local Hugging Face cache (decode, prefill and `generate`, eager and
+compiled). Save a baseline before a change and compare after it:
+
+```bash
+python benchmarks/suite.py --out before.json
+# ... change ...
+python benchmarks/suite.py --baseline before.json   # exits 1 on >10% regressions
+```
+
+For a single workload, `torch.webgpu.profiler.profile()` gives per-kernel
+GPU times (`prof.table()`).
+
 ## Continuous integration
 
 `.github/workflows/tests.yml` builds Dawn at the pinned revision
