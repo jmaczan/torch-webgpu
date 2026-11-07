@@ -86,3 +86,24 @@ def _apply(self, fn, recurse=True):
 def install() -> None:
     if torch.nn.Module._apply is not _apply:
         torch.nn.Module._apply = _apply
+
+
+# nn.TransformerEncoder's inference fast path converts padded batches to
+# nested tensors on any "supported" device, which includes the PrivateUse1
+# backend; nested tensors have no webgpu kernels. The nested conversion only
+# skips work on padding, so webgpu inputs take the regular (still fused,
+# per-layer) path instead.
+_orig_encoder_forward = torch.nn.TransformerEncoder.forward
+
+
+def _encoder_forward(self, src, *args, **kwargs):
+    if getattr(self, "use_nested_tensor", False) and isinstance(src, torch.Tensor) and src.device.type == "webgpu":
+        self.use_nested_tensor = False
+        try:
+            return _orig_encoder_forward(self, src, *args, **kwargs)
+        finally:
+            self.use_nested_tensor = True
+    return _orig_encoder_forward(self, src, *args, **kwargs)
+
+
+torch.nn.TransformerEncoder.forward = _encoder_forward

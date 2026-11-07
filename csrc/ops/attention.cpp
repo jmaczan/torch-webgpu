@@ -168,10 +168,128 @@ namespace torch_webgpu::ops
             };
             return {like(gq, q), like(gk, k), like(gv, v), attn_bias.defined() ? like(gb, attn_bias) : gb};
         }
+
+        // ------------------------------------------------------------------
+        // nn.MultiheadAttention / nn.TransformerEncoderLayer inference fast
+        // paths (eval mode), composed from linear, layer_norm and the fused
+        // SDPA kernels. Masks follow MultiheadAttention.merge_masks: type 0
+        // [L, S], 1 key padding [B, S], 2 [B, H, L, S]; bool True = masked,
+        // float masks are additive.
+        Tensor additive_mask(const std::optional<Tensor> &mask, std::optional<int64_t> mask_type, int64_t B,
+                             int64_t S, const at::TensorOptions &opts)
+        {
+            if (!mask.has_value() || !mask->defined())
+                return Tensor();
+            Tensor m = *mask;
+            if (mask_type.has_value() && *mask_type == 1)
+                m = m.view({B, 1, 1, S});
+            if (m.scalar_type() == at::kBool)
+                return at::where(m, at::full({}, -std::numeric_limits<double>::infinity(), opts), at::zeros({}, opts));
+            return m.to(opts.dtype());
+        }
+
+        // x [B, L, E] -> attention output before the output projection's
+        // bias is added ([B, L, E]); weights [B, H, L, S] if requested.
+        std::tuple<Tensor, Tensor> mha_core(const Tensor &q_in, const Tensor &k_in, const Tensor &v_in, int64_t E,
+                                            int64_t H, const Tensor &qkv_w, const Tensor &qkv_b, const Tensor &proj_w,
+                                            const Tensor &proj_b, const std::optional<Tensor> &mask,
+                                            std::optional<int64_t> mask_type, bool need_weights)
+        {
+            const int64_t B = q_in.size(0), L = q_in.size(1), S = k_in.size(1), Dh = E / H;
+            Tensor q, k, v;
+            if (q_in.is_same(k_in) && k_in.is_same(v_in))
+            {
+                auto qkv = at::linear(q_in, qkv_w, qkv_b).chunk(3, -1);
+                q = qkv[0], k = qkv[1], v = qkv[2];
+            }
+            else
+            {
+                auto w = qkv_w.chunk(3, 0);
+                auto b = qkv_b.chunk(3, 0);
+                q = at::linear(q_in, w[0], b[0]);
+                k = at::linear(k_in, w[1], b[1]);
+                v = at::linear(v_in, w[2], b[2]);
+            }
+            q = q.view({B, L, H, Dh}).transpose(1, 2);
+            k = k.view({B, S, H, Dh}).transpose(1, 2);
+            v = v.view({B, S, H, Dh}).transpose(1, 2);
+            Tensor am = additive_mask(mask, mask_type, B, S, q.options());
+            Tensor weights;
+            Tensor o;
+            if (need_weights)
+            {
+                Tensor sc = at::matmul(q, k.transpose(-2, -1)).mul_(1.0 / std::sqrt(static_cast<double>(Dh)));
+                if (am.defined())
+                    sc = sc + am;
+                weights = at::_safe_softmax(sc, -1);
+                o = at::matmul(weights, v);
+            }
+            else
+            {
+                o = at::scaled_dot_product_attention(q, k, v, am.defined() ? std::optional<Tensor>(am) : std::nullopt);
+            }
+            o = o.transpose(1, 2).reshape({B, L, E});
+            return {at::linear(o, proj_w, proj_b), weights};
+        }
+
+        std::tuple<Tensor, Tensor> native_mha_fn(const Tensor &query, const Tensor &key, const Tensor &value,
+                                                 int64_t embed_dim, int64_t num_head, const Tensor &qkv_weight,
+                                                 const Tensor &qkv_bias, const Tensor &proj_weight,
+                                                 const Tensor &proj_bias, const std::optional<Tensor> &mask,
+                                                 bool need_weights, bool average_attn_weights,
+                                                 std::optional<int64_t> mask_type)
+        {
+            TORCH_CHECK(query.dim() == 3 && key.dim() == 3 && value.dim() == 3,
+                        "torch_webgpu: _native_multi_head_attention expects batched 3-D inputs");
+            auto [out, w] = mha_core(query, key, value, embed_dim, num_head, qkv_weight, qkv_bias, proj_weight,
+                                     proj_bias, mask, mask_type, need_weights);
+            if (need_weights && average_attn_weights)
+                w = w.mean(1);
+            return {out, need_weights ? w : at::empty({0}, query.options())};
+        }
+
+        Tensor transformer_encoder_layer_fn(const Tensor &src, int64_t embed_dim, int64_t num_heads,
+                                            const Tensor &qkv_weight, const Tensor &qkv_bias,
+                                            const Tensor &proj_weight, const Tensor &proj_bias, bool use_gelu,
+                                            bool norm_first, double eps, const Tensor &norm_weight_1,
+                                            const Tensor &norm_bias_1, const Tensor &norm_weight_2,
+                                            const Tensor &norm_bias_2, const Tensor &ffn_weight_1,
+                                            const Tensor &ffn_bias_1, const Tensor &ffn_weight_2,
+                                            const Tensor &ffn_bias_2, const std::optional<Tensor> &mask,
+                                            std::optional<int64_t> mask_type)
+        {
+            TORCH_CHECK(src.dim() == 3, "torch_webgpu: _transformer_encoder_layer_fwd expects [B, L, E] input");
+            auto sa = [&](const Tensor &h)
+            {
+                return std::get<0>(mha_core(h, h, h, embed_dim, num_heads, qkv_weight, qkv_bias, proj_weight,
+                                            proj_bias, mask, mask_type, false));
+            };
+            auto ff = [&](const Tensor &h)
+            {
+                Tensor t = at::linear(h, ffn_weight_1, ffn_bias_1);
+                t = use_gelu ? at::gelu(t) : at::relu(t);
+                return at::linear(t, ffn_weight_2, ffn_bias_2);
+            };
+            const std::vector<int64_t> shape{embed_dim};
+            Tensor x = src;
+            if (norm_first)
+            {
+                x = x + sa(at::layer_norm(x, shape, norm_weight_1, norm_bias_1, eps));
+                x = x + ff(at::layer_norm(x, shape, norm_weight_2, norm_bias_2, eps));
+            }
+            else
+            {
+                x = at::layer_norm(x + sa(x), shape, norm_weight_1, norm_bias_1, eps);
+                x = at::layer_norm(x + ff(x), shape, norm_weight_2, norm_bias_2, eps);
+            }
+            return x;
+        }
     }
 
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     {
+        m.impl("_native_multi_head_attention", TORCH_FN(native_mha_fn));
+        m.impl("_transformer_encoder_layer_fwd", TORCH_FN(transformer_encoder_layer_fn));
         m.impl("_scaled_dot_product_fused_attention_overrideable", TORCH_FN(sdpa_overrideable_fn));
         m.impl("_scaled_dot_product_fused_attention_overrideable_backward", TORCH_FN(sdpa_overrideable_backward_fn));
     }
