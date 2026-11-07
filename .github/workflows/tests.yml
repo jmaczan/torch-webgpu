@@ -52,7 +52,18 @@ jobs:
           CXX: clang++-20
           CMAKE_GENERATOR: Ninja
           DAWN_ENABLE_GL: "ON"
-        run: ./scripts/build-dawn.sh dawn-install
+          NUM_JOBS: "3"   # clang on Tint needs a few GiB per job; runners have 16
+        run: |
+          set -o pipefail
+          free -g; nproc
+          # On failure, surface the compiler errors as annotations (readable
+          # without access to the job log).
+          ./scripts/build-dawn.sh dawn-install 2>&1 | tee dawn-build.log || {
+            grep -E "error|Error|FAILED|Killed|No space" dawn-build.log | grep -v "Werror" | tail -15 |
+              while IFS= read -r line; do echo "::error::${line:0:900}"; done
+            tail -5 dawn-build.log | while IFS= read -r line; do echo "::error::tail: ${line:0:900}"; done
+            exit 1
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: dawn-install
