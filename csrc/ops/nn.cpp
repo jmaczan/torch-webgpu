@@ -516,6 +516,57 @@ namespace torch_webgpu::ops
             return host_matrix(m, out, in, opts);
         }
 
+        // Anti-aliased resampling (CPU's _compute_weights_aa): a normalized
+        // linear / cubic (a = -0.5) filter whose support widens by the
+        // downsampling factor.
+        Tensor aa_matrix(int64_t in, int64_t out, bool align_corners, std::optional<double> scale, bool cubic,
+                         const at::TensorOptions &opts)
+        {
+            std::vector<double> m(out * in, 0.0);
+            const double sc = align_corners ? (out > 1 ? static_cast<double>(in - 1) / static_cast<double>(out - 1) : 0.0)
+                                            : scale_value(scale, in, out);
+            const double interp = cubic ? 4.0 : 2.0;
+            const double support = sc >= 1.0 ? interp * 0.5 * sc : interp * 0.5;
+            const double invscale = sc >= 1.0 ? 1.0 / sc : 1.0;
+            auto filter = [&](double x)
+            {
+                x = std::abs(x);
+                if (!cubic)
+                    return x < 1.0 ? 1.0 - x : 0.0;
+                const double a = -0.5;
+                if (x < 1.0)
+                    return ((a + 2) * x - (a + 3)) * x * x + 1;
+                if (x < 2.0)
+                    return (((x - 5) * x + 8) * x - 4) * a;
+                return 0.0;
+            };
+            for (int64_t o = 0; o < out; ++o)
+            {
+                const double center = sc * (o + 0.5);
+                const int64_t xmin = std::max<int64_t>(static_cast<int64_t>(center - support + 0.5), 0);
+                const int64_t xsize = std::min<int64_t>(static_cast<int64_t>(center + support + 0.5), in) - xmin;
+                double total = 0.0;
+                for (int64_t j = 0; j < xsize; ++j)
+                {
+                    const double w = filter((j + xmin - center + 0.5) * invscale);
+                    m[o * in + xmin + j] = w;
+                    total += w;
+                }
+                if (total != 0.0)
+                    for (int64_t j = 0; j < xsize; ++j)
+                        m[o * in + xmin + j] /= total;
+            }
+            return host_matrix(m, out, in, opts);
+        }
+        Tensor aa_linear_matrix(int64_t in, int64_t out, bool ac, std::optional<double> scale, const at::TensorOptions &o)
+        {
+            return aa_matrix(in, out, ac, scale, false, o);
+        }
+        Tensor aa_cubic_matrix(int64_t in, int64_t out, bool ac, std::optional<double> scale, const at::TensorOptions &o)
+        {
+            return aa_matrix(in, out, ac, scale, true, o);
+        }
+
         Tensor nearest_index(int64_t in, int64_t out, std::optional<double> scale, bool exact, const at::TensorOptions &opts)
         {
             Tensor t = at::empty({out}, at::TensorOptions().dtype(at::kLong));
@@ -647,6 +698,10 @@ namespace torch_webgpu::ops
         WG_UPSAMPLE_LINEAR(upsample_linear1d, 1, linear_matrix, SC1, scales)
         WG_UPSAMPLE_LINEAR(upsample_bilinear2d, 2, linear_matrix, SC2, scales_h COMMA scales_w)
         WG_UPSAMPLE_LINEAR(upsample_bicubic2d, 2, cubic_matrix, SC2, scales_h COMMA scales_w)
+#define SC3 , std::optional<double> scales_d, std::optional<double> scales_h, std::optional<double> scales_w
+        WG_UPSAMPLE_LINEAR(upsample_trilinear3d, 3, linear_matrix, SC3, scales_d COMMA scales_h COMMA scales_w)
+        WG_UPSAMPLE_LINEAR(_upsample_bilinear2d_aa, 2, aa_linear_matrix, SC2, scales_h COMMA scales_w)
+        WG_UPSAMPLE_LINEAR(_upsample_bicubic2d_aa, 2, aa_cubic_matrix, SC2, scales_h COMMA scales_w)
 
         Tensor upsample_nearest(const Tensor &self, const Ints &os, const std::vector<std::optional<double>> &scales, bool exact)
         {
@@ -702,6 +757,8 @@ namespace torch_webgpu::ops
         WG_UPSAMPLE_NEAREST(upsample_nearest2d, 2, false, SC2, scales_h COMMA scales_w)
         WG_UPSAMPLE_NEAREST(upsample_nearest_exact1d, 1, true, SC1, scales)
         WG_UPSAMPLE_NEAREST(upsample_nearest_exact2d, 2, true, SC2, scales_h COMMA scales_w)
+        WG_UPSAMPLE_NEAREST(upsample_nearest3d, 3, false, SC3, scales_d COMMA scales_h COMMA scales_w)
+        WG_UPSAMPLE_NEAREST(_upsample_nearest_exact3d, 3, true, SC3, scales_d COMMA scales_h COMMA scales_w)
 
         // ============================================================ losses
         // Returns (picked log-prob per sample, weight per sample, safe target).
@@ -971,6 +1028,17 @@ namespace torch_webgpu::ops
         m.impl("upsample_nearest1d.out", TORCH_FN(upsample_nearest1d_out_fn));
         m.impl("upsample_nearest1d_backward", TORCH_FN(upsample_nearest1d_backward_fn));
         m.impl("upsample_nearest1d_backward.grad_input", TORCH_FN(upsample_nearest1d_backward_out_fn));
+#define WG_REG_UPSAMPLE(NAME)                                                     \
+    m.impl(#NAME, TORCH_FN(NAME##_fn));                                           \
+    m.impl(#NAME ".out", TORCH_FN(NAME##_out_fn));                                \
+    m.impl(#NAME "_backward", TORCH_FN(NAME##_backward_fn));                      \
+    m.impl(#NAME "_backward.grad_input", TORCH_FN(NAME##_backward_out_fn));
+        WG_REG_UPSAMPLE(upsample_trilinear3d)
+        WG_REG_UPSAMPLE(_upsample_bilinear2d_aa)
+        WG_REG_UPSAMPLE(_upsample_bicubic2d_aa)
+        WG_REG_UPSAMPLE(upsample_nearest3d)
+        WG_REG_UPSAMPLE(_upsample_nearest_exact3d)
+#undef WG_REG_UPSAMPLE
         m.impl("upsample_nearest2d", TORCH_FN(upsample_nearest2d_fn));
         m.impl("upsample_nearest2d.out", TORCH_FN(upsample_nearest2d_out_fn));
         m.impl("upsample_nearest2d_backward", TORCH_FN(upsample_nearest2d_backward_fn));

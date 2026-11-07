@@ -117,18 +117,18 @@ namespace torch_webgpu::ops
         void set_output_strided(int64_t i, at::IntArrayRef sizes, at::IntArrayRef strides,
                                 at::TensorOptions options) override
         {
-            outputs_[i] = detail::create_out(sizes, strides, options);
+            outputs_.at(i) = detail::create_out(sizes, strides, options);
             if constexpr (detail::is_iter<Meta>)
                 Meta::set_output_raw_strided(i, sizes, strides, options);
         }
         void set_output_raw_strided(int64_t i, at::IntArrayRef sizes, at::IntArrayRef strides,
                                     at::TensorOptions options) override
         {
-            outputs_[i] = detail::create_out(sizes, strides, options);
+            outputs_.at(i) = detail::create_out(sizes, strides, options);
             if constexpr (detail::is_iter<Meta>)
                 Meta::set_output_raw_strided(i, sizes, strides, options);
         }
-        const at::Tensor &maybe_get_output(int64_t i) override { return outputs_[i]; }
+        const at::Tensor &maybe_get_output(int64_t i) override { return outputs_.at(i); }
         std::array<at::Tensor, N> outputs_;
     };
 
@@ -141,31 +141,31 @@ namespace torch_webgpu::ops
         void set_output_strided(int64_t i, at::IntArrayRef sizes, at::IntArrayRef strides,
                                 at::TensorOptions options) override
         {
-            const auto &out = outputs_[i].get();
+            const auto &out = outputs_.at(i).get();
             detail::resize_out(out, sizes, strides, options);
             auto proxy = detail::maybe_create_proxy(out, sizes, strides, options);
             if (proxy)
-                proxies_[i] = std::move(*proxy);
+                proxies_.at(i) = std::move(*proxy);
             if constexpr (detail::is_iter<Meta>)
                 Meta::set_output_raw_strided(i, sizes, strides, options);
         }
         void set_output_raw_strided(int64_t i, at::IntArrayRef sizes, at::IntArrayRef strides,
                                     at::TensorOptions options) override
         {
-            detail::resize_out(outputs_[i].get(), sizes, strides, options);
+            detail::resize_out(outputs_.at(i).get(), sizes, strides, options);
             if constexpr (detail::is_iter<Meta>)
                 Meta::set_output_raw_strided(i, sizes, strides, options);
         }
         const at::Tensor &maybe_get_output(int64_t i) override
         {
-            return proxies_[i].has_value() ? *proxies_[i] : outputs_[i].get();
+            return proxies_.at(i).has_value() ? *proxies_.at(i) : outputs_.at(i).get();
         }
         // Copies proxy outputs back into the user-provided tensors.
         void finish()
         {
             for (int i = 0; i < N; ++i)
-                if (proxies_[i].has_value())
-                    outputs_[i].get().copy_(*proxies_[i]);
+                if (proxies_.at(i).has_value())
+                    outputs_.at(i).get().copy_(*proxies_.at(i));
         }
         std::array<std::reference_wrapper<at::Tensor>, N> outputs_;
         std::array<std::optional<at::Tensor>, N> proxies_;
@@ -180,30 +180,30 @@ namespace torch_webgpu::ops
         void set_output_strided(int64_t i, at::IntArrayRef sizes, at::IntArrayRef strides,
                                 at::TensorOptions options) override
         {
-            const auto &out = outputs_[i].get();
+            const auto &out = outputs_.at(i).get();
             detail::check_inplace(out, sizes, options);
             auto proxy = detail::maybe_create_proxy(out, sizes, strides, options);
             if (proxy)
-                proxies_[i] = std::move(*proxy);
+                proxies_.at(i) = std::move(*proxy);
             if constexpr (detail::is_iter<Meta>)
                 Meta::set_output_raw_strided(i, sizes, strides, options);
         }
         void set_output_raw_strided(int64_t i, at::IntArrayRef sizes, at::IntArrayRef strides,
                                     at::TensorOptions options) override
         {
-            detail::check_inplace(outputs_[i].get(), sizes, options);
+            detail::check_inplace(outputs_.at(i).get(), sizes, options);
             if constexpr (detail::is_iter<Meta>)
                 Meta::set_output_raw_strided(i, sizes, strides, options);
         }
         const at::Tensor &maybe_get_output(int64_t i) override
         {
-            return proxies_[i].has_value() ? *proxies_[i] : outputs_[i].get();
+            return proxies_.at(i).has_value() ? *proxies_.at(i) : outputs_.at(i).get();
         }
         void finish()
         {
             for (int i = 0; i < N; ++i)
-                if (proxies_[i].has_value())
-                    outputs_[i].get().copy_(*proxies_[i]);
+                if (proxies_.at(i).has_value())
+                    outputs_.at(i).get().copy_(*proxies_.at(i));
         }
         std::array<std::reference_wrapper<at::Tensor>, N> outputs_;
         std::array<std::optional<at::Tensor>, N> proxies_;
