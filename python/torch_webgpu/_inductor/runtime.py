@@ -31,7 +31,37 @@ def _word_atomic_fns(name: str, var: str, dtype: torch.dtype, off: str, add: boo
     return out
 
 
+_HALF_CODEC = {
+    torch.float16: ("unpack2x16float({}).x", "f32_to_f16_bits({})"),
+    torch.bfloat16: ("bitcast<f32>(({}) << 16u)", "f32_to_bf16_bits({})"),
+}
+
+
+def _half_atomic_add_fn(name: str, var: str, dtype: torch.dtype, off: str) -> str:
+    """atomic_add_<name> for a 16-bit float: a compare-and-swap loop on the
+    32-bit word holding the element."""
+    dec, enc = _HALF_CODEC[dtype]
+    return (
+        f"fn atomic_add_{name}(i: u32, v: f32) {{\n"
+        f"    let e = {off} + i;\n"
+        f"    let p = &{var}[e >> 1u];\n"
+        f"    let sh = (e & 1u) * 16u;\n"
+        f"    var old = atomicLoad(p);\n"
+        f"    loop {{\n"
+        f"        let h = {enc.format(dec.format('(old >> sh) & 0xffffu') + ' + v')} & 0xffffu;\n"
+        f"        let r = atomicCompareExchangeWeak(p, old, (old & ~(0xffffu << sh)) | (h << sh));\n"
+        f"        if (r.exchanged) {{ break; }}\n"
+        f"        old = r.old_value;\n"
+        f"    }}\n"
+        f"}}\n"
+    )
+
+
 _CT = {torch.float32: "f32", torch.float16: "f32", torch.bfloat16: "f32", torch.bool: "bool", torch.int64: "i64"}
+
+
+# Uniform constants every kernel gets (P.k): NaN bits, +Inf bits, 0, 0.
+KERNEL_CONSTANTS = [0x7FC00000, 0x7F800000, 0, 0]
 
 
 def buffer_declarations(buffers, mapping, error_flag: bool, nparams: int) -> str:
@@ -52,6 +82,7 @@ def buffer_declarations(buffers, mapping, error_flag: bool, nparams: int) -> str
     s.append(f"    offs: array<vec4<u32>, {(n + 3) // 4}>,")
     if nparams:
         s.append(f"    v: array<vec4<u32>, {(nparams + 3) // 4}>,")
+    s.append("    k: vec4<u32>,  // KERNEL_CONSTANTS")
     s.append("};")
     for b in range(nb):
         mode = "read_write" if written[b] else "read"
@@ -74,6 +105,8 @@ def buffer_declarations(buffers, mapping, error_flag: bool, nparams: int) -> str
             else:
                 s.append(_C._wgsl_store_fn(f"raw_st_{name}", var, dtype))
                 s.append(f"fn st_{name}(i: u32, v: {ty}) {{ raw_st_{name}({off} + i, v); }}")
+                if add:
+                    s.append(_half_atomic_add_fn(name, var, dtype, off))
     return "\n".join(s) + "\n"
 
 
@@ -113,6 +146,7 @@ class WGSLKernelRunner:
         gx = min(nwg, _MAX_GRID)
         grid = (gx, -(-nwg // gx), 1)
         params = [int(p) for p in params]
+        params += [0] * (-len(params) % 4) + KERNEL_CONSTANTS
         # Inductor feeds zero-dim CPU tensors (e.g. optimizer step counts)
         # to device kernels. Stage them on the device; written ones are
         # copied back after the launch.

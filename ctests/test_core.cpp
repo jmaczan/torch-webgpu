@@ -6,6 +6,7 @@
 #include <torch/torch.h>
 
 #include "core/allocator.h"
+#include "core/binding_set.h"
 #include "core/context.h"
 #include "core/kernel.h"
 #include "core/stream.h"
@@ -125,4 +126,46 @@ TEST(Errors, IndexErrorRaisedAtSyncAndCleared)
     EXPECT_THROW({ x.index_select(0, bad).cpu(); }, c10::Error);
     // The flag is cleared: the device keeps working.
     EXPECT_TRUE(torch::equal(x.cpu(), torch::arange(5, torch::kFloat)));
+}
+
+TEST(BindingSet, TensorsSharingABufferShareABinding)
+{
+    auto base = torch::zeros({1024}, torch::TensorOptions().device(dev()));
+    auto other = torch::zeros({16}, torch::TensorOptions().device(dev()));
+    auto a = base.narrow(0, 0, 100), b = base.narrow(0, 512, 100);
+    core::BindingSet bs;
+    int ra = bs.add(a), rb = bs.add(b, /*written=*/true), ro = bs.add(other);
+    bs.finalize();
+    EXPECT_EQ(bs.binding(ra), bs.binding(rb));
+    EXPECT_NE(bs.binding(ra), bs.binding(ro));
+    ASSERT_EQ(bs.bindings().size(), 2u);
+    const auto &shared = bs.bindings()[bs.binding(ra)];
+    EXPECT_TRUE(shared.written);
+    // Element offsets inside the shared window keep the views apart.
+    EXPECT_EQ(static_cast<int64_t>(bs.offset(rb)) - static_cast<int64_t>(bs.offset(ra)), 512);
+}
+
+TEST(BindingSet, WindowCoversAccessedBytesAligned)
+{
+    auto base = torch::zeros({1 << 16}, torch::TensorOptions().device(dev()));
+    auto v = base.narrow(0, 40000, 1000);
+    core::BindingSet bs;
+    int r = bs.add(v);
+    bs.finalize();
+    const auto &b = bs.bindings()[bs.binding(r)];
+    EXPECT_EQ(b.offset % core::binding_offset_alignment(), 0u);
+    // The window starts at or before the view and covers all of it.
+    const uint64_t first = b.offset + uint64_t(bs.offset(r)) * 4;
+    auto [lo, hi] = core::tensor_byte_range(v);
+    EXPECT_EQ(first, lo);
+    EXPECT_GE(b.offset + b.size, hi);
+    EXPECT_LE(b.size, core::max_binding_size());
+}
+
+TEST(BindingSet, StridedViewRangeSpansAllElements)
+{
+    auto base = torch::zeros({64, 64}, torch::TensorOptions().device(dev()));
+    auto col = base.select(1, 5);  // stride 64
+    auto [lo, hi] = core::tensor_byte_range(col);
+    EXPECT_EQ(hi - lo, uint64_t((63 * 64 + 1) * 4));
 }

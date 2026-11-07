@@ -1,166 +1,81 @@
 # Running Tests
 
-torch-webgpu has both Python and C++ tests.
-
-## Python Tests
-
-### Run All Tests
+torch-webgpu is tested differentially: everything runs on webgpu and is
+compared with PyTorch's CPU results for the same inputs. There are Python
+(pytest) and C++ (gtest) suites.
 
 ```bash
-pytest tests/
+./test.sh                      # everything: pytest + C++ (SKIP_CTESTS=1 for Python only)
+pytest tests -m "not slow"     # the fast subset (a few minutes on a desktop GPU)
+pytest tests/ops/test_sdpa.py  # one file
+./build-ctests.sh && ./run-ctests.sh
 ```
 
-### Run Specific Test File
+## Suites
+
+| Suite | What it checks |
+|-------|----------------|
+| `tests/opinfo/test_opinfo.py` | Every OpInfo in PyTorch's op database, eager on webgpu vs CPU: forward (float32 for all ops; float16, bfloat16, int64, int32, uint8, bool for a representative subset) and input gradients. |
+| `tests/opinfo/test_opinfo_compiled.py` | The same op database through `torch.compile` (Inductor generating WGSL kernels, eager fallbacks for the rest). |
+| `tests/compile/test_inductor.py` | Compiler unit tests: dtype classes, NaN / Inf semantics inside fused kernels, indexing and bounds errors, atomics, random numbers, dynamic shapes, aliasing, training steps. |
+| `tests/compile/test_fuzz.py` | Differential fuzzing of the compiler with seeded random programs (fusions of pointwise ops, reductions, views, casts). |
+| `tests/ops/` | Targeted op tests: edge cases OpInfo samples don't reach (NaN semantics, long sequences, large tensors, attention variants, sorting ties...). |
+| `tests/runtime/` | Device API (memory stats, streams, RNG, errors) and runs of the suites under the WebGPU spec's minimum limits. |
+| `tests/e2e/` | Hugging Face models: greedy generation must match the CPU token for token without CPU fallbacks; training steps track the CPU. Models come from the local HF cache and are skipped when absent. |
+| `ctests/` | C++ runtime core (allocator, launch grids, stream ordering, binding windows, WGSL encodings, device errors) and ops through the C++ API. |
+
+## Shared infrastructure (`tests/conftest.py`)
+
+* Every test ends with `torch.webgpu.synchronize()`, so asynchronous device
+  errors (WebGPU validation errors, out-of-bounds indices, device loss) fail
+  the test that caused them.
+* `@pytest.mark.no_fallback` (or the `no_fallback` fixture) fails a test if
+  any op went through the CPU fallback; the compile tests forbid fallbacks by
+  default and opt out with `@pytest.mark.allow_fallback`.
+* `@pytest.mark.slow` marks long tests (deselect with `-m "not slow"`).
+* The pytest header shows the adapter and the `TORCH_WEBGPU_*` settings.
+
+## Knobs
+
+| Variable | Effect |
+|----------|--------|
+| `TORCH_WEBGPU_BACKEND=vulkan\|metal\|d3d12\|opengles\|...` | Pick the Dawn backend (OpenGL ES runs in WebGPU compatibility mode). |
+| `TORCH_WEBGPU_LIMITS=default` | Request only the WebGPU spec's minimum limits (portability check). |
+| `TORCH_WEBGPU_OPINFO_ALL_DTYPES=1` | OpInfo suites: every op for every dtype. |
+| `TORCH_WEBGPU_OPINFO_MAX_SAMPLES`, `TORCH_WEBGPU_OPINFO_COMPILED_SAMPLES` | Samples per op (eager: 20, compiled: 3). |
+| `TORCH_WEBGPU_FUZZ_PROGRAMS`, `TORCH_WEBGPU_FUZZ_SEED` | Number and seed offset of fuzzed programs (default 60 from 0). |
+
+## Surveys
+
+The OpInfo runner also works standalone and prints every failing op, which
+is handy when working on coverage:
 
 ```bash
-pytest tests/ops/test_cos.py
+python tests/opinfo/opinfo_runner.py                    # eager forward, float32
+python tests/opinfo/opinfo_runner.py --dtype bfloat16
+python tests/opinfo/opinfo_runner.py --grad             # gradients
+python tests/opinfo/opinfo_runner.py --compiled         # through torch.compile
+python tests/opinfo/opinfo_runner.py --filter '^nn\.functional\.'
+python scripts/op_coverage.py --missing                 # aten ops without a webgpu kernel
 ```
 
-### Run with Verbose Output
+## Continuous integration
 
-```bash
-pytest tests/ -v
-```
+`.github/workflows/tests.yml` builds Dawn at the pinned revision
+(`scripts/build-dawn.sh`, cached) with the Vulkan and OpenGL ES backends and
+runs the suites on GPU-less runners through Mesa's software drivers:
+lavapipe (Vulkan) and llvmpipe (OpenGL ES, compatibility mode). Pull
+requests run `-m "not slow"`; the nightly run includes the slow tests.
 
-### Run with Print Statements
+## Writing tests
 
-```bash
-pytest tests/ -s
-```
-
-### Run Qwen Compilation Tests
-
-```bash
-pytest tests/test_qwen_compile.py -v -s
-```
-
-## C++ Tests
-
-### Build Tests
-
-```bash
-# First, rebuild the main library
-./build.sh
-
-# Build C++ tests
-./build-ctests.sh
-```
-
-### Run Tests
-
-```bash
-./run-ctests.sh
-```
-
-### Individual Test Files
-
-C++ tests are in `ctests/`:
-
-- `test_add.cpp` - Addition operations
-- `test_mm.cpp` - Matrix multiplication
-- `test_cos.cpp` - Cosine function
-- etc.
-
-## Writing Tests
-
-### Python Test Example
-
-```python
-# tests/ops/test_my_op.py
-import pytest
-import torch
-import torch_webgpu
-from torch_webgpu.compiler.webgpu_compiler import webgpu_backend
-
-
-def test_my_op_basic():
-    """Test basic functionality."""
-    x = torch.randn(3, 4)
-    expected = torch.my_op(x)
-
-    @torch.compile(backend=webgpu_backend)
-    def fn(x):
-        return torch.my_op(x)
-
-    result = fn(x)
-    torch.testing.assert_close(result, expected, rtol=1e-3, atol=1e-3)
-
-
-def test_my_op_shapes():
-    """Test with different shapes."""
-    for shape in [(1,), (10,), (3, 4), (2, 3, 4)]:
-        x = torch.randn(shape)
-        expected = torch.my_op(x)
-
-        @torch.compile(backend=webgpu_backend)
-        def fn(x):
-            return torch.my_op(x)
-
-        result = fn(x)
-        torch.testing.assert_close(result, expected, rtol=1e-3, atol=1e-3)
-```
-
-### C++ Test Example
-
-```cpp
-// ctests/test_my_op.cpp
-#include <torch/torch.h>
-#include <cassert>
-#include <iostream>
-
-int main() {
-    // Create input
-    auto x = torch::randn({3, 4});
-    auto x_webgpu = x.to("webgpu");
-
-    // Run operation
-    auto result = torch::my_op(x_webgpu);
-
-    // Move back and compare
-    auto result_cpu = result.to("cpu");
-    auto expected = torch::my_op(x);
-
-    auto diff = (result_cpu - expected).abs().max().item<float>();
-    assert(diff < 1e-3);
-
-    std::cout << "test_my_op passed!" << std::endl;
-    return 0;
-}
-```
-
-## Test Coverage
-
-Key test areas:
-
-| Area | Test Files |
-|------|------------|
-| Basic ops | `tests/ops/test_*.py` |
-| Compilation | `tests/compile/test_ir.py` |
-| Qwen model | `tests/test_qwen_compile.py` |
-| C++ ops | `ctests/test_*.cpp` |
-
-## Debugging Test Failures
-
-### Enable Debug Output
-
-In `python/torch_webgpu/compiler/lowering.py`:
-
-```python
-DEBUG_LOWERING = True
-```
-
-This prints shape information for each operation.
-
-### Compare with CPU
-
-```python
-# Get CPU reference
-cpu_result = some_op(cpu_tensor)
-
-# Get WebGPU result
-webgpu_result = some_op(webgpu_tensor).to("cpu")
-
-# Print difference
-print(f"Max diff: {(cpu_result - webgpu_result).abs().max()}")
-print(f"Mean diff: {(cpu_result - webgpu_result).abs().mean()}")
-```
+* Compare against the CPU: `torch.testing.assert_close(out.cpu(), ref)`,
+  with tolerances that follow the compute dtype (float32 math everywhere;
+  half types round on store).
+* Prefer extending OpInfo coverage (it gets forward, gradients, dtypes and
+  compiled runs for free); add a targeted test in `tests/ops/` for edge
+  cases samples miss (NaN / Inf, empty and huge tensors, ties, aliasing).
+* Kernels run under drivers' fast-math: any WGSL that handles NaN / Inf
+  needs a test with those values computed *inside* the kernel (see
+  `tests/ops/test_nan_semantics.py`, `test_special_values` in
+  `tests/compile/test_inductor.py`).

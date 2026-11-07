@@ -19,11 +19,12 @@ D = "webgpu"
 
 
 @pytest.fixture(autouse=True)
-def fresh_dynamo():
+def fresh_dynamo(request):
     torch._dynamo.reset()
     before = set(torch_webgpu._C._fallback_ops())
     yield
-    assert not set(torch_webgpu._C._fallback_ops()) - before, "unexpected CPU fallback"
+    if not request.node.get_closest_marker("allow_fallback"):
+        assert not set(torch_webgpu._C._fallback_ops()) - before, "unexpected CPU fallback"
 
 
 def to_dev(a):
@@ -157,6 +158,49 @@ def test_atomic_accumulate(dtype):
     idx = torch.randint(0, 10, (1000,))
     vals = torch.randint(-3, 4, (1000,)).to(dtype)
     compare(lambda z, i, v: z.index_put((i,), v, accumulate=True), torch.zeros(10, dtype=dtype), idx, vals, tol=1e-4)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.int32, torch.float32])
+def test_atomic_accumulate_counts_exact(dtype):
+    """Concurrent atomic adds lose no update, also for 16-bit types whose
+    neighbours share a 32-bit word (compare-and-swap on the word)."""
+    idx = torch.randint(0, 3, (600,))
+    out = torch.compile(lambda z, i, v: z.index_put((i,), v, accumulate=True))(
+        torch.zeros(4, dtype=dtype, device=D), idx.to(D), torch.ones(600, dtype=dtype, device=D))
+    assert out.cpu().tolist() == torch.bincount(idx, minlength=4).to(dtype).tolist()
+
+
+# Special values computed inside fused kernels. GPU drivers compile with
+# fast-math; folding x / x -> 1, 0 / x -> 0, x - x -> 0 or arithmetic on
+# visible NaN / Inf constants gives wrong results here.
+SPECIAL_VALUE_CASES = {
+    "x_div_x": lambda a: a / a,
+    "x_div_0": lambda a: a / 0,
+    "zero_div_x": lambda a: (a * 0) / a,
+    "x_minus_x_inf": lambda a: (a + float("inf")) - (a + float("inf")),
+    "inf_times_x": lambda a: a * float("inf"),
+    "reciprocal": lambda a: a.reciprocal(),
+    "empty_mean": lambda a: a[:0].mean(),
+    "sum_div_0": lambda a: a.sum() / 0,
+    "neg_inf_max": lambda a: torch.full_like(a, float("-inf")).amax() + a,
+}
+
+
+@pytest.mark.parametrize("name", list(SPECIAL_VALUE_CASES))
+def test_special_values(name):
+    a = torch.tensor([0.0, -0.0, 1.0, -2.0, float("inf"), float("-inf"), float("nan")])
+    compare(SPECIAL_VALUE_CASES[name], a)
+
+
+@pytest.mark.allow_fallback
+def test_float64_falls_back():
+    """float64 has no WGSL type: those nodes run eagerly (CPU fallback)
+    while the rest of the graph is still compiled."""
+    x = torch.randn(5, 7)
+    torch._dynamo.reset()
+    out = torch.compile(lambda t: (torch.softmax(t, 1, dtype=torch.float64) + 1, t.exp() * 2))(x.to(D))
+    torch.testing.assert_close(out[0].cpu(), torch.softmax(x, 1, dtype=torch.float64) + 1, atol=1e-7, rtol=1e-7)
+    torch.testing.assert_close(out[1].cpu(), x.exp() * 2)
 
 
 def test_random():

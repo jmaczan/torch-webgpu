@@ -25,6 +25,9 @@ TOLERANCES = {
     torch.float32: (1e-4, 1.3e-4),
     torch.float16: (1e-2, 1e-2),
     torch.bfloat16: (5e-2, 2e-2),
+    # float64 runs on the CPU fallback; compiled graphs split fused ops
+    # (softmax) into separate float64 calls.
+    torch.float64: (1e-7, 1e-7),
 }
 
 
@@ -182,6 +185,60 @@ def run_op(op, dtype, max_samples=None):
     return "pass", f"{len(samples)} samples"
 
 
+# Ops the compiled survey skips: in-place / out= variants mutate their
+# inputs between the CPU reference and the compiled run.
+def _compiled_sample_ok(s):
+    return "out" not in s.kwargs
+
+
+def run_op_compiled(op, dtype, max_samples=None):
+    """Like run_op, but the op runs through torch.compile (Inductor ->
+    WGSL kernels) on webgpu. Every sample compiles its own graph."""
+    if nondeterministic(op):
+        return "skip", "nondeterministic"
+    if harness_limited(op):
+        return "skip", "not reproducible on another device"
+    if dtype not in op.supported_dtypes("cpu"):
+        return "skip", "dtype unsupported on cpu"
+    atol, rtol = TOLERANCES.get(dtype, (0, 0))
+    try:
+        samples = list(op.sample_inputs("cpu", dtype, requires_grad=False))
+    except Exception as e:  # noqa: BLE001
+        return "skip", f"sample generation failed: {e}"
+    if max_samples:
+        samples = samples[:max_samples]
+    torch._dynamo.reset()
+    checked = 0
+    for k, s in enumerate(samples):
+        if random_sample(op, s) or not _compiled_sample_ok(s):
+            continue
+        try:
+            expected = op(s.input, *s.args, **s.kwargs)
+        except Exception:  # noqa: BLE001
+            continue
+        args = to_device(s.args, DEVICE)
+        kwargs = to_device(s.kwargs, DEVICE)
+
+        def fn(x):
+            return op(x, *args, **kwargs)
+
+        actual = None
+        try:
+            actual = torch.compile(fn, dynamic=False)(to_device(s.input, DEVICE))
+            compare(actual, expected, atol, rtol)
+            checked += 1
+        except AssertionError as e:
+            if actual is not None and tie_equivalent(op, s, actual, expected):
+                continue
+            return "fail", f"sample {k}: {str(e)[:300]}"
+        except Exception as e:  # noqa: BLE001
+            msg = [m for m in str(e).strip().splitlines() if m.strip() and "TORCHDYNAMO_VERBOSE" not in m]
+            return "error", f"sample {k}: {type(e).__name__}: {msg[0][:300] if msg else ''}"
+        finally:
+            torch._dynamo.reset()
+    return ("pass", f"{checked} samples") if checked else ("skip", "no samples")
+
+
 def _leaves(x, out):
     """Tensors requiring grad in x (nested lists/tuples/dicts), in order."""
     if isinstance(x, torch.Tensor):
@@ -278,6 +335,7 @@ def main():
     ap.add_argument("--max-samples", type=int, default=None)
     ap.add_argument("--show", default="fail,error")
     ap.add_argument("--grad", action="store_true", help="compare input gradients instead of outputs")
+    ap.add_argument("--compiled", action="store_true", help="run ops through torch.compile")
     args = ap.parse_args()
     dtype = getattr(torch, args.dtype)
     warnings.filterwarnings("ignore")
@@ -289,7 +347,8 @@ def main():
             continue
         if verbose:
             print("RUN", op.name, op.variant_test_name, flush=True)
-        status, msg = (run_op_grad if args.grad else run_op)(op, dtype, args.max_samples)
+        runner = run_op_grad if args.grad else run_op_compiled if args.compiled else run_op
+        status, msg = runner(op, dtype, args.max_samples)
         counts[status] = counts.get(status, 0) + 1
         if status in show:
             print(f"{status.upper():5s} {op.name}{'.' + op.variant_test_name if op.variant_test_name else ''}: {msg}")

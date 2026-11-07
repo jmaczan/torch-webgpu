@@ -2,6 +2,13 @@
 # Build Google Dawn WebGPU runtime for torch-webgpu
 # This script downloads and builds Dawn from source using CMake
 # Usage: ./scripts/build-dawn.sh [install_prefix]
+#
+# Environment:
+#   DAWN_REV        Dawn commit to build (default: the revision torch-webgpu is
+#                   tested against; keep in sync with CI caches)
+#   DAWN_ENABLE_GL  ON to also build the OpenGL / OpenGL ES backends (used by
+#                   CI to run the suite on Mesa's llvmpipe)
+#   CC / CXX        compilers (clang recommended: recent GCC rejects parts of Tint)
 
 set -e
 
@@ -20,10 +27,19 @@ echo "  Install prefix: $INSTALL_PREFIX"
 echo "  Dawn source dir: $DAWN_DIR"
 echo "  Parallel jobs: $NUM_JOBS"
 
-# Clone Dawn if not exists
-if [ ! -d "$DAWN_DIR" ]; then
-    echo "Cloning Dawn repository..."
-    git clone --depth 1 https://dawn.googlesource.com/dawn "$DAWN_DIR"
+DAWN_REV="${DAWN_REV:-514f52054a84babc8ca223d465c0a24d8d20e04d}"
+DAWN_ENABLE_GL="${DAWN_ENABLE_GL:-OFF}"
+
+# Fetch the pinned revision if not present
+if [ ! -d "$DAWN_DIR/.git" ]; then
+    echo "Fetching Dawn $DAWN_REV..."
+    mkdir -p "$DAWN_DIR"
+    git -C "$DAWN_DIR" init -q
+    git -C "$DAWN_DIR" remote add origin https://dawn.googlesource.com/dawn
+fi
+if [ "$(git -C "$DAWN_DIR" rev-parse HEAD 2>/dev/null)" != "$DAWN_REV" ]; then
+    git -C "$DAWN_DIR" fetch --depth 1 origin "$DAWN_REV"
+    git -C "$DAWN_DIR" checkout -q FETCH_HEAD
 fi
 
 cd "$DAWN_DIR"
@@ -52,8 +68,8 @@ cmake -S . -B "$BUILD_DIR" \
     -DDAWN_ENABLE_D3D11=OFF \
     -DDAWN_ENABLE_D3D12=$ENABLE_D3D12 \
     -DDAWN_ENABLE_NULL=OFF \
-    -DDAWN_ENABLE_DESKTOP_GL=OFF \
-    -DDAWN_ENABLE_OPENGLES=OFF \
+    -DDAWN_ENABLE_DESKTOP_GL=$DAWN_ENABLE_GL \
+    -DDAWN_ENABLE_OPENGLES=$DAWN_ENABLE_GL \
     -DDAWN_BUILD_SAMPLES=OFF \
     -DTINT_BUILD_TESTS=OFF \
     -DTINT_BUILD_CMD_TOOLS=OFF

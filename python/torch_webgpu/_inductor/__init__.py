@@ -117,9 +117,52 @@ def register() -> None:
         def uuid(self) -> Any:
             return _backend_hash()
 
+    _fallback_unsupported_dtypes()
     register_interface_for_device("webgpu", WebGPUInterface)
     register_device_op_overrides("webgpu", WebGPUDeviceOpOverrides())
     register_backend_for_device("webgpu", WGSLScheduling, WebGPUWrapperCodegen, device_custom_pass=BackendVersion())
+
+
+# Dtypes WGSL kernels can't compute in. Graph nodes reading or writing them
+# on webgpu become eager aten calls (where float64 runs through the CPU
+# fallback), as Inductor does for complex tensors.
+UNSUPPORTED_DTYPES = (torch.float64,)
+
+# aten ops whose pointwise math has no WGSL implementation yet: they run as
+# eager calls (as in eager mode, through the CPU fallback).
+FALLBACK_OPS = frozenset(
+    [f"special_{n}" for n in (
+        "airy_ai", "bessel_j0", "bessel_j1", "bessel_y0", "bessel_y1", "modified_bessel_i0",
+        "modified_bessel_i1", "modified_bessel_k0", "modified_bessel_k1", "scaled_modified_bessel_k0",
+        "scaled_modified_bessel_k1", "spherical_bessel_j0", "hermite_polynomial_h", "hermite_polynomial_he",
+        "laguerre_polynomial_l", "legendre_polynomial_p",
+        *(f"{s}chebyshev_polynomial_{k}" for s in ("", "shifted_") for k in "tuvw"))]
+    + ["igamma", "igammac"]
+)
+
+
+def _needs_eager(t: torch.Tensor, node: Any) -> bool:
+    if t.device.type != "webgpu":
+        return False
+    if t.dtype in UNSUPPORTED_DTYPES:
+        return True
+    target = getattr(node, "target", None)
+    name = getattr(getattr(target, "_overloadpacket", None), "__name__", None)
+    if name in FALLBACK_OPS:
+        return True
+    # nextafter steps the float32 representation only.
+    return name == "nextafter" and t.dtype != torch.float32
+
+
+def _fallback_unsupported_dtypes() -> None:
+    from torch._inductor import lowering
+
+    orig = lowering.unsupported_input_tensor
+
+    def unsupported_input_tensor(t: torch.Tensor, node: Any = None) -> bool:
+        return _needs_eager(t, node) or orig(t, node)
+
+    lowering.unsupported_input_tensor = unsupported_input_tensor
 
 
 _hash: str | None = None

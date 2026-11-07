@@ -148,10 +148,13 @@ def get_device_capability(device: _DeviceLike = None) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------- RNG
+# Generator state lives outside any graph: Dynamo must not trace into these
+# (it can't fake the CPU state tensors), so calls are graph breaks.
 def _generator() -> torch.Generator:
     return _C._default_generator()
 
 
+@torch.compiler.disable
 def manual_seed(seed: int) -> None:
     _generator().manual_seed(int(seed))
 
@@ -160,6 +163,7 @@ def manual_seed_all(seed: int) -> None:
     manual_seed(seed)
 
 
+@torch.compiler.disable
 def seed() -> None:
     _generator().seed()
 
@@ -172,11 +176,13 @@ def initial_seed() -> int:
     return _generator().initial_seed()
 
 
+@torch.compiler.disable
 def get_rng_state(device: _DeviceLike = None) -> torch.Tensor:
     _check_index(device)
     return _generator().get_state()
 
 
+@torch.compiler.disable
 def set_rng_state(new_state: torch.Tensor, device: _DeviceLike = None) -> None:
     _check_index(device)
     _generator().set_state(new_state)

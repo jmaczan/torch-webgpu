@@ -147,6 +147,11 @@ def _f32_literal(v: float) -> str:
         return "inf_f()" if v > 0 else "(-inf_f())"
     if r == 0.0:
         return "-0.0f" if math.copysign(1.0, r) < 0 else "0.0f"
+    if r != v:
+        # Distinct Python values that round to the same f32 must print
+        # differently: Inductor's CSE would merge them and intersect their
+        # (disjoint) value ranges.
+        return f"{r!r}f /*{v!r}*/"
     return f"{r!r}f"
 
 
@@ -168,6 +173,28 @@ def literal(v: Any, dtype: torch.dtype) -> str:
 # ---------------------------------------------------------------------------
 # index expressions (i32)
 # ---------------------------------------------------------------------------
+
+
+_PRIVATE_SPECIALS = """var<private> NAN_BITS: u32 = 0x7fc00000u;
+var<private> INF_BITS: u32 = 0x7f800000u;
+fn nan_f() -> f32 { return bitcast<f32>(NAN_BITS); }
+fn inf_f() -> f32 { return bitcast<f32>(INF_BITS); }"""
+
+# Fused kernels compute with special values in registers. Constants the
+# driver can see (even through never-written private variables) are folded
+# under its fast-math assumptions (x * inf -> garbage), so NaN / Inf and the
+# opq() barrier come from the uniform block, which the runtime fills with
+# KERNEL_CONSTANTS.
+_UNIFORM_SPECIALS = """fn nan_f() -> f32 { return bitcast<f32>(P.k.x); }
+fn inf_f() -> f32 { return bitcast<f32>(P.k.y); }
+// Identity the compiler can't see through (P.k.z is 0).
+fn opq(x: f32) -> f32 { return bitcast<f32>(bitcast<u32>(x) | P.k.z); }"""
+
+
+def opaque_math() -> str:
+    math = _C._wgsl_math()
+    assert _PRIVATE_SPECIALS in math, "math prelude changed: update _PRIVATE_SPECIALS"
+    return math.replace(_PRIVATE_SPECIALS, _UNIFORM_SPECIALS)
 
 
 class WGSLExprPrinter(ExprPrinter):
@@ -323,6 +350,9 @@ def _float_args(*args: Any) -> list[str]:
     return [_arg(a, torch.float32) for a in args]
 
 
+_ZEROS = ("0.0f", "-0.0f")
+
+
 def _binary(op: str, i64fn: str, a: Any, b: Any, boolop: str | None = None) -> str:
     (x, y), dt = _unify(a, b)
     if dt is None:
@@ -337,6 +367,13 @@ def _binary(op: str, i64fn: str, a: Any, b: Any, boolop: str | None = None) -> s
             xi, yi = convert(a, torch.bool, torch.int32), convert(b, torch.bool, torch.int32)
             return f"(({xi} {op} {yi}) != 0i)"
         return f"({x} {boolop} {y})"
+    if t == "f32" and x == y:
+        # x - x (or x + x, x * x) on one value: fast-math folds x - x to 0,
+        # which is wrong for Inf / NaN.
+        y = f"opq({y})"
+    elif t == "f32" and op == "*" and (x in _ZEROS or y in _ZEROS):
+        # x * 0 folds to 0 (NaN for x = Inf / NaN).
+        x, y = (f"opq({x})", y) if x in _ZEROS else (x, f"opq({y})")
     return f"({x} {op} {y})"
 
 
@@ -346,6 +383,9 @@ def _compare(op: str, i64fn: str, a: Any, b: Any) -> str:
         return f"{i64fn}({x}, {y})"
     if dt is not None and ct(dt) == "f32" and op == "!=":
         return f"ne_f({x}, {y})"
+    if dt is not None and ct(dt) == "bool" and op in ("<", "<=", ">", ">="):
+        # WGSL orders no bools; compare as 0 / 1.
+        return f"(select(0i, 1i, {x}) {op} select(0i, 1i, {y}))"
     return f"({x} {op} {y})"
 
 
@@ -357,13 +397,36 @@ def _float_unary(fn: str):
     return staticmethod(impl)
 
 
+def _special(fn: str, *deps: str):
+    """A special function from the eager kernels' library (kernels/special.h)."""
+
+    def impl(*args: Any) -> str:
+        V.kernel.helpers.update(f"special:{d}" for d in (fn, *deps))
+        return f"{fn}({', '.join(_float_args(*args))})"
+
+    return staticmethod(impl)
+
+
+# polygamma(n, x) for a runtime order n: (-1)^(n+1) n! zeta(n+1, x).
+POLYGAMMA_WGSL = """
+fn polygamma_n(n: f32, x: f32) -> f32 {
+    if (n == 0.0f) { return digamma_f(x); }
+    if (n == 1.0f) { return trigamma_f(x); }
+    let fac = select(-1.0f, 1.0f, (i32(n) & 1) == 1) * exp(lgamma_f(n + 1.0f));
+    return polygamma_f(n + 1.0f, fac, x);
+}
+"""
+
+
 class WGSLOverrides(OpOverrides):
     """Expression generation. Every argument is a CSE variable whose dtype
     (from Inductor's dtype propagation) says which compute type it holds."""
 
     @staticmethod
     def to_dtype(x: Any, dtype: torch.dtype, src_dtype: torch.dtype | None = None, use_compute_types: bool = True) -> str:
-        return convert(x, src_dtype or _dtype(x), dtype)
+        # The variable's own dtype decides its WGSL type; Inductor's src_dtype
+        # hint can disagree after index-dtype narrowing (int64 vs int32).
+        return convert(x, _dtype(x) or src_dtype, dtype)
 
     @staticmethod
     def to_dtype_bitcast(x: Any, dtype: torch.dtype, src_dtype: torch.dtype) -> str:
@@ -386,7 +449,9 @@ class WGSLOverrides(OpOverrides):
 
     @staticmethod
     def constant(val: Any, dtype: torch.dtype) -> str:
-        return literal(val, dtype)
+        lit = literal(val, dtype)
+        # Float zero constants are opaque: fast-math folds x * 0 to 0.
+        return f"opq({lit})" if lit in _ZEROS else lit
 
     @staticmethod
     def index_expr(expr: sympy.Expr, dtype: torch.dtype) -> Any:
@@ -458,15 +523,17 @@ class WGSLOverrides(OpOverrides):
 
     @staticmethod
     def truediv(a: Any, b: Any) -> str:
+        # Both operands go through opq(): drivers compile with fast-math and
+        # would fold x / x to 1, 0 / x to 0 and x / 0.0 to garbage.
         x, y = _float_args(a, b)
-        return f"({x} / {y})"
+        return f"(opq({x}) / opq({y}))"
 
     int_truediv = truediv
 
     @staticmethod
     def div_rn(a: Any, b: Any) -> str:
         x, y = _float_args(a, b)
-        return f"({x} / {y})"
+        return f"(opq({x}) / opq({y}))"
 
     @staticmethod
     def floordiv(a: Any, b: Any) -> str:
@@ -485,7 +552,7 @@ class WGSLOverrides(OpOverrides):
         if t == "i64":
             return f"i64_div_trunc({x}, {y})"
         if t == "f32":
-            return f"trunc({x} / {y})"
+            return f"trunc(opq({x}) / opq({y}))"
         return f"({x} / {y})"
 
     @staticmethod
@@ -738,7 +805,48 @@ class WGSLOverrides(OpOverrides):
     erfc = _float_unary("erfc_f({})")
     erfinv = _float_unary("erfinv_f({})")
     sigmoid = _float_unary("sigmoid_f({})")
-    reciprocal = _float_unary("(1.0f / {})")
+    reciprocal = _float_unary("(1.0f / opq({}))")
+
+    # Special functions (shared with the eager kernels).
+    lgamma = _special("lgamma_f")
+    digamma = _special("digamma_f")
+    i0 = _special("i0_f")
+    i0e = _special("i0e_f")
+    i1 = _special("i1_f")
+    i1e = _special("i1e_f")
+    ndtri = _special("ndtri_f")
+    log_ndtr = _special("log_ndtr_f")
+    erfcx = _special("erfcx_f")
+    zeta = _special("zeta_f")
+
+    @staticmethod
+    def ndtr(x: Any) -> str:
+        (e,) = _float_args(x)
+        return f"(0.5f * erfc_f({e} * -0.7071067811865476f))"
+
+    @staticmethod
+    def polygamma(n: Any, x: Any) -> str:
+        V.kernel.helpers.update(["special:digamma_f", "special:trigamma_f", "special:lgamma_f",
+                                 "special:polygamma_f", "polygamma_n"])
+        return f"polygamma_n({', '.join(_float_args(n, x))})"
+
+    @staticmethod
+    def frexp(x: Any) -> tuple[Any, Any]:
+        V.kernel.helpers.add("special:frexp_f")
+        (e,) = _float_args(x)
+        fr = V.kernel.cse.generate(V.kernel.compute, f"frexp_f({e})", dtype=torch.int32)
+        mant = V.kernel.cse.generate(V.kernel.compute, f"bitcast<f32>({fr}.x)", dtype=torch.float32)
+        expo = V.kernel.cse.generate(V.kernel.compute, f"bitcast<i32>({fr}.y)", dtype=torch.int32)
+        return mant, expo
+
+    @staticmethod
+    def nextafter(a: Any, b: Any) -> str:
+        # float32 bit stepping (other dtypes fall back to eager: see
+        # _inductor/__init__.py).
+        x, y = _float_args(a, b)
+        return (f"select(select(select(bitcast<f32>(select(bitcast<u32>({x}) - 1u, bitcast<u32>({x}) + 1u, "
+                f"({x} < {y}) == ({x} > 0.0f))), bitcast<f32>(select(1u, 0x80000001u, {y} < 0.0f)), {x} == 0.0f), "
+                f"{y}, {x} == {y}), nan_f(), isnan_f({x}) || isnan_f({y}))")
 
     @staticmethod
     def _rounding(fn: str, x: Any) -> str:
@@ -1056,7 +1164,7 @@ class WGSLKernel(SIMDKernel):
         if mode is None:
             line = f"st_{var}(u32({idx}), {v});"
         elif mode == "atomic_add":
-            if dtype not in (torch.float32, torch.int32):
+            if dtype not in (torch.float32, torch.int32, torch.float16, torch.bfloat16):
                 raise NotImplementedError(f"WebGPU Inductor backend: atomic_add on {dtype}")
             self.atomic_buffers.add(var)
             line = f"atomic_add_{var}(u32({idx}), {v});"
@@ -1171,7 +1279,9 @@ class WGSLKernel(SIMDKernel):
             self._tree_reduce(buf, f"{buf}[i] = welford_merge({buf}[i], {buf}[j]);")
             out = self.cse.newvar(dtype=torch.float32)
             self.stores.writeline(f"let {out} = {buf}[{seg}];")
-            return tuple(self.cse.generate(self.stores, f"{out}.{c}", dtype=torch.float32) for c in "xyz")
+            # The mean of nothing is NaN (as in eager), not the initial 0.
+            mean = f"select({out}.x, nan_f(), {out}.z == 0.0f)"
+            return tuple(self.cse.generate(self.stores, e, dtype=torch.float32) for e in (mean, f"{out}.y", f"{out}.z"))
         raise NotImplementedError(f"WebGPU Inductor backend: reduction {rtype}")
 
     # -- final source ----------------------------------------------------------
@@ -1206,10 +1316,15 @@ class WGSLKernel(SIMDKernel):
 
         code = IndentedBuffer()
         code.splice(_C._wgsl_prelude())
-        code.splice(_C._wgsl_math())
+        code.splice(opaque_math())
         code.splice(RANDOM_WGSL)
         if "welford" in self.helpers:
             code.splice(WELFORD_WGSL)
+        special = sorted(h.removeprefix("special:") for h in self.helpers if h.startswith("special:"))
+        if special:
+            code.splice(_C._wgsl_special(special))
+        if "polygamma_n" in self.helpers:
+            code.splice(POLYGAMMA_WGSL)
         # Buffer declarations depend on runtime aliasing (runtime.py); the spec
         # comment keeps sources that differ only in buffer dtypes distinct.
         self.buffer_specs = [

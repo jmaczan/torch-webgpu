@@ -66,6 +66,7 @@ def test_large_tensors_under_spec_default_limits():
     assert "ALL OK" in out.stdout, out.stdout[-2000:] + out.stderr[-3000:]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("target", ["tests/ops", "tests/opinfo/test_opinfo.py::test_opinfo"])
 def test_suites_under_spec_default_limits(target):
     """The regular suites must pass on a minimum-limits device too."""

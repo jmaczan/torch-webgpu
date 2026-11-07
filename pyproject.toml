@@ -27,7 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 docs = ["mkdocs", "mkdocs-material"]
-dev = ["pytest", "mkdocs", "mkdocs-material", "ruff"]
+dev = ["pytest", "pytest-xdist", "pytest-timeout", "expecttest", "hypothesis", "mkdocs", "mkdocs-material", "ruff"]
 
 [project.urls]
 Homepage = "https://github.com/jmaczan/torch-webgpu"
@@ -44,6 +44,14 @@ package-dir = {"" = "python"}
 
 [tool.setuptools.packages.find]
 where = ["python"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Legacy scripts (pre-revival compiler experiments), not tests.
+norecursedirs = ["__pycache__"]
+addopts = ["-p", "no:cacheprovider", "--ignore=tests/playground.py", "--ignore=tests/test_dev.py",
+           "--ignore=tests/test_compile_dev.py"]
+filterwarnings = ["ignore::UserWarning:torch_webgpu", "ignore::DeprecationWarning"]
 
 [tool.pyright]
 pythonVersion = "3.12"
