@@ -29,6 +29,9 @@ echo "  Parallel jobs: $NUM_JOBS"
 
 DAWN_REV="${DAWN_REV:-514f52054a84babc8ca223d465c0a24d8d20e04d}"
 DAWN_ENABLE_GL="${DAWN_ENABLE_GL:-OFF}"
+# Dawn's OpenGL backend compiles through Tint's null writer, which the null
+# backend option enables.
+DAWN_ENABLE_NULL="$DAWN_ENABLE_GL"
 
 # Fetch the pinned revision if not present
 if [ ! -d "$DAWN_DIR/.git" ]; then
@@ -67,7 +70,7 @@ cmake -S . -B "$BUILD_DIR" \
     -DDAWN_FETCH_DEPENDENCIES=ON \
     -DDAWN_ENABLE_D3D11=OFF \
     -DDAWN_ENABLE_D3D12=$ENABLE_D3D12 \
-    -DDAWN_ENABLE_NULL=OFF \
+    -DDAWN_ENABLE_NULL=$DAWN_ENABLE_NULL \
     -DDAWN_ENABLE_DESKTOP_GL=$DAWN_ENABLE_GL \
     -DDAWN_ENABLE_OPENGLES=$DAWN_ENABLE_GL \
     -DDAWN_BUILD_SAMPLES=OFF \
