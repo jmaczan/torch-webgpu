@@ -14,7 +14,9 @@ on:
 
 concurrency:
   group: tests-${{ github.ref }}
-  cancel-in-progress: true
+  # Pushes queue instead of cancelling: the first Dawn build must finish to
+  # populate the cache.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DAWN_REV: 514f52054a84babc8ca223d465c0a24d8d20e04d
