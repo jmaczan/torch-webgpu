@@ -63,4 +63,19 @@ from . import _inductor  # noqa: E402
 
 _inductor.register()
 
+
+def _drain_queue_at_exit() -> None:
+    # Let submitted GPU work finish before the interpreter (and the GPU
+    # driver's libraries) tear down; work still in flight during unloading
+    # can crash the process at exit.
+    try:
+        _C._synchronize()
+    except Exception:  # noqa: BLE001 - never fail interpreter shutdown
+        pass
+
+
+import atexit  # noqa: E402
+
+atexit.register(_drain_queue_at_exit)
+
 __all__ = ["webgpu_backend", "webgpu"]
