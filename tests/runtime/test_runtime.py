@@ -313,6 +313,58 @@ class TestSerialization:
         assert m2.weight.data_ptr() != m.weight.data_ptr()
 
 
+# ------------------------------------------------------------ module moves
+class TestModuleMoves:
+    def _tied(self):
+        emb = torch.nn.Embedding(10, 4)
+        head = torch.nn.Linear(4, 10, bias=False)
+        head.weight = emb.weight
+        return torch.nn.ModuleDict({"emb": emb, "head": head})
+
+    def test_tied_weights_survive_moves(self):
+        m = self._tied()
+        for target in [D, "cpu", D]:
+            m.to(target)
+            assert m["emb"].weight is m["head"].weight
+            assert m["emb"].weight.device.type == torch.device(target).type
+
+    def test_parameter_identity_kept_for_optimizers(self):
+        m = torch.nn.Linear(3, 3)
+        opt = torch.optim.SGD(m.parameters(), lr=0.5)
+        before = m.weight
+        m.to(D)
+        assert m.weight is before  # optimizer created before .to() still works
+        w0 = m.weight.detach().cpu().clone()
+        m(torch.ones(2, 3, device=D)).sum().backward()
+        opt.step()
+        assert not torch.equal(m.weight.detach().cpu(), w0)
+
+    def test_tied_gradient_accumulates_both_uses(self):
+        m = self._tied()
+        ref = copy.deepcopy(m)
+        m.to(D)
+        idx = torch.tensor([1, 3, 3])
+        for mm, i in [(ref, idx), (m, idx.to(D))]:
+            mm["head"](mm["emb"](i)).square().mean().backward()
+        torch.testing.assert_close(m["emb"].weight.grad.cpu(), ref["emb"].weight.grad)
+
+    def test_weakref_fallback_keeps_tying(self):
+        import weakref
+        m = self._tied()
+        r = weakref.ref(m["emb"].weight)  # swapping is impossible with weakrefs
+        m.to(D)
+        assert m["emb"].weight is m["head"].weight and m["emb"].weight.is_webgpu
+        del r
+
+    def test_grads_and_buffers_move(self):
+        m = torch.nn.BatchNorm1d(4)
+        m(torch.randn(8, 4)).sum().backward()
+        m.to(D)
+        assert m.weight.grad.is_webgpu and m.running_mean.is_webgpu
+        m.half()
+        assert m.weight.dtype == torch.float16 and m.weight.is_webgpu
+
+
 # ------------------------------------------------------------------ autograd
 class TestAutograd:
     def test_backward_and_accumulation(self):
@@ -386,8 +438,9 @@ class TestErrors:
 
     def test_float64_runs_via_cpu(self):
         x = torch.arange(4, dtype=torch.float64, device=D)
-        with pytest.warns(UserWarning, match="float64|Double"):
-            y = (x * 2 + 1).sin()
+        y = (x * 2 + 1).sin()
+        # Warned once per op per process; the record says why it fell back.
+        assert any(k.startswith("aten::sin") and "[Double]" in k for k in torch_webgpu._C._fallback_ops())
         assert y.dtype == torch.float64 and y.is_webgpu
         assert torch.equal(y.cpu(), (torch.arange(4, dtype=torch.float64) * 2 + 1).sin())
 

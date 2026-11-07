@@ -54,6 +54,10 @@ def _patch_tensor_printing():
 
 _patch_tensor_printing()
 
+from . import _module_patch  # noqa: E402
+
+_module_patch.install()
+
 from .compiler.webgpu_compiler import webgpu_backend  # noqa: F401 E402
 
 __all__ = ["webgpu_backend", "webgpu"]
