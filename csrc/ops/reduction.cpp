@@ -238,7 +238,7 @@ namespace torch_webgpu::ops
             else if (ord == 0.0)
             {
                 op.name = "norm0";
-                op.step = "    return Acc(a.v + select(0.0, 1.0, x != 0.0));";
+                op.step = "    return Acc(a.v + select(0.0, 1.0, (bitcast<u32>(x) & 0x7fffffffu) != 0u));";
                 op.out0 = "    return a.v;";
             }
             else if (std::isinf(ord))

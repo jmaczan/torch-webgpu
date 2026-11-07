@@ -88,12 +88,15 @@ fn f32_to_f16_bits(v: f32) -> u32 {
     if (abs(v) >= 65520.0) { return sign | 0x7c00u; }
     return pack2x16float(vec2<f32>(v, 0.0)) & 0xffffu;
 }
+// Round to nearest even, branch-free. Drivers may fold NaN tests on computed
+// values away (fast math), so NaN must come out right without one: the
+// magnitude saturates at 0x7fffffff, which only NaNs can reach, keeping them
+// NaN (NVIDIA's canonical NaN 0x7fffffff would otherwise round to -0).
 fn f32_to_bf16_bits(v: f32) -> u32 {
     let u = bitcast<u32>(v);
-    if ((u & 0x7f800000u) == 0x7f800000u && (u & 0x007fffffu) != 0u) {
-        return ((u >> 16u) & 0x8000u) | 0x7fc0u;
-    }
-    return ((u + 0x7fffu + ((u >> 16u) & 1u)) >> 16u) & 0xffffu;
+    let a = u & 0x7fffffffu;
+    let r = min(a + 0x7fffu + ((a >> 16u) & 1u), 0x7fffffffu) >> 16u;
+    return r | ((u >> 16u) & 0x8000u);
 }
 
 // ---- 64-bit integers: (lo, hi) two's complement --------------------------
@@ -441,7 +444,9 @@ fn i64_from_f32(v: f32) -> i64 {
         case CT::I32:
             return from == CT::Bool ? "select(0, 1, " + expr + ")" : "i32(" + expr + ")";
         case CT::Bool:
-            return from == CT::F32 ? "((" + expr + ") != 0.0)" : "((" + expr + ") != 0)";
+            // Float -> bool tests the magnitude bits: drivers may compile `x != 0.0`
+            // as an ordered comparison, making NaN false (it must be true).
+            return from == CT::F32 ? "((bitcast<u32>(" + expr + ") & 0x7fffffffu) != 0u)" : "((" + expr + ") != 0)";
         case CT::I64:
             if (from == CT::F32)
                 return "i64_from_f32(" + expr + ")";

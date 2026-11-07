@@ -32,6 +32,28 @@ if torch._C._get_privateuse1_backend_name() != "webgpu":
         for_packed_sequence=True,
     )
 
+
+def _patch_tensor_printing():
+    # Printing formats values in float64, which WebGPU hardware lacks; doing it
+    # on the CPU avoids per-op CPU fallbacks (and their warnings) and prints
+    # exactly what a CPU tensor would. Only summarized data reaches this.
+    import torch._tensor_str as ts
+
+    orig = getattr(ts, "tensor_totype", None)
+    if orig is None or getattr(orig, "_webgpu_patched", False):
+        return
+
+    def tensor_totype(t):
+        if t.device.type == "webgpu":
+            t = t.cpu()
+        return orig(t)
+
+    tensor_totype._webgpu_patched = True
+    ts.tensor_totype = tensor_totype
+
+
+_patch_tensor_printing()
+
 from .compiler.webgpu_compiler import webgpu_backend  # noqa: F401 E402
 
 __all__ = ["webgpu_backend", "webgpu"]

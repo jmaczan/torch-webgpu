@@ -15,6 +15,9 @@ namespace torch_webgpu::kernels
         static const std::string s = R"(
 fn isnan_f(x: f32) -> bool { return (bitcast<u32>(x) & 0x7fffffffu) > 0x7f800000u; }
 fn isinf_f(x: f32) -> bool { return (bitcast<u32>(x) & 0x7fffffffu) == 0x7f800000u; }
+// Unordered not-equal. Float `!=` must not be used directly: drivers may
+// compile it as an ordered comparison (false when either side is NaN).
+fn ne_f(x: f32, y: f32) -> bool { return x != y || isnan_f(x) || isnan_f(y); }
 fn isfinite_f(x: f32) -> bool { return (bitcast<u32>(x) & 0x7f800000u) != 0x7f800000u; }
 // NaN/Inf are not representable in WGSL constant expressions; going through
 // private variables makes them runtime values.
