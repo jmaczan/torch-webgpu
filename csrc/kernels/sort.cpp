@@ -2,6 +2,7 @@
 
 #include "core/allocator.h"
 #include "core/binding_set.h"
+#include "core/context.h"
 #include "core/kernel.h"
 #include "kernels/elementwise.h"
 #include "kernels/iter_layout.h"
@@ -17,6 +18,9 @@ namespace torch_webgpu::kernels
     namespace
     {
         constexpr uint32_t kWG = 256;
+        // Elements per workgroup in shared-memory bitonic stages (keys up to
+        // 8 bytes + 4-byte indices: 12 KiB, within the spec-minimum 16 KiB).
+        constexpr int64_t kLocalBlock = 1024;
 
         // Key ordering helpers: NaN is the largest value.
         std::string key_ops(CT ct)
@@ -102,18 +106,93 @@ namespace torch_webgpu::kernels
         };
         const auto &pipeline = core::get_pipeline(key.str(), make_source, "bitonic_sort");
 
+        // Stages with stride j < LB run inside a workgroup on a block of LB
+        // elements held in shared memory (one dispatch for all of them);
+        // only larger strides need a global pass each.
+        const int64_t LB = std::min<int64_t>(N, kLocalBlock);
+        std::ostringstream lkey;
+        lkey << "bitonic_local|" << int(keys.scalar_type()) << descending;
+        auto make_local = [&]()
+        {
+            std::ostringstream s;
+            s << wgsl::prelude() << math_wgsl() << key_ops(ct);
+            s << "struct Params { R: u32, N: u32, n: u32, LB: u32, k_first: u32, k_last: u32, nblocks: u32, _p: u32, };\n"
+              << "@group(0) @binding(0) var<storage, read_write> bk: array<u32>;\n"
+              << "@group(0) @binding(1) var<storage, read_write> bi: array<u32>;\n"
+              << "@group(0) @binding(2) var<uniform> P: Params;\n";
+            s << wgsl::load_fn("ldk", "bk", keys.scalar_type(), false) << wgsl::store_fn("stk", "bk", keys.scalar_type());
+            const char *T = wgsl::type_name(ct);
+            s << "fn after(ka: " << T << ", ia: u32, kb: " << T << ", ib: u32) -> bool {\n"
+              << "    if (ia >= P.n) { return ib < P.n || ia > ib; }\n"
+              << "    if (ib >= P.n) { return false; }\n";
+            if (descending)
+                s << "    if (key_lt(ka, kb)) { return true; }\n    if (key_lt(kb, ka)) { return false; }\n";
+            else
+                s << "    if (key_lt(kb, ka)) { return true; }\n    if (key_lt(ka, kb)) { return false; }\n";
+            s << "    return ia > ib;\n}\n";
+            s << "var<workgroup> sk: array<" << T << ", " << kLocalBlock << ">;\n"
+              << "var<workgroup> si: array<u32, " << kLocalBlock << ">;\n"
+              << "@compute @workgroup_size(" << kWG << ")\n"
+              << "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,\n"
+              << "        @builtin(num_workgroups) nwg: vec3<u32>) {\n"
+              << "    let blk = wid.x + wid.y * nwg.x;\n"
+              << "    if (blk >= P.nblocks) { return; }\n"
+              << "    let bpr = P.N / P.LB;\n"
+              << "    let r = blk / bpr;\n    let b0 = (blk % bpr) * P.LB;\n"
+              << "    let base = r * P.N + b0;\n"
+              << "    for (var e = lid.x; e < P.LB; e += " << kWG << "u) { sk[e] = ldk(base + e); si[e] = bi[base + e]; }\n"
+              << "    workgroupBarrier();\n"
+              << "    for (var k = P.k_first; k <= P.k_last; k = k << 1u) {\n"
+              << "        var j = min(k >> 1u, P.LB >> 1u);\n"
+              << "        loop {\n"
+              << "            if (j == 0u) { break; }\n"
+              << "            for (var t = lid.x; t < P.LB / 2u; t += " << kWG << "u) {\n"
+              << "                let l = (t / j) * 2u * j + (t % j);\n"
+              << "                let h = l + j;\n"
+              << "                let up = ((b0 + l) & k) == 0u;\n"
+              << "                let ka = sk[l];\n                let kb = sk[h];\n"
+              << "                let ia = si[l];\n                let ib = si[h];\n"
+              << "                if (select(after(kb, ib, ka, ia), after(ka, ia, kb, ib), up)) {\n"
+              << "                    sk[l] = kb; sk[h] = ka; si[l] = ib; si[h] = ia;\n"
+              << "                }\n"
+              << "            }\n"
+              << "            workgroupBarrier();\n"
+              << "            j = j >> 1u;\n"
+              << "        }\n"
+              << "    }\n"
+              << "    for (var e = lid.x; e < P.LB; e += " << kWG << "u) { stk(base + e, sk[e]); bi[base + e] = si[e]; }\n"
+              << "}\n";
+            return s.str();
+        };
+        const auto &local = core::get_pipeline(lkey.str(), make_local, "bitonic_local");
+
         const uint32_t half = static_cast<uint32_t>(N / 2);
         auto grid = core::grid_1d(static_cast<uint64_t>(R) * half, kWG);
         const std::vector<core::BufferBinding> bufs{core::window_of(kp).binding, core::window_of(ip).binding};
-        for (int64_t k = 2; k <= N; k <<= 1)
+        const uint32_t nblocks = static_cast<uint32_t>(R * (N / LB));
+        const uint32_t maxd = core::Context::get().limits().maxComputeWorkgroupsPerDimension;
+        core::Grid lgrid;
+        lgrid.x = std::min(nblocks, maxd);
+        lgrid.y = (nblocks + lgrid.x - 1) / lgrid.x;
+        auto run_local = [&](int64_t k_first, int64_t k_last)
         {
-            for (int64_t j = k / 2; j >= 1; j >>= 1)
+            core::Params p;
+            p.u32(static_cast<uint32_t>(R)).u32(static_cast<uint32_t>(N)).u32(static_cast<uint32_t>(n));
+            p.u32(static_cast<uint32_t>(LB)).u32(static_cast<uint32_t>(k_first)).u32(static_cast<uint32_t>(k_last));
+            p.u32(nblocks).u32(0);
+            core::launch(local, bufs, p.data(), p.size(), lgrid);
+        };
+        run_local(2, LB);
+        for (int64_t k = 2 * LB; k <= N; k <<= 1)
+        {
+            for (int64_t j = k / 2; j >= LB; j >>= 1)
             {
                 core::Params p;
                 p.u32(static_cast<uint32_t>(R)).u32(static_cast<uint32_t>(N)).u32(static_cast<uint32_t>(n));
                 p.u32(static_cast<uint32_t>(k)).u32(static_cast<uint32_t>(j)).u32(grid.row_stride).u32(half).u32(0);
                 core::launch(pipeline, bufs, p.data(), p.size(), grid);
             }
+            run_local(k, k);
         }
         keys.copy_(kp.narrow(1, 0, n));
         indices.copy_(ip.narrow(1, 0, n));

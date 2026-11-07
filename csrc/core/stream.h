@@ -20,6 +20,10 @@
 
 namespace torch_webgpu::core
 {
+    // Error bits of the device-side error flag.
+    constexpr uint32_t kErrorIndexOutOfBounds = 1u;
+    constexpr uint32_t kErrorInvalidDistribution = 2u;
+
     struct UniformSlice
     {
         wgpu::Buffer buffer;
@@ -59,6 +63,8 @@ namespace torch_webgpu::core
         // out-of-bounds indices). Calling this marks the flag as "maybe set";
         // it is checked at the next host synchronization and raised as an
         // IndexError there (like CUDA device-side asserts).
+        // Device-side error flag: kernels atomicOr an error bit into word 0
+        // (see kError*); it is checked and raised at the next readback.
         const wgpu::Buffer &index_error_flag();
 
         size_t pending_dispatches() const { return pending_dispatches_; }

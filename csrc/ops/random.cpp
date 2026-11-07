@@ -10,7 +10,11 @@
 #include <ATen/TensorIterator.h>
 #include <torch/library.h>
 
+#include "core/binding_set.h"
 #include "core/generator.h"
+#include "core/kernel.h"
+#include "core/stream.h"
+#include <ATen/native/Resize.h>
 #include "kernels/elementwise.h"
 #include "kernels/math.h"
 #include "ops/common.h"
@@ -261,8 +265,90 @@ fn randn(idx: u32, seed_lo: u32, seed_hi: u32, off_lo: u32, off_hi: u32) -> f32 
 #undef RNG_ARGS
     }
 
+    namespace
+    {
+        // Raises error bit `code` on the device (reported at the next sync)
+        // when the 0-dim bool tensor `cond` is true: CUDA-style async check.
+        void device_assert_not(const Tensor &cond, uint32_t code)
+        {
+            static const std::string src = R"(
+struct Params { off: u32, code: u32, _p0: u32, _p1: u32, };
+@group(0) @binding(0) var<storage, read> bc: array<u32>;
+@group(0) @binding(1) var<storage, read_write> flag: array<atomic<u32>>;
+@group(0) @binding(2) var<uniform> P: Params;
+@compute @workgroup_size(1)
+fn main() {
+    let w = bc[P.off / 4u];
+    if (((w >> ((P.off % 4u) * 8u)) & 0xffu) != 0u) { atomicOr(&flag[0], P.code); }
+}
+)";
+            const auto &pipeline = core::get_pipeline(src, "device_assert");
+            const auto w = core::window_of(cond);
+            uint32_t params[4] = {w.offset, code, 0, 0};
+            core::Grid g;
+            core::launch(pipeline, {w.binding, {core::Stream::get().index_error_flag()}}, params, sizeof(params), g);
+        }
+
+        // multinomial: categories sampled per row of `self` ([C] or [R, C]).
+        //  - one sample / without replacement: the exponential race
+        //    argtopk(p / E), E ~ Exp(1) (as CPU / CUDA do);
+        //  - with replacement: inverse CDF through cumsum + searchsorted.
+        Tensor &multinomial_out_fn(const Tensor &self, int64_t n_sample, bool replacement,
+                                   std::optional<at::Generator> gen, Tensor &result)
+        {
+            TORCH_CHECK(result.device() == self.device(), "multinomial arguments must have the same device");
+            TORCH_CHECK(self.dim() > 0 && self.dim() <= 2, "prob_dist must be 1 or 2 dim");
+            TORCH_CHECK(at::isFloatingType(self.scalar_type()), "multinomial only supports floating-point dtypes for input, got: ",
+                        self.scalar_type());
+            TORCH_CHECK(result.scalar_type() == at::kLong, "multinomial expects Long tensor out, got: ", result.scalar_type());
+            TORCH_CHECK(n_sample > 0, "cannot sample n_sample <= 0 samples");
+            const int64_t C = self.size(-1);
+            TORCH_CHECK(replacement || n_sample <= C, "cannot sample n_sample > prob_dist.size(-1) samples without replacement");
+            TORCH_CHECK(C <= (int64_t(1) << 24), "number of categories cannot exceed 2^24");
+            if (!wgsl::is_compute_dtype(self.scalar_type()))
+                return WEBGPU_FALLBACK(multinomial, out)(self, n_sample, replacement, gen, result);
+            Tensor p = self.dim() == 1 ? self.unsqueeze(0) : self;
+            const int64_t R = p.size(0);
+            at::native::resize_output(result, self.dim() == 1 ? std::vector<int64_t>{n_sample} : std::vector<int64_t>{R, n_sample});
+            if (result.numel() == 0)
+                return result;
+            Tensor pf = p.to(at::kFloat);
+            // Validation, reported asynchronously (no sync per sample).
+            Tensor nonzero = (pf > 0).sum(-1);
+            Tensor bad = ((pf < 0) | pf.isnan() | pf.isinf()).any() | (nonzero == 0).any();
+            if (!replacement)
+                bad = bad | (nonzero < n_sample).any();
+            device_assert_not(bad, core::kErrorInvalidDistribution);
+            Tensor idx;
+            if (!replacement || n_sample == 1)
+            {
+                Tensor e = at::empty_like(pf);
+                exponential_fn(e, 1.0, gen);
+                Tensor keys = pf / e;
+                idx = n_sample == 1 ? keys.argmax(-1, true) : std::get<1>(keys.topk(n_sample, -1, true, true));
+            }
+            else
+            {
+                Tensor cdf = pf.cumsum(-1);
+                Tensor u = at::empty({R, n_sample}, pf.options());
+                uniform_fn(u, 0.0, 1.0, gen);
+                u = u * cdf.narrow(-1, C - 1, 1);
+                idx = at::searchsorted(cdf.contiguous(), u, /*out_int32=*/false, /*right=*/true).clamp_max_(C - 1);
+            }
+            result.copy_(self.dim() == 1 ? idx.view({n_sample}) : idx);
+            return result;
+        }
+        Tensor multinomial_fn(const Tensor &self, int64_t n_sample, bool replacement, std::optional<at::Generator> gen)
+        {
+            Tensor result = at::empty({0}, self.options().dtype(at::kLong));
+            return multinomial_out_fn(self, n_sample, replacement, gen, result);
+        }
+    }
+
     TORCH_LIBRARY_IMPL(aten, PrivateUse1, m)
     {
+        m.impl("multinomial", TORCH_FN(multinomial_fn));
+        m.impl("multinomial.out", TORCH_FN(multinomial_out_fn));
         m.impl("uniform_", TORCH_FN(uniform_fn));
         m.impl("normal_", TORCH_FN(normal_fn));
         m.impl("log_normal_", TORCH_FN(log_normal_fn));

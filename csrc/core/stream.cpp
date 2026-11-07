@@ -63,9 +63,15 @@ namespace torch_webgpu::core
             return;
         static const uint32_t zero[4] = {0, 0, 0, 0};
         Context::get().queue().WriteBuffer(error_flag_, 0, zero, sizeof(zero));
-        TORCH_CHECK_INDEX(false, "torch_webgpu: index out of bounds in an indexing kernel (e.g. index_select, gather, "
-                                 "advanced indexing or embedding). The error is reported asynchronously at the next "
-                                 "synchronization point, so the failing op ran before this call.");
+        TORCH_CHECK_INDEX(!(flag & kErrorIndexOutOfBounds),
+                          "torch_webgpu: index out of bounds in an indexing kernel (e.g. index_select, gather, "
+                          "advanced indexing or embedding). The error is reported asynchronously at the next "
+                          "synchronization point, so the failing op ran before this call.");
+        TORCH_CHECK(!(flag & kErrorInvalidDistribution),
+                    "torch_webgpu: invalid multinomial distribution (probabilities must be finite, non-negative and "
+                    "not all zero; without replacement, enough of them must be non-zero). Reported asynchronously "
+                    "at the next synchronization point.");
+        TORCH_CHECK(false, "torch_webgpu: a kernel reported error code ", flag);
     }
 
     wgpu::CommandEncoder &Stream::encoder()
