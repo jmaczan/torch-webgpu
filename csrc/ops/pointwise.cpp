@@ -116,7 +116,7 @@ namespace torch_webgpu::ops
         WG_UNARY(sin, K("sin", {"sin_f(x0)"}))
         WG_UNARY(cos, K("cos", {"cos_f(x0)"}))
         WG_UNARY(tan, K("tan", {"tan_f(x0)"}))
-        WG_UNARY(asin, K("asin", {"asin(x0)"}))
+        WG_UNARY(asin, K("asin", {"asin_f(x0)"}))
         WG_UNARY(acos, K("acos", {"acos(x0)"}))
         WG_UNARY(atan, K("atan", {"atan(x0)"}))
         WG_UNARY(sinh, K("sinh", {"sinh(x0)"}))

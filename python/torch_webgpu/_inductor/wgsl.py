@@ -792,7 +792,7 @@ class WGSLOverrides(OpOverrides):
     sin = _float_unary("sin_f({})")
     cos = _float_unary("cos_f({})")
     tan = _float_unary("tan_f({})")
-    asin = _float_unary("asin({})")
+    asin = _float_unary("asin_f({})")
     acos = _float_unary("acos({})")
     atan = _float_unary("atan({})")
     sinh = _float_unary("sinh({})")

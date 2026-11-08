@@ -27,6 +27,13 @@ fn nan_f() -> f32 { return bitcast<f32>(NAN_BITS); }
 fn inf_f() -> f32 { return bitcast<f32>(INF_BITS); }
 fn signbit_f(x: f32) -> bool { return (bitcast<u32>(x) >> 31u) == 1u; }
 
+// asin through atan2: some drivers' built-in asin loses accuracy near +-1
+// (llvmpipe / lavapipe). Outside [-1, 1] (and for NaN) the result is NaN.
+fn asin_f(x: f32) -> f32 {
+    if (!(abs(x) <= 1.0)) { return nan_f(); }
+    return atan2(x, sqrt((1.0 - x) * (1.0 + x)));
+}
+
 // NaN-propagating min/max (torch.maximum / torch.minimum / clamp semantics).
 fn max_nan(a: f32, b: f32) -> f32 { if (isnan_f(a) || isnan_f(b)) { return nan_f(); } return max(a, b); }
 fn min_nan(a: f32, b: f32) -> f32 { if (isnan_f(a) || isnan_f(b)) { return nan_f(); } return min(a, b); }
