@@ -47,6 +47,7 @@ nav:
     - Contributing: development/contributing.md
     - Building from Source: development/building.md
     - Running Tests: development/testing.md
+    - Roadmap: development/roadmap.md
   - API Reference: api.md
 
 markdown_extensions:
