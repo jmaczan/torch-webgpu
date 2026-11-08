@@ -83,6 +83,8 @@ jobs:
           - backend: opengles    # llvmpipe, compatibility mode
     env:
       TORCH_WEBGPU_BACKEND: ${{ matrix.backend }}
+      # Headless Mesa EGL for the OpenGL ES backend.
+      EGL_PLATFORM: surfaceless
       TORCH_WEBGPU_FALLBACK_WARN: "0"
       HF_HUB_OFFLINE: "1"
       # Software rasterizers: one device thread per core is plenty.
@@ -109,12 +111,19 @@ jobs:
       - name: Build torch-webgpu
         run: DAWN_PREFIX=$PWD/dawn-install python -m pip install -e . --no-build-isolation
       - name: Device info
-        run: python -c "import torch, torch_webgpu; print(torch.webgpu.get_device_name()); print(torch.webgpu.get_device_properties())"
+        run: |
+          set -o pipefail
+          TORCH_WEBGPU_DEBUG=1 python -c "import torch, torch_webgpu; print(torch.webgpu.get_device_properties())" 2>&1 | tee device.log || {
+            tail -15 device.log | while IFS= read -r line; do echo "::error::${line:0:900}"; done; exit 1; }
       - name: Python tests
         run: |
           MARKS="not slow"
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then MARKS=""; fi
-          python -m pytest tests -q -m "$MARKS" --timeout 1800 --junitxml=pytest-${{ matrix.backend }}.xml
+          set -o pipefail
+          python -m pytest tests -q -rfE -m "$MARKS" --timeout 1800 --junitxml=pytest-${{ matrix.backend }}.xml 2>&1 | tee pytest.log || {
+            grep -E "^(FAILED|ERROR)|Error" pytest.log | head -40 | while IFS= read -r line; do echo "::error::${line:0:900}"; done
+            tail -3 pytest.log | while IFS= read -r line; do echo "::error::tail: ${line:0:900}"; done
+            exit 1; }
       - name: C++ tests
         if: matrix.backend == 'vulkan'
         run: |

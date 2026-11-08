@@ -23,6 +23,13 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 import torch_webgpu  # noqa: E402
 
 
+# Pre-revival scripts in tests/ that need transformers at import time.
+try:
+    import transformers  # noqa: F401
+except ImportError:
+    collect_ignore = ["test_qwen_compile.py", "test_qwen.py", "test_llama3.py", "test_llama4.py"]
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: long-running test (deselect with -m 'not slow')")
     config.addinivalue_line("markers", "models: needs Hugging Face models in the local cache")
