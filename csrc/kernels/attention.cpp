@@ -274,6 +274,14 @@ namespace torch_webgpu::kernels
             DVP *= 2;
         const int64_t G = 256 / DVP; // key groups in the PV product
         const bool has_bias = bias.defined();
+        // TPK lanes share a key's dot product (each a slice of D, its loads
+        // independent), so a workgroup scores 256 / TPK keys per pass: short
+        // contexts take one pass instead of a long serial loop per thread.
+        const int64_t keys = std::min(Lk, NS > 1 ? chunk : Lk);
+        int64_t TPK = 1;
+        while (TPK < 8 && 256 / (TPK * 2) >= keys && D % (TPK * 2) == 0)
+            TPK *= 2;
+        const int64_t KPP = 256 / TPK;
 
         const bool split = NS > 1;
         // Partials per (b, h, query, split): [m, l, o_0 .. o_{Dv-1}].
@@ -288,7 +296,7 @@ namespace torch_webgpu::kernels
         auto bind = [&](int r) { return "buf" + std::to_string(bs.binding(r)); };
 
         std::ostringstream key;
-        key << "attn_decode|" << D << ',' << Dv << ',' << CAP << ',' << split << '|' << int(q.scalar_type()) << int(k.scalar_type())
+        key << "attn_decode|" << D << ',' << Dv << ',' << CAP << ',' << split << ',' << TPK << '|' << int(q.scalar_type()) << int(k.scalar_type())
             << int(v.scalar_type()) << int(out.scalar_type()) << (has_bias ? int(bias.scalar_type()) : -1) << '|'
             << bs.binding(out_r) << (split ? -1 : bs.binding(lse_r)) << bs.binding(q_r) << bs.binding(k_r)
             << bs.binding(v_r) << (has_bias ? bs.binding(b_r) : -1) << bs.bindings().size();
@@ -345,37 +353,53 @@ namespace torch_webgpu::kernels
                  "    let vbase = P.offs[2] + b * P.sv[0] + hk * P.sv[1];\n"
               << "    for (var d = lid; d < " << D << "u; d += 256u) { Qs[d] = ldq(qbase + d * P.sq[3]); }\n"
                  "    workgroupBarrier();\n"
-                 // scores and the running max of visible keys
+                 // scores and the running max of visible keys: lane `part` of key
+                 // slot `ks` sums dims [part * DT, (part + 1) * DT)
                  "    var mx = 0.0;\n    var cnt = 0u;\n"
-                 "    for (var j = k0 + lid; j < k1; j += 256u) {\n"
-                 "        var visible = P.causal == 0u || j <= qi;\n"
+              << "    let ks = lid / " << TPK << "u;\n    let part = lid % " << TPK << "u;\n"
+              << "    for (var j0 = k0; j0 < k1; j0 += " << KPP << "u) {\n"
+                 "        let j = j0 + ks;\n"
+                 "        var visible = j < k1 && (P.causal == 0u || j <= qi);\n"
                  "        var sc = 0.0;\n"
                  "        if (visible) {\n"
-                 "            let kr = kbase + j * P.sk[2];\n"
-              ;
-            if (D % 8 == 0)
-                // Eight independent partial sums: the key row's loads overlap
-                // instead of forming one dependent chain.
-                s << "            var s8 = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);\n"
-                  << "            for (var d = 0u; d < " << D << "u; d += 8u) {\n"
-                     "                for (var e = 0u; e < 8u; e++) { s8[e] += Qs[d + e] * ldk(kr + (d + e) * P.sk[3]); }\n"
+              << "            let kr = kbase + j * P.sk[2];\n"
+              << "            let d0 = part * " << D / TPK << "u;\n";
+            const int64_t DT = D / TPK;
+            if (DT % 4 == 0)
+                // Four independent partial sums: the loads overlap instead of
+                // forming one dependent chain.
+                s << "            var s4 = vec4<f32>(0.0);\n"
+                  << "            for (var d = d0; d < d0 + " << DT << "u; d += 4u) {\n"
+                     "                s4 += vec4<f32>(Qs[d], Qs[d + 1u], Qs[d + 2u], Qs[d + 3u]) * vec4<f32>(ldk(kr + d * P.sk[3]), "
+                     "ldk(kr + (d + 1u) * P.sk[3]), ldk(kr + (d + 2u) * P.sk[3]), ldk(kr + (d + 3u) * P.sk[3]));\n"
                      "            }\n"
-                     "            sc = ((s8[0] + s8[1]) + (s8[2] + s8[3])) + ((s8[4] + s8[5]) + (s8[6] + s8[7]));\n";
+                     "            sc = (s4.x + s4.y) + (s4.z + s4.w);\n";
             else
-                s << "            for (var d = 0u; d < " << D << "u; d++) { sc += Qs[d] * ldk(kr + d * P.sk[3]); }\n";
+                s << "            for (var d = d0; d < d0 + " << DT << "u; d++) { sc += Qs[d] * ldk(kr + d * P.sk[3]); }\n";
+            if (TPK > 1)
+                s << "        }\n"
+                     "        R[lid] = sc;\n"
+                     "        workgroupBarrier();\n"
+                     "        if (part == 0u && visible) {\n"
+                     "            sc = R[lid];\n"
+                  << "            for (var e = 1u; e < " << TPK << "u; e++) { sc += R[lid + e]; }\n";
             s << "            sc = sc * P.scale;\n";
             if (has_bias)
                 s << "            let bv = ldb(P.offs2[0] + b * P.sb[0] + h * P.sb[1] + qi * P.sb[2] + j * P.sb[3]);\n"
                      "            if (isinf_f(bv) && signbit_f(bv)) { visible = false; } else { sc += bv; }\n";
             s << "        }\n"
-                 "        if (visible) {\n"
-                 "            if (cnt == 0u || sc > mx) { mx = sc; }\n"
-                 "            cnt += 1u;\n"
-                 "            S[j - k0] = bitcast<u32>(sc);\n"
-                 "        } else {\n"
-                 "            S[j - k0] = MASKED;\n"
-                 "        }\n"
-                 "    }\n"
+                 "        if (part == 0u && j < k1) {\n"
+                 "            if (visible) {\n"
+                 "                if (cnt == 0u || sc > mx) { mx = sc; }\n"
+                 "                cnt += 1u;\n"
+                 "                S[j - k0] = bitcast<u32>(sc);\n"
+                 "            } else {\n"
+                 "                S[j - k0] = MASKED;\n"
+                 "            }\n"
+                 "        }\n";
+            if (TPK > 1)
+                s << "        workgroupBarrier();\n";
+            s << "    }\n"
                  "    R[lid] = mx;\n    RC[lid] = cnt;\n"
                  "    workgroupBarrier();\n"
                  "    for (var st = 128u; st > 0u; st >>= 1u) {\n"
@@ -408,7 +432,21 @@ namespace torch_webgpu::kernels
               << "    let g = lid / " << DVP << "u;\n    let d = lid % " << DVP << "u;\n"
                  "    var acc = 0.0;\n"
               << "    if (d < " << Dv << "u) {\n"
-              << "        for (var j = k0 + g; j < k1; j += " << G << "u) {\n"
+              << "        var j = k0 + g;\n"
+              << "        for (; j + " << 3 * G << "u < k1; j += " << 4 * G << "u) {\n"
+                 "            let v0 = ldv(vbase + j * P.sv[2] + d * P.sv[3]);\n"
+              << "            let v1 = ldv(vbase + (j + " << G << "u) * P.sv[2] + d * P.sv[3]);\n"
+              << "            let v2 = ldv(vbase + (j + " << 2 * G << "u) * P.sv[2] + d * P.sv[3]);\n"
+              << "            let v3 = ldv(vbase + (j + " << 3 * G << "u) * P.sv[2] + d * P.sv[3]);\n"
+                 // (masked keys have p == 0: skip their values, which may be inf / NaN)
+                 "            let p0 = bitcast<f32>(S[j - k0]);\n"
+              << "            let p1 = bitcast<f32>(S[j + " << G << "u - k0]);\n"
+              << "            let p2 = bitcast<f32>(S[j + " << 2 * G << "u - k0]);\n"
+              << "            let p3 = bitcast<f32>(S[j + " << 3 * G << "u - k0]);\n"
+                 "            acc += select(0.0, p0 * v0, p0 != 0.0) + select(0.0, p1 * v1, p1 != 0.0) + "
+                 "select(0.0, p2 * v2, p2 != 0.0) + select(0.0, p3 * v3, p3 != 0.0);\n"
+                 "        }\n"
+              << "        for (; j < k1; j += " << G << "u) {\n"
                  "            let p = bitcast<f32>(S[j - k0]);\n"
                  "            if (p != 0.0) { acc += p * ldv(vbase + j * P.sv[2] + d * P.sv[3]); }\n"
                  "        }\n"
