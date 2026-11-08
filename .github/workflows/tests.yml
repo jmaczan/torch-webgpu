@@ -102,7 +102,7 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 libegl1 libgles2 libegl-mesa0 ninja-build
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 libegl1 libegl-dev libgles2 libegl-mesa0 ninja-build  # Dawn dlopens libEGL.so (from libegl-dev)
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
