@@ -37,8 +37,11 @@ def _val(n: Any) -> torch.Tensor | None:
     return v if isinstance(v, torch.Tensor) else None
 
 
-def _is_webgpu_f32(v: torch.Tensor | None) -> bool:
-    return v is not None and v.device.type == "webgpu" and v.dtype == torch.float32
+_GEMV_DTYPES = (torch.float32, torch.float16, torch.bfloat16)
+
+
+def _is_webgpu_float(v: torch.Tensor | None) -> bool:
+    return v is not None and v.device.type == "webgpu" and v.dtype in _GEMV_DTYPES
 
 
 def _linear_parts(node: torch.fx.Node):
@@ -53,7 +56,7 @@ def _linear_parts(node: torch.fx.Node):
             return None
         b, x, wt = node.args
         bv = _val(b)
-        if bv is None or bv.dim() != 1 or not _is_webgpu_f32(bv):
+        if bv is None or bv.dim() != 1 or not _is_webgpu_float(bv):
             return None
     else:
         return None
@@ -64,11 +67,13 @@ def _linear_parts(node: torch.fx.Node):
     else:
         return None
     xv, wv = _val(x), _val(w)
-    if not (_is_webgpu_f32(xv) and _is_webgpu_f32(wv)) or xv.dim() != 2 or wv.dim() != 2:
+    if not (_is_webgpu_float(xv) and _is_webgpu_float(wv)) or xv.dim() != 2 or wv.dim() != 2:
         return None
     if not isinstance(xv.shape[0], int) or xv.shape[0] > MAX_ROWS or not isinstance(wv.shape[0], int):
         return None
-    if xv.shape[1] != wv.shape[1] or not wv.is_contiguous():
+    if xv.shape[1] != wv.shape[1] or not wv.is_contiguous() or wv.dtype != xv.dtype:
+        return None
+    if b is not None and _val(b).dtype != xv.dtype:
         return None
     return x, w, b
 

@@ -58,6 +58,50 @@ def test_half_inputs():
     close(F.linear(x.to(D), w.to(D)).float(), F.linear(x.float(), w.float()), 2e-2)
 
 
+def _half_ref(x, w, b, dtype):
+    # CPU half linears accumulate in float32 and round once.
+    return F.linear(x.float(), w.float(), None if b is None else b.float()).to(dtype).float()
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("M", [1, 3, 16])
+@pytest.mark.parametrize("N,K", [(7, 8), (37, 1032), (896, 896), (5, 24), (3, 12)])
+@pytest.mark.parametrize("bias", [False, True])
+def test_linear_half(dtype, M, N, K, bias):
+    """Half-precision weights: vectorized GEMV (8 elements per load; K % 8
+    != 0 takes the scalar kernel), odd N exercises sub-word output stores."""
+    torch.manual_seed(M * N + K)
+    x, w = torch.randn(M, K).to(dtype), torch.randn(N, K).to(dtype)
+    b = torch.randn(N).to(dtype) if bias else None
+    out = F.linear(x.to(D), w.to(D), None if b is None else b.to(D))
+    assert out.dtype == dtype
+    close(out.float(), _half_ref(x, w, b, dtype), 2e-2)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("offset", [0, 4, 8])
+def test_linear_half_offsets(dtype, offset):
+    """Views starting off a 16-byte boundary take the scalar kernel."""
+    w, x = torch.randn(33, 140).to(dtype), torch.randn(2, 140).to(dtype)
+    wd, xd = w.to(D), x.to(D)
+    s = slice(offset, offset + 128)
+    close((xd[:, s] @ wd[:, s].t()).float(), _half_ref(x[:, s], w[:, s], None, dtype), 2e-2)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("M", [1, 5])
+def test_multi_linear_half(dtype, M):
+    torch.manual_seed(M)
+    K = 64
+    x = torch.randn(M, K).to(dtype)
+    ws = [torch.randn(n, K).to(dtype) for n in (33, 16, 7)]
+    bs = [torch.randn(33).to(dtype), None, torch.randn(7).to(dtype)]
+    ref = torch.cat([_half_ref(x, w, b, dtype) for w, b in zip(ws, bs)], -1)
+    out = torch.ops.webgpu.multi_linear(x.to(D), [w.to(D) for w in ws], [None if b is None else b.to(D) for b in bs])
+    assert out.dtype == dtype
+    close(out.float(), ref, 2e-2)
+
+
 MULTI_CASES = [
     ([896, 128, 128], 896, [True, True, True]),
     ([4864, 4864], 896, [False, False]),

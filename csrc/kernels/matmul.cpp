@@ -210,6 +210,38 @@ namespace torch_webgpu::kernels
     constexpr int64_t kSkinnyMaxM = 16;
     uint32_t gemv_lanes_per_row(int64_t N, int64_t K);
 
+    // 16-byte vector loads for the vectorized GEMVs: float32 as vec4<f32>
+    // (4 elements), float16 / bfloat16 as vec4<u32> (8 elements, unpacked
+    // to f32). `vmad(acc, a, w)` adds the vectors' products, element pairs
+    // summed into acc's lanes (the lanes are summed in the end).
+    struct VecKind
+    {
+        int64_t ev = 0;   // elements per vector
+        std::string type; // WGSL storage element type
+        std::string helpers;
+    };
+    bool vec_kind(c10::ScalarType t, VecKind &v)
+    {
+        if (t == at::kFloat)
+        {
+            v.ev = 4;
+            v.type = "vec4<f32>";
+            v.helpers = "fn vmad(acc: vec4<f32>, a: vec4<f32>, w: vec4<f32>) -> vec4<f32> { return acc + a * w; }\n";
+            return true;
+        }
+        if (t != at::kHalf && t != at::kBFloat16)
+            return false;
+        v.ev = 8;
+        v.type = "vec4<u32>";
+        v.helpers = t == at::kHalf
+                        ? "fn up(w: u32) -> vec2<f32> { return unpack2x16float(w); }\n"
+                        : "fn up(w: u32) -> vec2<f32> { return vec2<f32>(bitcast<f32>(w << 16u), bitcast<f32>(w & 0xffff0000u)); }\n";
+        v.helpers += "fn vmad(acc: vec4<f32>, a: vec4<u32>, w: vec4<u32>) -> vec4<f32> {\n"
+                     "    return acc + vec4<f32>(dot(up(a.x), up(w.x)), dot(up(a.y), up(w.y)), dot(up(a.z), up(w.z)), dot(up(a.w), up(w.w)));\n"
+                     "}\n";
+        return true;
+    }
+
     // Vectorized GEMV for float32 nn.Linear weights (contiguous along K,
     // 16-byte aligned rows): decode is bound by streaming the weights, so
     // each lane reads vec4s, four loads in flight per iteration. TPR lanes
@@ -219,10 +251,12 @@ namespace torch_webgpu::kernels
                           const c10::Scalar &beta, const c10::Scalar &alpha, bool has_bias)
     {
         const int64_t B = out.size(0), M = out.size(1), N = out.size(2), K = a.size(2);
-        if (a.scalar_type() != at::kFloat || w.scalar_type() != at::kFloat || K % 4 != 0)
+        VecKind vk;
+        if (a.scalar_type() != w.scalar_type() || !vec_kind(w.scalar_type(), vk))
             return false;
-        if (w.stride(1) != 1 || a.stride(2) != 1 || w.stride(2) % 4 != 0 || a.stride(1) % 4 != 0 ||
-            (B > 1 && (w.stride(0) % 4 != 0 || a.stride(0) % 4 != 0)))
+        const int64_t EV = vk.ev;
+        if (K % EV != 0 || w.stride(1) != 1 || a.stride(2) != 1 || w.stride(2) % EV != 0 || a.stride(1) % EV != 0 ||
+            (B > 1 && (w.stride(0) % EV != 0 || a.stride(0) % EV != 0)))
             return false;
         const auto to = out.scalar_type();
         const auto tb = has_bias ? bias.scalar_type() : to;
@@ -237,16 +271,16 @@ namespace torch_webgpu::kernels
         const auto &binds = bs.bindings();
         if (a_b == w_b || a_b == out_b || w_b == out_b || bias_b == out_b || bias_b == w_b || bias_b == a_b)
             return false;
-        if (bs.offset(a_r) % 4 != 0 || bs.offset(w_r) % 4 != 0)
+        if (bs.offset(a_r) % EV != 0 || bs.offset(w_r) % EV != 0)
             return false;
 
         // Lanes per row: enough rows per workgroup for large N, more lanes
         // (fewer rows) when N alone can't fill the GPU.
-        const uint32_t tpr = gemv_lanes_per_row(N, K);
+        const uint32_t tpr = gemv_lanes_per_row(N, K * 4 / EV);
         const uint32_t rows = 256 / tpr;
 
         std::ostringstream key;
-        key << "gemv4|" << M << '|' << tpr << '|' << int(to) << int(tb) << has_bias << '|' << a_b << w_b << bias_b
+        key << "gemv4|" << M << '|' << tpr << '|' << int(w.scalar_type()) << int(to) << int(tb) << has_bias << '|' << a_b << w_b << bias_b
             << out_b << binds.size();
         auto make_source = [&]()
         {
@@ -263,9 +297,10 @@ namespace torch_webgpu::kernels
                 const bool is_out = static_cast<int>(i) == out_b;
                 const bool vec = static_cast<int>(i) == a_b || static_cast<int>(i) == w_b;
                 s << "@group(0) @binding(" << i << ") var<storage, " << (is_out ? "read_write" : "read") << "> buf" << i
-                  << ": array<" << (vec ? "vec4<f32>" : is_out && wgsl::is_subword(to) ? "atomic<u32>" : "u32") << ">;\n";
+                  << ": array<" << (vec ? vk.type : is_out && wgsl::is_subword(to) ? "atomic<u32>" : "u32") << ">;\n";
             }
             s << "@group(0) @binding(" << binds.size() << ") var<uniform> P: Params;\n";
+            s << vk.helpers;
             if (has_bias)
                 s << wgsl::load_fn("ld_b", "buf" + std::to_string(bias_b), tb, false);
             s << wgsl::store_fn("st_o", "buf" + std::to_string(out_b), to);
@@ -277,10 +312,10 @@ namespace torch_webgpu::kernels
                  "    let t = l.x;\n    let b = wid.y;\n"
                  "    let lane = t % TPR;\n"
                  "    let n = wid.x * " << rows << "u + t / TPR;\n"
-                 // vec4 indices (offsets and strides are multiples of 4)
-                 "    let a0 = (P.off[0] + b * P.sa[0]) / 4u;\n"
-                 "    let w0 = (P.off[1] + b * P.sw[0] + min(n, P.N - 1u) * P.sw[2]) / 4u;\n"
-                 "    let sa1 = P.sa[1] / 4u;\n"
+                 // vector indices (offsets and strides are multiples of EV)
+                 "    let a0 = (P.off[0] + b * P.sa[0]) / " << EV << "u;\n"
+                 "    let w0 = (P.off[1] + b * P.sw[0] + min(n, P.N - 1u) * P.sw[2]) / " << EV << "u;\n"
+                 "    let sa1 = P.sa[1] / " << EV << "u;\n"
                  "    var acc: array<vec4<f32>, " << M << ">;\n"
                  "    var k = lane;\n"
                  "    if (n < P.N) {\n"
@@ -291,13 +326,13 @@ namespace torch_webgpu::kernels
                  "            let x3 = " << W << "[w0 + k + 3u * TPR];\n";
             for (int64_t m = 0; m < M; ++m)
                 s << "            { let ab = a0 + " << m << "u * sa1 + k;\n"
-                     "              acc[" << m << "] += " << A << "[ab] * x0 + " << A << "[ab + TPR] * x1 + " << A
-                  << "[ab + 2u * TPR] * x2 + " << A << "[ab + 3u * TPR] * x3; }\n";
+                     "              acc[" << m << "] = vmad(vmad(vmad(vmad(acc[" << m << "], " << A << "[ab], x0), " << A
+                  << "[ab + TPR], x1), " << A << "[ab + 2u * TPR], x2), " << A << "[ab + 3u * TPR], x3); }\n";
             s << "        }\n"
                  "        for (; k < P.K4; k += TPR) {\n"
                  "            let x0 = " << W << "[w0 + k];\n";
             for (int64_t m = 0; m < M; ++m)
-                s << "            acc[" << m << "] += " << A << "[a0 + " << m << "u * sa1 + k] * x0;\n";
+                s << "            acc[" << m << "] = vmad(acc[" << m << "], " << A << "[a0 + " << m << "u * sa1 + k], x0);\n";
             s << "        }\n    }\n";
             for (int64_t m = 0; m < M; ++m)
                 s << "    red[t * " << M << "u + " << m << "u] = dot(acc[" << m << "], vec4<f32>(1.0));\n";
@@ -323,7 +358,7 @@ namespace torch_webgpu::kernels
         const auto &pipeline = core::get_pipeline(key.str(), make_source, "gemv4");
 
         core::Params p;
-        p.u32(u32_of(M, "M")).u32(u32_of(N, "N")).u32(u32_of(K / 4, "K")).u32(0);
+        p.u32(u32_of(M, "M")).u32(u32_of(N, "N")).u32(u32_of(K / EV, "K")).u32(0);
         p.u32(bs.offset(a_r)).u32(bs.offset(w_r)).u32(bs.offset(out_r)).u32(has_bias ? bs.offset(bias_r) : 0u);
         auto strides = [&](const at::Tensor &t)
         {
@@ -722,8 +757,13 @@ namespace torch_webgpu::kernels
         if (J == 0 || J > 4 || biases.size() != J || x.dim() != 2 || out.dim() != 2)
             return false;
         const int64_t M = x.size(0), K = x.size(1);
-        if (M > kSkinnyMaxM || K % 4 != 0 || x.scalar_type() != at::kFloat || out.scalar_type() != at::kFloat ||
-            x.stride(1) != 1 || x.stride(0) % 4 != 0 || !out.is_contiguous())
+        const auto dt = x.scalar_type();
+        VecKind vk;
+        if (!vec_kind(dt, vk))
+            return false;
+        const int64_t EV = vk.ev;
+        if (M > kSkinnyMaxM || K % EV != 0 || out.scalar_type() != dt || x.stride(1) != 1 || x.stride(0) % EV != 0 ||
+            !out.is_contiguous())
             return false;
         int64_t total = 0;
         std::vector<int64_t> bounds; // cumulative row ends
@@ -731,11 +771,11 @@ namespace torch_webgpu::kernels
         for (size_t j = 0; j < J; ++j)
         {
             const auto &w = weights[j];
-            if (w.dim() != 2 || w.size(1) != K || w.scalar_type() != at::kFloat || !w.is_contiguous())
+            if (w.dim() != 2 || w.size(1) != K || w.scalar_type() != dt || !w.is_contiguous())
                 return false;
             if (biases[j].defined())
             {
-                if (biases[j].dim() != 1 || biases[j].size(0) != w.size(0) || biases[j].scalar_type() != at::kFloat ||
+                if (biases[j].dim() != 1 || biases[j].size(0) != w.size(0) || biases[j].scalar_type() != dt ||
                     biases[j].stride(0) != 1)
                     return false;
                 ++nbias;
@@ -770,17 +810,17 @@ namespace torch_webgpu::kernels
             seen.push_back(b);
             return true;
         };
-        if (!unique(out_r) || !unique(x_r) || bs.offset(x_r) % 4 != 0)
+        if (!unique(out_r) || !unique(x_r) || bs.offset(x_r) % EV != 0)
             return false;
         for (size_t j = 0; j < J; ++j)
-            if (!unique(w_r[j]) || bs.offset(w_r[j]) % 4 != 0 || (b_r[j] >= 0 && !unique(b_r[j])))
+            if (!unique(w_r[j]) || bs.offset(w_r[j]) % EV != 0 || (b_r[j] >= 0 && !unique(b_r[j])))
                 return false;
         const auto &binds = bs.bindings();
 
-        const uint32_t tpr = gemv_lanes_per_row(total, K);
+        const uint32_t tpr = gemv_lanes_per_row(total, K * 4 / EV);
         const uint32_t rows = 256 / tpr;
         std::ostringstream key;
-        key << "multi_gemv|" << M << '|' << tpr << '|' << J << '|';
+        key << "multi_gemv|" << int(dt) << '|' << M << '|' << tpr << '|' << J << '|';
         for (size_t j = 0; j < J; ++j)
             key << bs.binding(w_r[j]) << ',' << (b_r[j] >= 0 ? bs.binding(b_r[j]) : -1) << ';';
         key << bs.binding(x_r) << ',' << bs.binding(out_r) << ',' << binds.size();
@@ -802,28 +842,32 @@ namespace torch_webgpu::kernels
                 for (size_t j = 0; j < J; ++j)
                     vec = vec || static_cast<int>(i) == bs.binding(w_r[j]);
                 s << "@group(0) @binding(" << i << ") var<storage, " << (is_out ? "read_write" : "read") << "> buf" << i
-                  << ": array<" << (vec ? "vec4<f32>" : "f32") << ">;\n";
+                  << ": array<" << (vec ? vk.type : is_out && wgsl::is_subword(dt) ? "atomic<u32>" : "u32") << ">;\n";
             }
             s << "@group(0) @binding(" << binds.size() << ") var<uniform> P: Params;\n";
             s << "fn off(i: u32) -> u32 { return P.offs[i / 4u][i % 4u]; }\n";
+            s << vk.helpers;
+            s << wgsl::store_fn("st_o", "buf" + std::to_string(bs.binding(out_r)), dt);
+            for (size_t j = 0; j < J; ++j)
+                if (b_r[j] >= 0)
+                    s << wgsl::load_fn("ld_b" + std::to_string(j), "buf" + std::to_string(bs.binding(b_r[j])), dt, false);
             s << "var<workgroup> red: array<f32, " << 256 * M << ">;\n";
             s << "const TPR: u32 = " << tpr << "u;\n";
             const std::string X = "buf" + std::to_string(bs.binding(x_r));
-            const std::string O = "buf" + std::to_string(bs.binding(out_r));
             s << "@compute @workgroup_size(256)\n"
                  "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {\n"
                  "    let t = l.x;\n"
                  "    let lane = t % TPR;\n"
                  "    let n = wid.x * " << rows << "u + t / TPR;\n"
-                 "    let x0 = off(0u) / 4u;\n"
-                 "    let sx = P.sx / 4u;\n"
+                 "    let x0 = off(0u) / " << EV << "u;\n"
+                 "    let sx = P.sx / " << EV << "u;\n"
                  "    var acc: array<vec4<f32>, " << M << ">;\n";
             for (size_t j = 0; j < J; ++j)
             {
                 const std::string W = "buf" + std::to_string(bs.binding(w_r[j]));
                 const std::string lo = j == 0 ? "0u" : "P.ends[" + std::to_string(j - 1) + "]";
                 s << "    " << (j ? "else " : "") << "if (n < P.ends[" << j << "]) {\n"
-                  << "        let w0 = off(" << 2 + j << "u) / 4u + (n - " << lo << ") * P.K4;\n"
+                  << "        let w0 = off(" << 2 + j << "u) / " << EV << "u + (n - " << lo << ") * P.K4;\n"
                   << "        var k = lane;\n"
                   << "        for (; k + 3u * TPR < P.K4; k += 4u * TPR) {\n"
                   << "            let v0 = " << W << "[w0 + k];\n"
@@ -832,13 +876,13 @@ namespace torch_webgpu::kernels
                   << "            let v3 = " << W << "[w0 + k + 3u * TPR];\n";
                 for (int64_t m = 0; m < M; ++m)
                     s << "            { let ab = x0 + " << m << "u * sx + k;\n"
-                         "              acc[" << m << "] += " << X << "[ab] * v0 + " << X << "[ab + TPR] * v1 + " << X
-                      << "[ab + 2u * TPR] * v2 + " << X << "[ab + 3u * TPR] * v3; }\n";
+                         "              acc[" << m << "] = vmad(vmad(vmad(vmad(acc[" << m << "], " << X << "[ab], v0), " << X
+                      << "[ab + TPR], v1), " << X << "[ab + 2u * TPR], v2), " << X << "[ab + 3u * TPR], v3); }\n";
                 s << "        }\n"
                   << "        for (; k < P.K4; k += TPR) {\n"
                   << "            let v0 = " << W << "[w0 + k];\n";
                 for (int64_t m = 0; m < M; ++m)
-                    s << "            acc[" << m << "] += " << X << "[x0 + " << m << "u * sx + k] * v0;\n";
+                    s << "            acc[" << m << "] = vmad(acc[" << m << "], " << X << "[x0 + " << m << "u * sx + k], v0);\n";
                 s << "        }\n    }\n";
             }
             for (int64_t m = 0; m < M; ++m)
@@ -857,18 +901,20 @@ namespace torch_webgpu::kernels
                 if (b_r[j] < 0)
                     continue;
                 const std::string lo = j == 0 ? "0u" : "P.ends[" + std::to_string(j - 1) + "]";
-                s << "    if (n >= " << lo << " && n < P.ends[" << j << "]) { bias = buf" << bs.binding(b_r[j]) << "[off("
-                  << 6 + j << "u) + n - " << lo << "]; }\n";
+                s << "    if (n >= " << lo << " && n < P.ends[" << j << "]) { bias = "
+                  << wgsl::convert("ld_b" + std::to_string(j) + "(off(" + std::to_string(6 + j) + "u) + n - " + lo + ")",
+                                   wgsl::compute_type(dt), CT::F32)
+                  << "; }\n";
             }
             s << "    for (var m = 0u; m < " << M << "u; m++) {\n"
-                 "        " << O << "[off(1u) + m * P.N + n] = red[t * " << M << "u + m] + bias;\n"
+                 "        st_o(off(1u) + m * P.N + n, " << wgsl::convert("red[t * " + std::to_string(M) + "u + m] + bias", CT::F32, wgsl::compute_type(dt)) << ");\n"
                  "    }\n}\n";
             return s.str();
         };
         const auto &pipeline = core::get_pipeline(key.str(), make_source, "multi_gemv");
 
         core::Params p;
-        p.u32(u32_of(M, "M")).u32(u32_of(total, "N")).u32(u32_of(K / 4, "K")).u32(u32_of(x.stride(0), "stride"));
+        p.u32(u32_of(M, "M")).u32(u32_of(total, "N")).u32(u32_of(K / EV, "K")).u32(u32_of(x.stride(0), "stride"));
         for (size_t j = 0; j < 4; ++j)
             p.u32(j < J ? u32_of(bounds[j], "N") : u32_of(total, "N"));
         std::vector<uint32_t> offs(12, 0u);
