@@ -23,4 +23,18 @@ namespace torch_webgpu::kernels
     // does nothing) when the shapes, layouts or device limits don't allow it.
     bool run_multi_gemv(const at::Tensor &x, const std::vector<at::Tensor> &weights,
                         const std::vector<at::Tensor> &biases, const at::Tensor &out);
+
+    // multi_gemv whose input x is computed per workgroup (decode fusion):
+    //   kind 1 (RMSNorm): h = a (+ b, stored into h), x = w * (h / rms(h))
+    //   kind 2 (SwiGLU):  x = silu(a) * b
+    // Intermediate results are rounded to the tensors' dtype, as the
+    // unfused graph stores them. a, b, h: [M, K]; norm_weight: [K].
+    struct GemvPrologue
+    {
+        int kind = 0;
+        at::Tensor a, b, norm_weight, h;
+        double eps = 0.0;
+    };
+    bool run_multi_gemv_prologue(const GemvPrologue &pro, const std::vector<at::Tensor> &weights,
+                                 const std::vector<at::Tensor> &biases, const at::Tensor &out);
 }

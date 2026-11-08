@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 
 namespace torch_webgpu::kernels
@@ -750,21 +751,46 @@ namespace torch_webgpu::kernels
     }
     }
 
-    bool run_multi_gemv(const at::Tensor &x, const std::vector<at::Tensor> &weights,
-                        const std::vector<at::Tensor> &biases, const at::Tensor &out)
+    namespace
+    {
+    // x (or the prologue's a / b) is M x K, row stride `sx` elements.
+    bool multi_gemv_impl(const at::Tensor *x, const GemvPrologue *pro, const std::vector<at::Tensor> &weights,
+                         const std::vector<at::Tensor> &biases, const at::Tensor &out)
     {
         const size_t J = weights.size();
-        if (J == 0 || J > 4 || biases.size() != J || x.dim() != 2 || out.dim() != 2)
+        const at::Tensor &x0t = x ? *x : pro->a;
+        if (J == 0 || J > 4 || biases.size() != J || x0t.dim() != 2 || out.dim() != 2)
             return false;
-        const int64_t M = x.size(0), K = x.size(1);
-        const auto dt = x.scalar_type();
+        const int64_t M = x0t.size(0), K = x0t.size(1);
+        const auto dt = x0t.scalar_type();
         VecKind vk;
         if (!vec_kind(dt, vk))
             return false;
         const int64_t EV = vk.ev;
-        if (M > kSkinnyMaxM || K % EV != 0 || out.scalar_type() != dt || x.stride(1) != 1 || x.stride(0) % EV != 0 ||
-            !out.is_contiguous())
+        if (M > kSkinnyMaxM || K % EV != 0 || out.scalar_type() != dt || !out.is_contiguous())
             return false;
+        if (x && (x->stride(1) != 1 || x->stride(0) % EV != 0))
+            return false;
+        const int kind = pro ? pro->kind : 0;
+        if (pro)
+        {
+            // a, b: [M, K] rows with unit stride; norm weight [K]; h like out.
+            auto rows_ok = [&](const at::Tensor &t)
+            { return t.dim() == 2 && t.size(0) == M && t.size(1) == K && t.scalar_type() == dt && t.stride(1) == 1; };
+            if (!rows_ok(pro->a) || (pro->b.defined() && !rows_ok(pro->b)))
+                return false;
+            if (kind == 2 && !pro->b.defined())
+                return false;
+            if (kind == 1)
+            {
+                const auto &nw = pro->norm_weight;
+                if (!nw.defined() || nw.dim() != 1 || nw.size(0) != K || nw.scalar_type() != dt || nw.stride(0) != 1)
+                    return false;
+                if (pro->b.defined() && (!pro->h.defined() || !pro->h.is_contiguous() || pro->h.sizes() != pro->a.sizes() ||
+                                         pro->h.scalar_type() != dt))
+                    return false;
+            }
+        }
         int64_t total = 0;
         std::vector<int64_t> bounds; // cumulative row ends
         size_t nbias = 0;
@@ -786,12 +812,22 @@ namespace torch_webgpu::kernels
         if (out.size(0) != M || out.size(1) != total || total == 0 || M == 0)
             return false;
         const auto &limits = core::Context::get().limits();
-        if (2 + J + nbias > limits.maxStorageBuffersPerShaderStage)
+        // The prologue stages x (packed like the weights) in workgroup memory.
+        const int64_t stage_bytes = pro ? M * K * c10::elementSize(dt) : 0;
+        if (4 * 256 * M + stage_bytes + 4 * kSkinnyMaxM > int64_t(limits.maxComputeWorkgroupStorageSize))
+            return false;
+        const bool has_h = kind == 1 && pro->b.defined();
+        const size_t n_in = pro ? 1 + pro->b.defined() + (kind == 1) + has_h : 1;
+        if (1 + n_in + J + nbias > limits.maxStorageBuffersPerShaderStage)
             return false;
 
         core::BindingSet bs;
         const int out_r = bs.add(out, true);
-        const int x_r = bs.add(x);
+        const int x_r = x ? bs.add(*x) : -1;
+        const int a_r = pro ? bs.add(pro->a) : -1;
+        const int b_r2 = pro && pro->b.defined() ? bs.add(pro->b) : -1;
+        const int nw_r = kind == 1 ? bs.add(pro->norm_weight) : -1;
+        const int h_r = has_h ? bs.add(pro->h, true) : -1;
         std::vector<int> w_r, b_r;
         for (size_t j = 0; j < J; ++j)
         {
@@ -800,49 +836,65 @@ namespace torch_webgpu::kernels
         }
         bs.finalize();
         // Weights and x are bound as vec4 arrays: every one needs a binding
-        // of its own (no aliasing) and 16-byte aligned offsets.
+        // of its own (no aliasing) and 16-byte aligned offsets; written
+        // tensors must not alias anything.
         std::vector<int> seen;
         auto unique = [&](int r)
         {
+            if (r < 0)
+                return true;
             const int b = bs.binding(r);
             if (std::find(seen.begin(), seen.end(), b) != seen.end())
                 return false;
             seen.push_back(b);
             return true;
         };
-        if (!unique(out_r) || !unique(x_r) || bs.offset(x_r) % EV != 0)
+        if (!unique(out_r) || !unique(x_r) || !unique(h_r) || (x && bs.offset(x_r) % EV != 0))
             return false;
         for (size_t j = 0; j < J; ++j)
-            if (!unique(w_r[j]) || bs.offset(w_r[j]) % EV != 0 || (b_r[j] >= 0 && !unique(b_r[j])))
+            if (!unique(w_r[j]) || bs.offset(w_r[j]) % EV != 0 || !unique(b_r[j]))
+                return false;
+        // (prologue inputs are read element-wise and may share bindings)
+        for (int r : {a_r, b_r2, nw_r})
+            if (r >= 0 && (bs.binding(r) == bs.binding(out_r) || (h_r >= 0 && bs.binding(r) == bs.binding(h_r))))
                 return false;
         const auto &binds = bs.bindings();
 
-        const uint32_t tpr = gemv_lanes_per_row(total, K * 4 / EV);
+        // With a prologue, fewer lanes per row (more rows per workgroup)
+        // amortize staging x over more output rows.
+        uint32_t tpr = gemv_lanes_per_row(total, K * 4 / EV);
+        static const int pro_tpr = std::getenv("TORCH_WEBGPU_PRO_TPR") ? std::atoi(std::getenv("TORCH_WEBGPU_PRO_TPR")) : 64;
+        if (pro)
+            tpr = std::min<uint32_t>(tpr, pro_tpr);
         const uint32_t rows = 256 / tpr;
+        const int64_t KV = K / EV;
         std::ostringstream key;
-        key << "multi_gemv|" << int(dt) << '|' << M << '|' << tpr << '|' << J << '|';
+        key << "multi_gemv|" << int(dt) << '|' << M << '|' << tpr << '|' << J << '|' << kind << ',' << K << '|';
         for (size_t j = 0; j < J; ++j)
             key << bs.binding(w_r[j]) << ',' << (b_r[j] >= 0 ? bs.binding(b_r[j]) : -1) << ';';
-        key << bs.binding(x_r) << ',' << bs.binding(out_r) << ',' << binds.size();
+        for (int r : {x_r, a_r, b_r2, nw_r, h_r})
+            key << (r >= 0 ? bs.binding(r) : -1) << ',';
+        key << bs.binding(out_r) << ',' << binds.size();
 
         auto make_source = [&]()
         {
             std::ostringstream s;
             s << wgsl::prelude();
-            // offs: [x, out, w0..w3, b0..b3] element offsets
+            // offs: [x, out, w0..w3, b0..b3, a, b, nw, h] element offsets
             s << "struct Params {\n"
                  "  M: u32, N: u32, K4: u32, sx: u32,\n"
                  "  ends: vec4<u32>,\n"
-                 "  offs: array<vec4<u32>, 3>,\n"
+                 "  offs: array<vec4<u32>, 4>,\n"
+                 "  sa: u32, sb: u32, eps: f32, _p: u32,\n"
                  "};\n";
             for (size_t i = 0; i < binds.size(); ++i)
             {
-                const bool is_out = static_cast<int>(i) == bs.binding(out_r);
-                bool vec = static_cast<int>(i) == bs.binding(x_r);
+                const bool written = static_cast<int>(i) == bs.binding(out_r) || (h_r >= 0 && static_cast<int>(i) == bs.binding(h_r));
+                bool vec = x_r >= 0 && static_cast<int>(i) == bs.binding(x_r);
                 for (size_t j = 0; j < J; ++j)
                     vec = vec || static_cast<int>(i) == bs.binding(w_r[j]);
-                s << "@group(0) @binding(" << i << ") var<storage, " << (is_out ? "read_write" : "read") << "> buf" << i
-                  << ": array<" << (vec ? vk.type : is_out && wgsl::is_subword(dt) ? "atomic<u32>" : "u32") << ">;\n";
+                s << "@group(0) @binding(" << i << ") var<storage, " << (written ? "read_write" : "read") << "> buf" << i
+                  << ": array<" << (vec ? vk.type : written && wgsl::is_subword(dt) ? "atomic<u32>" : "u32") << ">;\n";
             }
             s << "@group(0) @binding(" << binds.size() << ") var<uniform> P: Params;\n";
             s << "fn off(i: u32) -> u32 { return P.offs[i / 4u][i % 4u]; }\n";
@@ -853,22 +905,135 @@ namespace torch_webgpu::kernels
                     s << wgsl::load_fn("ld_b" + std::to_string(j), "buf" + std::to_string(bs.binding(b_r[j])), dt, false);
             s << "var<workgroup> red: array<f32, " << 256 * M << ">;\n";
             s << "const TPR: u32 = " << tpr << "u;\n";
-            const std::string X = "buf" + std::to_string(bs.binding(x_r));
+            std::string X;
+            if (pro)
+            {
+                auto ld = [&](const char *name, int r)
+                {
+                    s << wgsl::load_fn(std::string("raw_") + name, "buf" + std::to_string(bs.binding(r)), dt, false);
+                    s << "fn " << name << "(i: u32) -> f32 { return "
+                      << wgsl::convert(std::string("raw_") + name + "(i)", wgsl::compute_type(dt), CT::F32) << "; }\n";
+                };
+                ld("lda", a_r);
+                if (b_r2 >= 0)
+                    ld("ldb", b_r2);
+                if (nw_r >= 0)
+                    ld("ldn", nw_r);
+                if (h_r >= 0)
+                    s << wgsl::store_fn("st_h", "buf" + std::to_string(bs.binding(h_r)), dt);
+                // rnd: round to the tensor dtype (the graph's intermediate
+                // results are stored in it); pk: pack a vector of x.
+                if (dt == at::kBFloat16)
+                    s << "fn rnd(v: f32) -> f32 { return bitcast<f32>(f32_to_bf16_bits(v) << 16u); }\n"
+                         "fn pk2(a: f32, b: f32) -> u32 { return (bitcast<u32>(a) >> 16u) | (bitcast<u32>(b) & 0xffff0000u); }\n";
+                else if (dt == at::kHalf)
+                    s << "fn rnd(v: f32) -> f32 { return unpack2x16float(f32_to_f16_bits(v)).x; }\n"
+                         "fn pk2(a: f32, b: f32) -> u32 { return f32_to_f16_bits(a) | (f32_to_f16_bits(b) << 16u); }\n";
+                else
+                    s << "fn rnd(v: f32) -> f32 { return v; }\n";
+                s << "var<workgroup> xs: array<" << vk.type << ", " << M * KV << ">;\n";
+                s << "var<workgroup> rs: array<f32, " << M << ">;\n";
+                // x element (m, k)
+                s << "fn xe(m: u32, k: u32) -> f32 {\n"
+                     "    let ia = off(10u) + m * P.sa + k;\n";
+                if (kind == 1)
+                    s << "    var h = lda(ia);\n"
+                      << (b_r2 >= 0 ? "    h = rnd(h + ldb(off(11u) + m * P.sb + k));\n" : "")
+                      << "    return rnd(ldn(off(12u) + k) * rnd(h * rs[m]));\n";
+                else
+                    s << "    let g = lda(ia);\n"
+                         "    return rnd(rnd(g / (exp(-g) + 1.0)) * ldb(off(11u) + m * P.sb + k));\n";
+                s << "}\n";
+                X = "xs";
+            }
+            else
+                X = "buf" + std::to_string(bs.binding(x_r));
+            const std::string O = "buf" + std::to_string(bs.binding(out_r));
             s << "@compute @workgroup_size(256)\n"
                  "fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {\n"
                  "    let t = l.x;\n"
                  "    let lane = t % TPR;\n"
-                 "    let n = wid.x * " << rows << "u + t / TPR;\n"
-                 "    let x0 = off(0u) / " << EV << "u;\n"
-                 "    let sx = P.sx / " << EV << "u;\n"
-                 "    var acc: array<vec4<f32>, " << M << ">;\n";
+                 "    let n = wid.x * " << rows << "u + t / TPR;\n";
+            // Number of weight vectors each lane loads before the prologue:
+            // their latency (DRAM; one wave of workgroups) overlaps it.
+            constexpr int PRE = 4;
+            if (pro)
+            {
+                s << "    var pv: array<" << vk.type << ", " << PRE << ">;\n";
+                for (size_t j = 0; j < J; ++j)
+                {
+                    const std::string W = "buf" + std::to_string(bs.binding(w_r[j]));
+                    const std::string lo = j == 0 ? "0u" : "P.ends[" + std::to_string(j - 1) + "]";
+                    s << "    " << (j ? "else " : "") << "if (n < P.ends[" << j << "]) {\n"
+                      << "        let w0 = off(" << 2 + j << "u) / " << EV << "u + (n - " << lo << ") * P.K4;\n";
+                    for (int i = 0; i < PRE; ++i)
+                        s << "        if (lane + " << i << "u * TPR < P.K4) { pv[" << i << "] = " << W << "[w0 + lane + " << i
+                          << "u * TPR]; }\n";
+                    s << "    }\n";
+                }
+                if (kind == 1)
+                {
+                    // 1 / RMS of each row (of a + b, rounded as stored); the
+                    // first workgroup also stores a + b.
+                    s << "    for (var m = 0u; m < " << M << "u; m++) {\n"
+                         "        var ss = 0.0;\n"
+                         "        for (var k = t; k < " << K << "u; k += 256u) {\n"
+                         "            var h = lda(off(10u) + m * P.sa + k);\n";
+                    if (b_r2 >= 0)
+                        s << "            h = rnd(h + ldb(off(11u) + m * P.sb + k));\n"
+                             "            if (wid.x == 0u) { st_h(off(13u) + m * " << K << "u + k, "
+                          << wgsl::convert("h", CT::F32, wgsl::compute_type(dt)) << "); }\n";
+                    s << "            ss += h * h;\n"
+                         "        }\n"
+                         "        red[t * " << M << "u + m] = ss;\n"
+                         "    }\n"
+                         "    workgroupBarrier();\n"
+                         "    for (var st = 128u; st > 0u; st = st >> 1u) {\n"
+                         "        if (t < st) {\n"
+                         "            for (var m = 0u; m < " << M << "u; m++) { red[t * " << M << "u + m] += red[(t + st) * " << M << "u + m]; }\n"
+                         "        }\n"
+                         "        workgroupBarrier();\n"
+                         "    }\n"
+                         "    if (t < " << M << "u) { rs[t] = inverseSqrt(red[t] / " << K << ".0 + P.eps); }\n"
+                         "    workgroupBarrier();\n";
+                }
+                // stage x, EV elements per vector
+                s << "    for (var i = t; i < " << M * KV << "u; i += 256u) {\n"
+                     "        let m = i / " << KV << "u;\n        let k = (i % " << KV << "u) * " << EV << "u;\n";
+                if (EV == 4)
+                    s << "        xs[i] = vec4<f32>(xe(m, k), xe(m, k + 1u), xe(m, k + 2u), xe(m, k + 3u));\n";
+                else
+                    s << "        xs[i] = vec4<u32>(pk2(xe(m, k), xe(m, k + 1u)), pk2(xe(m, k + 2u), xe(m, k + 3u)), "
+                         "pk2(xe(m, k + 4u), xe(m, k + 5u)), pk2(xe(m, k + 6u), xe(m, k + 7u)));\n";
+                s << "    }\n"
+                     "    workgroupBarrier();\n"
+                     "    let x0 = 0u;\n"
+                     "    let sx = " << KV << "u;\n";
+            }
+            else
+                s << "    let x0 = off(0u) / " << EV << "u;\n"
+                     "    let sx = P.sx / " << EV << "u;\n";
+            s << "    var acc: array<vec4<f32>, " << M << ">;\n";
+            if (pro)
+            {
+                s << "    if (n < P.N) {\n";
+                for (int i = 0; i < PRE; ++i)
+                {
+                    s << "        if (lane + " << i << "u * TPR < P.K4) {\n";
+                    for (int64_t m = 0; m < M; ++m)
+                        s << "            acc[" << m << "] = vmad(acc[" << m << "], " << X << "[x0 + " << m << "u * sx + lane + " << i
+                          << "u * TPR], pv[" << i << "]);\n";
+                    s << "        }\n";
+                }
+                s << "    }\n";
+            }
             for (size_t j = 0; j < J; ++j)
             {
                 const std::string W = "buf" + std::to_string(bs.binding(w_r[j]));
                 const std::string lo = j == 0 ? "0u" : "P.ends[" + std::to_string(j - 1) + "]";
                 s << "    " << (j ? "else " : "") << "if (n < P.ends[" << j << "]) {\n"
                   << "        let w0 = off(" << 2 + j << "u) / " << EV << "u + (n - " << lo << ") * P.K4;\n"
-                  << "        var k = lane;\n"
+                  << "        var k = lane" << (pro ? " + " + std::to_string(PRE) + "u * TPR" : "") << ";\n"
                   << "        for (; k + 3u * TPR < P.K4; k += 4u * TPR) {\n"
                   << "            let v0 = " << W << "[w0 + k];\n"
                   << "            let v1 = " << W << "[w0 + k + TPR];\n"
@@ -914,19 +1079,29 @@ namespace torch_webgpu::kernels
         const auto &pipeline = core::get_pipeline(key.str(), make_source, "multi_gemv");
 
         core::Params p;
-        p.u32(u32_of(M, "M")).u32(u32_of(total, "N")).u32(u32_of(K / EV, "K")).u32(u32_of(x.stride(0), "stride"));
+        p.u32(u32_of(M, "M")).u32(u32_of(total, "N")).u32(u32_of(K / EV, "K")).u32(x ? u32_of(x->stride(0), "stride") : 0u);
         for (size_t j = 0; j < 4; ++j)
             p.u32(j < J ? u32_of(bounds[j], "N") : u32_of(total, "N"));
-        std::vector<uint32_t> offs(12, 0u);
-        offs[0] = bs.offset(x_r);
+        std::vector<uint32_t> offs(16, 0u);
+        offs[0] = x ? bs.offset(x_r) : 0u;
         offs[1] = bs.offset(out_r);
         for (size_t j = 0; j < J; ++j)
         {
             offs[2 + j] = bs.offset(w_r[j]);
             offs[6 + j] = b_r[j] >= 0 ? bs.offset(b_r[j]) : 0u;
         }
+        offs[10] = a_r >= 0 ? bs.offset(a_r) : 0u;
+        offs[11] = b_r2 >= 0 ? bs.offset(b_r2) : 0u;
+        offs[12] = nw_r >= 0 ? bs.offset(nw_r) : 0u;
+        offs[13] = h_r >= 0 ? bs.offset(h_r) : 0u;
         for (uint32_t o : offs)
             p.u32(o);
+        p.u32(pro ? u32_of(pro->a.stride(0), "stride") : 0u);
+        p.u32(b_r2 >= 0 ? u32_of(pro->b.stride(0), "stride") : 0u);
+        const float eps = pro ? static_cast<float>(pro->eps) : 0.f;
+        uint32_t epsw;
+        std::memcpy(&epsw, &eps, 4);
+        p.u32(epsw).u32(0);
 
         core::Grid grid;
         grid.x = static_cast<uint32_t>((total + rows - 1) / rows);
@@ -934,6 +1109,19 @@ namespace torch_webgpu::kernels
             return false;
         core::launch(pipeline, bs.buffers(), p.data(), p.size(), grid);
         return true;
+    }
+    }
+
+    bool run_multi_gemv(const at::Tensor &x, const std::vector<at::Tensor> &weights,
+                        const std::vector<at::Tensor> &biases, const at::Tensor &out)
+    {
+        return multi_gemv_impl(&x, nullptr, weights, biases, out);
+    }
+
+    bool run_multi_gemv_prologue(const GemvPrologue &pro, const std::vector<at::Tensor> &weights,
+                                 const std::vector<at::Tensor> &biases, const at::Tensor &out)
+    {
+        return multi_gemv_impl(nullptr, &pro, weights, biases, out);
     }
 
     void run_matmul(const at::Tensor &a, const at::Tensor &w, const at::Tensor &out, const at::Tensor &bias,

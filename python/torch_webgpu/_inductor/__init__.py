@@ -107,7 +107,7 @@ def register() -> None:
 
     from torch._inductor.custom_graph_pass import CustomGraphModulePass
 
-    from .fx_passes import fuse_parallel_linears, strip_repeat_kv
+    from .fx_passes import fuse_gemv_prologues, fuse_parallel_linears, strip_repeat_kv
 
     class BackendVersion(CustomGraphModulePass):
         """webgpu post-grad passes (fx_passes.py). The uuid puts this
@@ -119,6 +119,7 @@ def register() -> None:
             strip_repeat_kv(gm)
             if os.environ.get("TORCH_WEBGPU_NO_LINEAR_FUSION") != "1":
                 fuse_parallel_linears(gm)
+                fuse_gemv_prologues(gm)
 
         def uuid(self) -> Any:
             return _backend_hash() + os.environ.get("TORCH_WEBGPU_NO_LINEAR_FUSION", "")
@@ -128,6 +129,15 @@ def register() -> None:
     @torch.library.register_fake("webgpu::multi_linear")
     def _multi_linear_fake(x, weights, biases):
         return x.new_empty((*x.shape[:-1], sum(w.shape[0] for w in weights)))
+
+    @torch.library.register_fake("webgpu::rms_norm_multi_linear")
+    def _rms_norm_multi_linear_fake(a, b, norm_weight, eps, weights, biases):
+        y = a.new_empty((*a.shape[:-1], sum(w.shape[0] for w in weights)))
+        return y, (a.new_empty(a.shape) if b is not None else a.new_empty((0,)))
+
+    @torch.library.register_fake("webgpu::silu_mul_multi_linear")
+    def _silu_mul_multi_linear_fake(gate, up, weights, biases):
+        return gate.new_empty((*gate.shape[:-1], sum(w.shape[0] for w in weights)))
 
     register_interface_for_device("webgpu", WebGPUInterface)
     register_device_op_overrides("webgpu", WebGPUDeviceOpOverrides())
